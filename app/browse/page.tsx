@@ -5,7 +5,7 @@ import { getApprovedCars } from '@/actions/carActions'
 import { CarCard } from '@/components/cars/CarCard'
 import { CarFilters } from '@/components/cars/CarFilters'
 import { useLanguage } from '@/components/shared/LanguageProvider'
-import { Car, Loader2, RotateCcw } from 'lucide-react'
+import { ArrowUpDown, Car, Loader2, RotateCcw } from 'lucide-react'
 
 type CarType = Awaited<ReturnType<typeof getApprovedCars>>[number]
 
@@ -15,6 +15,7 @@ export default function BrowsePage() {
   const [filteredCars, setFilteredCars] = useState<CarType[]>([])
   const [loading, setLoading] = useState(true)
   const [filterKey, setFilterKey] = useState(0)
+  const [sortBy, setSortBy] = useState<'newest' | 'priceLow' | 'priceHigh' | 'year'>('newest')
 
   const [error, setError] = useState(false)
 
@@ -29,6 +30,24 @@ export default function BrowsePage() {
         setError(true)
         setLoading(false)
       })
+  }, [])
+
+  const sortCars = useCallback((list: CarType[], sort: string) => {
+    const sorted = [...list]
+    switch (sort) {
+      case 'priceLow':
+        sorted.sort((a, b) => Number(a.dailyPrice) - Number(b.dailyPrice))
+        break
+      case 'priceHigh':
+        sorted.sort((a, b) => Number(b.dailyPrice) - Number(a.dailyPrice))
+        break
+      case 'year':
+        sorted.sort((a, b) => b.year - a.year)
+        break
+      default:
+        sorted.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    }
+    return sorted
   }, [])
 
   const handleFilter = useCallback(
@@ -64,10 +83,15 @@ export default function BrowsePage() {
         result = result.filter((car) => car.category === filters.category)
       }
 
-      setFilteredCars(result)
+      setFilteredCars(sortCars(result, sortBy))
     },
-    [cars]
+    [cars, sortBy, sortCars]
   )
+
+  const handleSort = useCallback((sort: 'newest' | 'priceLow' | 'priceHigh' | 'year') => {
+    setSortBy(sort)
+    setFilteredCars((prev) => sortCars(prev, sort))
+  }, [sortCars])
 
   const handleResetFilters = () => {
     setFilterKey((prev) => prev + 1)
@@ -108,12 +132,27 @@ export default function BrowsePage() {
 
   return (
     <main className="container py-8 pb-24 md:pb-8">
-      <div className="mb-8">
-        <h1 className="mb-2 text-3xl font-bold text-text-primary">{t('browse')}</h1>
-        <p className="text-text-secondary">
-          {filteredCars.length}{' '}
-          {filteredCars.length === 1 ? t('oneCarAvailable') : t('carsAvailable')}
-        </p>
+      <div className="mb-8 flex items-end justify-between gap-4">
+        <div>
+          <h1 className="mb-2 text-3xl font-bold text-text-primary">{t('browse')}</h1>
+          <p className="text-text-secondary">
+            {filteredCars.length}{' '}
+            {filteredCars.length === 1 ? t('oneCarAvailable') : t('carsAvailable')}
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <ArrowUpDown className="h-4 w-4 text-text-muted" />
+          <select
+            value={sortBy}
+            onChange={(e) => handleSort(e.target.value as 'newest' | 'priceLow' | 'priceHigh' | 'year')}
+            className="rounded-xl border border-dark-border bg-dark-card px-3 py-2 text-sm text-text-primary outline-none focus:border-dark-border-light"
+          >
+            <option value="newest">{t('sortNewest')}</option>
+            <option value="priceLow">{t('sortPriceLow')}</option>
+            <option value="priceHigh">{t('sortPriceHigh')}</option>
+            <option value="year">{t('sortYear')}</option>
+          </select>
+        </div>
       </div>
 
       <CarFilters key={filterKey} onFilter={handleFilter} />
