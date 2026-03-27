@@ -13,7 +13,7 @@ function calculateDays(startDate: Date, endDate: Date) {
 
 export async function createBooking(rawData: unknown) {
   const currentUser = await getOrCreateCurrentUser()
-  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+  if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
 
   const parsed = bookingSchema.safeParse(rawData)
   if (!parsed.success) {
@@ -36,6 +36,20 @@ export async function createBooking(rawData: unknown) {
 
   if (totalDays <= 0) {
     return { success: false, error: 'تاريخ الحجز غير صحيح' }
+  }
+
+  // Check for date conflicts with existing bookings
+  const conflictingBooking = await prisma.booking.findFirst({
+    where: {
+      carId: data.carId,
+      status: { in: ['AWAITING_PAYMENT', 'APPROVED', 'ACTIVE'] },
+      startDate: { lt: end },
+      endDate: { gt: start },
+    },
+  })
+
+  if (conflictingBooking) {
+    return { success: false, error: 'السيارة محجوزة في هذه الفترة، يرجى اختيار تواريخ أخرى' }
   }
 
   const totalAmount = Number(car.dailyPrice) * totalDays
@@ -64,9 +78,26 @@ export async function createBooking(rawData: unknown) {
   }
 }
 
+export async function getBookedDates(carId: string) {
+  const bookings = await prisma.booking.findMany({
+    where: {
+      carId,
+      status: { in: ['AWAITING_PAYMENT', 'APPROVED', 'ACTIVE'] },
+      endDate: { gte: new Date() },
+    },
+    select: { startDate: true, endDate: true },
+    orderBy: { startDate: 'asc' },
+  })
+
+  return bookings.map((b) => ({
+    start: b.startDate.toISOString().split('T')[0],
+    end: b.endDate.toISOString().split('T')[0],
+  }))
+}
+
 export async function getUserBookings() {
   const currentUser = await getOrCreateCurrentUser()
-  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+  if (!currentUser) return []
 
   return prisma.booking.findMany({
     where: { renterId: currentUser.id },
@@ -87,7 +118,7 @@ export async function getUserBookings() {
 
 export async function cancelBooking(bookingId: string) {
   const currentUser = await getOrCreateCurrentUser()
-  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+  if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
@@ -112,7 +143,7 @@ export async function cancelBooking(bookingId: string) {
 
 export async function submitReview(bookingId: string, rating: number, comment?: string) {
   const currentUser = await getOrCreateCurrentUser()
-  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+  if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },

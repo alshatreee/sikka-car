@@ -24,21 +24,21 @@ export default function BottomNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 border-t border-dark-border bg-dark-bg shadow-lg md:hidden">
-      <div className="flex items-center justify-around py-2">
+      <div className="flex items-center justify-around py-1.5">
         {links.map((link) => {
           const isActive = pathname === link.href
           return (
             <Link
               key={link.href}
               href={link.href}
-              className={`flex flex-col items-center gap-0.5 px-3 py-1 text-[10px] transition-colors ${
+              className={`flex min-h-[44px] min-w-[44px] flex-col items-center justify-center gap-0.5 px-3 py-1.5 text-xs transition-colors ${
                 isActive
                   ? 'text-status-star'
                   : 'text-text-secondary hover:text-text-primary'
               }`}
             >
               <link.icon
-                className={`h-5 w-5 ${isActive ? 'text-status-star' : ''}`}
+                className={`h-6 w-6 ${isActive ? 'text-status-star' : ''}`}
               />
               <span>{link.label}</span>
             </Link>

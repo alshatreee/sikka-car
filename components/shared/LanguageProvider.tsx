@@ -92,6 +92,11 @@ const translations: Translations = {
   noResultsTitle: { ar: 'لم يتم العثور على نتائج', en: 'No results found' },
   noResultsHint: { ar: 'جرّب تغيير معايير البحث', en: 'Try changing your search criteria' },
   clearFilters: { ar: 'امسح الفلاتر', en: 'Clear Filters' },
+  sortBy: { ar: 'ترتيب حسب', en: 'Sort by' },
+  sortNewest: { ar: 'الأحدث', en: 'Newest' },
+  sortPriceLow: { ar: 'السعر: الأقل', en: 'Price: Low' },
+  sortPriceHigh: { ar: 'السعر: الأعلى', en: 'Price: High' },
+  sortYear: { ar: 'الأحدث موديل', en: 'Newest Model' },
 
   // Payment
   paymentSuccess: { ar: 'تم الدفع بنجاح!', en: 'Payment Successful!' },

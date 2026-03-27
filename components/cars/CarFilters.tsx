@@ -14,18 +14,26 @@ interface CarFiltersProps {
 }
 
 const areas = [
-  'العاصمة',
-  'حولي',
-  'الفروانية',
-  'الأحمدي',
-  'مبارك الكبير',
-  'الجهراء',
+  { value: 'العاصمة', en: 'Capital' },
+  { value: 'حولي', en: 'Hawalli' },
+  { value: 'الفروانية', en: 'Farwaniya' },
+  { value: 'الأحمدي', en: 'Ahmadi' },
+  { value: 'مبارك الكبير', en: 'Mubarak Al-Kabeer' },
+  { value: 'الجهراء', en: 'Jahra' },
 ]
 
-const categories = ['سيدان', 'SUV', 'كوبيه', 'بيك أب', 'فان', 'رياضية', 'كلاسيك']
+const categories = [
+  { value: 'سيدان', en: 'Sedan' },
+  { value: 'SUV', en: 'SUV' },
+  { value: 'كوبيه', en: 'Coupe' },
+  { value: 'بيك أب', en: 'Pickup' },
+  { value: 'فان', en: 'Van' },
+  { value: 'رياضية', en: 'Sport' },
+  { value: 'كلاسيك', en: 'Classic' },
+]
 
 export function CarFilters({ onFilter }: CarFiltersProps) {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
   const [search, setSearch] = useState('')
   const [area, setArea] = useState('')
   const [transmission, setTransmission] = useState('')
@@ -97,15 +105,15 @@ export function CarFilters({ onFilter }: CarFiltersProps) {
               </button>
               {areas.map((a) => (
                 <button
-                  key={a}
-                  onClick={() => handleFilter({ area: a })}
+                  key={a.value}
+                  onClick={() => handleFilter({ area: a.value })}
                   className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                    area === a
+                    area === a.value
                       ? 'bg-status-star text-dark-bg'
                       : 'border border-dark-border-light bg-dark-surface text-text-secondary hover:bg-dark-border'
                   }`}
                 >
-                  {a}
+                  {lang === 'ar' ? a.value : a.en}
                 </button>
               ))}
             </div>
@@ -163,15 +171,15 @@ export function CarFilters({ onFilter }: CarFiltersProps) {
               </button>
               {categories.map((c) => (
                 <button
-                  key={c}
-                  onClick={() => handleFilter({ category: c })}
+                  key={c.value}
+                  onClick={() => handleFilter({ category: c.value })}
                   className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
-                    category === c
+                    category === c.value
                       ? 'bg-status-star text-dark-bg'
                       : 'border border-dark-border-light bg-dark-surface text-text-secondary hover:bg-dark-border'
                   }`}
                 >
-                  {c}
+                  {lang === 'ar' ? c.value : c.en}
                 </button>
               ))}
             </div>
