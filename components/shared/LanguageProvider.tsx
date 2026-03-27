@@ -101,6 +101,10 @@ const translations: Translations = {
   // Payment
   paymentSuccess: { ar: 'تم الدفع بنجاح!', en: 'Payment Successful!' },
   paymentSuccessMsg: { ar: 'شكراً لك، تم تأكيد حجزك بنجاح', en: 'Thank you, your booking has been confirmed' },
+  verifyingPayment: { ar: 'جاري التحقق من الدفع...', en: 'Verifying payment...' },
+  paymentFailed: { ar: 'فشل التحقق من الدفع', en: 'Payment Verification Failed' },
+  paymentFailedMsg: { ar: 'عذراً، لم نتمكن من التحقق من دفعتك. يرجى المحاولة لاحقاً.', en: 'Sorry, we couldn\'t verify your payment. Please try again later.' },
+  retryPayment: { ar: 'إعادة المحاولة', en: 'Retry' },
   backToHome: { ar: 'العودة للرئيسية', en: 'Back to Home' },
   viewBookings: { ar: 'عرض حجوزاتي', en: 'View My Bookings' },
 
@@ -125,7 +129,7 @@ const translations: Translations = {
   kwd: { ar: 'د.ك', en: 'KWD' },
 
   // Footer
-  copyright: { ar: '© 2024 سكة كار. جميع الحقوق محفوظة.', en: '© 2024 Sikka Car. All rights reserved.' },
+  copyright: { ar: '© 2025 سكة كار. جميع الحقوق محفوظة.', en: '© 2025 Sikka Car. All rights reserved.' },
   termsOfService: { ar: 'شروط الاستخدام', en: 'Terms of Service' },
   privacyPolicy: { ar: 'سياسة الخصوصية', en: 'Privacy Policy' },
 }
