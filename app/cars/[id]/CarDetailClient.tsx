@@ -21,6 +21,7 @@ import {
   Gauge,
   UserCheck,
   Star,
+  MessageCircle,
 } from 'lucide-react'
 
 interface CarDetailClientProps {
@@ -317,7 +318,7 @@ export default function CarDetailClient({
                 <Shield className="h-5 w-5 text-status-star" />
                 {lang === 'ar' ? 'معلومات المالك' : 'Owner Information'}
               </h2>
-              <div className="space-y-2">
+              <div className="space-y-2 mb-4">
                 {car.owner.fullName && (
                   <p className="text-sm text-text-primary">
                     <strong>{car.owner.fullName}</strong>
@@ -334,6 +335,35 @@ export default function CarDetailClient({
                     <Phone className="h-4 w-4" />
                     {car.owner.phone}
                   </p>
+                )}
+              </div>
+
+              {/* Contact Buttons */}
+              <div className="flex gap-3 flex-wrap">
+                {/* Message Owner Button */}
+                <Link
+                  href="/messages"
+                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-status-star/30 bg-status-star/10 text-status-star hover:bg-status-star/20 transition-colors"
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  <span className="text-sm font-medium">
+                    {lang === 'ar' ? 'راسل المالك' : 'Message Owner'}
+                  </span>
+                </Link>
+
+                {/* WhatsApp Button */}
+                {car.owner.phone && (
+                  <a
+                    href={`https://wa.me/${car.owner.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`مرحبا، أنا مهتم بسيارتك ${car.title} على سكة كار`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl border border-green-500/20 bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors"
+                  >
+                    <Phone className="h-4 w-4" />
+                    <span className="text-sm font-medium">
+                      {lang === 'ar' ? 'واتساب' : 'WhatsApp'}
+                    </span>
+                  </a>
                 )}
               </div>
             </div>
