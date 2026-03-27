@@ -76,7 +76,7 @@ export default function HomePage() {
           <div className="grid items-start gap-10 md:grid-cols-2">
             {/* Text Content - appears first in DOM so it's on the right in RTL (Arabic) and left in LTR (English) */}
             <div className="text-start">
-              <h1 className="mb-6 text-4xl font-black leading-tight text-text-primary md:text-5xl lg:text-6xl">
+              <h1 className="mb-6 text-3xl font-bold leading-relaxed text-text-primary md:text-4xl md:leading-relaxed lg:text-5xl lg:leading-relaxed">
                 {lang === 'ar'
                   ? 'حوّل سيارتك إلى دخل إضافي بثقة وسهولة'
                   : 'Turn Your Car Into Extra Income with Trust'}
