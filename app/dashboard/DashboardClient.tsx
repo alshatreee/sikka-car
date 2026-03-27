@@ -137,6 +137,10 @@ export default function DashboardClient({
   const totalApproved = carList.filter((c) => c.status === 'APPROVED').length
   const totalPending = carList.filter((c) => c.status === 'PENDING').length
   const totalRejected = carList.filter((c) => c.status === 'REJECTED').length
+  const totalNewBookings = carList.reduce(
+    (sum, car) => sum + car.bookings.filter((b) => b.status === 'APPROVED' || b.status === 'AWAITING_PAYMENT').length,
+    0
+  )
 
   function StatusBadge({ status }: { status: string }) {
     const config = statusConfig[status] || statusConfig.PENDING
@@ -206,12 +210,13 @@ export default function DashboardClient({
       </div>
 
       {/* Stats */}
-      <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         {[
           { label: t('totalCars'), value: carList.length, icon: Car },
           { label: t('approved'), value: totalApproved, icon: CheckCircle },
           { label: t('pendingReview'), value: totalPending, icon: Clock },
           { label: t('rejected'), value: totalRejected, icon: XCircle },
+          { label: lang === 'ar' ? 'حجوزات جديدة' : 'New Bookings', value: totalNewBookings, icon: Calendar },
         ].map((stat, i) => (
           <div key={i} className="card flex items-center gap-4">
             <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-dark-surface border border-dark-border-light shadow-lg">
