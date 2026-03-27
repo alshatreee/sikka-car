@@ -29,3 +29,16 @@ export async function getOrCreateCurrentUser() {
 
   return user
 }
+
+export async function requireAdmin() {
+  const user = await getOrCreateCurrentUser()
+  if (!user || user.role !== 'ADMIN') {
+    throw new Error('غير مصرح لك بالوصول')
+  }
+  return user
+}
+
+export async function isAdmin() {
+  const user = await getOrCreateCurrentUser()
+  return user?.role === 'ADMIN'
+}
