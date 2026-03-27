@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useTransition, useMemo } from 'react'
-import { createBooking } from '@/actions/bookingActions'
+import { useState, useTransition, useMemo, useEffect } from 'react'
+import { createBooking, getBookedDates } from '@/actions/bookingActions'
 import { initiatePayment } from '@/actions/paymentActions'
 import { useLanguage } from '@/components/shared/LanguageProvider'
-import { Calendar, Clock, FileText, CreditCard } from 'lucide-react'
+import { Calendar, Clock, FileText, CreditCard, AlertTriangle } from 'lucide-react'
 
 interface BookingPanelProps {
   carId: string
@@ -19,7 +19,7 @@ export function BookingPanel({
   customerName,
   customerEmail,
 }: BookingPanelProps) {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
   const [pending, startTransition] = useTransition()
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -27,6 +27,24 @@ export function BookingPanel({
   const [dropoffTime, setDropoffTime] = useState('')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
+  const [bookedRanges, setBookedRanges] = useState<{ start: string; end: string }[]>([])
+  const [dateConflict, setDateConflict] = useState(false)
+
+  useEffect(() => {
+    getBookedDates(carId).then(setBookedRanges)
+  }, [carId])
+
+  // Check if selected dates overlap with existing bookings
+  useEffect(() => {
+    if (!startDate || !endDate || bookedRanges.length === 0) {
+      setDateConflict(false)
+      return
+    }
+    const hasConflict = bookedRanges.some(
+      (range) => startDate < range.end && endDate > range.start
+    )
+    setDateConflict(hasConflict)
+  }, [startDate, endDate, bookedRanges])
 
   const totalDays = useMemo(() => {
     if (!startDate || !endDate) return 0
@@ -162,8 +180,32 @@ export function BookingPanel({
           />
         </div>
 
+        {/* Date Conflict Warning */}
+        {dateConflict && (
+          <div className="flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-sm text-red-400 border border-red-500/20">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            {lang === 'ar' ? 'السيارة محجوزة في هذه الفترة، اختر تواريخ أخرى' : 'Car is booked during these dates, choose different dates'}
+          </div>
+        )}
+
+        {/* Booked Dates Info */}
+        {bookedRanges.length > 0 && (
+          <div className="rounded-xl bg-dark-surface p-3 border border-dark-border">
+            <p className="mb-2 text-xs font-medium text-text-secondary">
+              {lang === 'ar' ? 'التواريخ المحجوزة:' : 'Booked dates:'}
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {bookedRanges.map((range, i) => (
+                <span key={i} className="rounded-lg bg-red-500/10 px-2 py-1 text-xs text-red-400 border border-red-500/20">
+                  {range.start} → {range.end}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Price Summary */}
-        {totalDays > 0 && (
+        {totalDays > 0 && !dateConflict && (
           <div className="rounded-xl bg-dark-surface p-4 border border-dark-border">
             <div className="flex items-center justify-between text-sm text-text-secondary">
               <span>
@@ -185,7 +227,7 @@ export function BookingPanel({
 
         <button
           onClick={handleBooking}
-          disabled={pending || totalDays <= 0}
+          disabled={pending || totalDays <= 0 || dateConflict}
           className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-solid py-3.5 font-medium text-text-primary shadow-lg transition-all hover:bg-brand-solid-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
           <CreditCard className="h-4 w-4" />

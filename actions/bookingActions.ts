@@ -38,6 +38,20 @@ export async function createBooking(rawData: unknown) {
     return { success: false, error: 'تاريخ الحجز غير صحيح' }
   }
 
+  // Check for date conflicts with existing bookings
+  const conflictingBooking = await prisma.booking.findFirst({
+    where: {
+      carId: data.carId,
+      status: { in: ['AWAITING_PAYMENT', 'APPROVED', 'ACTIVE'] },
+      startDate: { lt: end },
+      endDate: { gt: start },
+    },
+  })
+
+  if (conflictingBooking) {
+    return { success: false, error: 'السيارة محجوزة في هذه الفترة، يرجى اختيار تواريخ أخرى' }
+  }
+
   const totalAmount = Number(car.dailyPrice) * totalDays
 
   const booking = await prisma.booking.create({
@@ -62,6 +76,23 @@ export async function createBooking(rawData: unknown) {
     bookingId: booking.id,
     totalAmount,
   }
+}
+
+export async function getBookedDates(carId: string) {
+  const bookings = await prisma.booking.findMany({
+    where: {
+      carId,
+      status: { in: ['AWAITING_PAYMENT', 'APPROVED', 'ACTIVE'] },
+      endDate: { gte: new Date() },
+    },
+    select: { startDate: true, endDate: true },
+    orderBy: { startDate: 'asc' },
+  })
+
+  return bookings.map((b) => ({
+    start: b.startDate.toISOString().split('T')[0],
+    end: b.endDate.toISOString().split('T')[0],
+  }))
 }
 
 export async function getUserBookings() {
