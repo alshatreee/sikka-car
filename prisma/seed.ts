@@ -1,217 +1,209 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, CarStatus, UserRole, TransmissionType } from "@prisma/client";
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient();
 
 async function main() {
-  console.log('🌱 Seeding database...')
+  console.log("🌱 Starting seed...");
 
-  // Create a demo owner user
-  const demoUser = await prisma.user.upsert({
-    where: { clerkUserId: 'demo_owner_001' },
+  // Upsert demo user
+  const user = await prisma.user.upsert({
+    where: { clerkUserId: "demo_owner_001" },
     update: {},
     create: {
-      clerkUserId: 'demo_owner_001',
-      email: 'demo@sikkacar.com',
-      fullName: 'سكة كار',
-      phone: '+96512345678',
+      clerkUserId: "demo_owner_001",
+      email: "demo@sikkacar.com",
+      fullName: "أحمد المطيري",
+      role: UserRole.USER,
+      phone: "+96550000001",
     },
-  })
+  });
+  console.log(`✅ User upserted: ${user.fullName} (${user.id})`);
 
-  console.log('✅ Demo user created:', demoUser.id)
-
-  // Sample cars data
-  const carsData = [
+  // Sample cars
+  const cars = [
     {
-      title: 'تويوتا كامري 2024 فل كامل',
-      brand: 'Toyota',
-      model: 'Camry',
+      title: "تويوتا كامري 2024 فل كامل",
+      titleEn: "Toyota Camry 2024 Full Option",
+      brand: "Toyota",
+      model: "Camry",
+      year: 2024,
+      dailyPrice: 12,
+      area: "العاصمة",
+      city: "الكويت",
+      category: "سيدان",
+      type: "عائلية",
+      seats: 5,
+      transmission: TransmissionType.AUTOMATIC,
+      images: [
+        "https://picsum.photos/seed/car1/800/500",
+        "https://picsum.photos/seed/car1b/800/500",
+      ],
+    },
+    {
+      title: "نيسان باترول 2023 بلاتينيوم",
+      titleEn: "Nissan Patrol 2023 Platinum",
+      brand: "Nissan",
+      model: "Patrol",
+      year: 2023,
+      dailyPrice: 25,
+      area: "حولي",
+      city: "السالمية",
+      category: "دفع رباعي",
+      type: "فاخرة",
+      seats: 7,
+      transmission: TransmissionType.AUTOMATIC,
+      images: [
+        "https://picsum.photos/seed/car2/800/500",
+        "https://picsum.photos/seed/car2b/800/500",
+      ],
+    },
+    {
+      title: "هيونداي توسان 2025 نص فل",
+      titleEn: "Hyundai Tucson 2025 Mid Option",
+      brand: "Hyundai",
+      model: "Tucson",
+      year: 2025,
+      dailyPrice: 10,
+      area: "الفروانية",
+      city: "الفروانية",
+      category: "دفع رباعي",
+      type: "عائلية",
+      seats: 5,
+      transmission: TransmissionType.AUTOMATIC,
+      images: [
+        "https://picsum.photos/seed/car3/800/500",
+        "https://picsum.photos/seed/car3b/800/500",
+      ],
+    },
+    {
+      title: "كيا سيراتو 2022 اقتصادية",
+      titleEn: "Kia Cerato 2022 Economy",
+      brand: "Kia",
+      model: "Cerato",
+      year: 2022,
+      dailyPrice: 7,
+      area: "الأحمدي",
+      city: "الفحيحيل",
+      category: "سيدان",
+      type: "اقتصادية",
+      seats: 5,
+      transmission: TransmissionType.AUTOMATIC,
+      images: [
+        "https://picsum.photos/seed/car4/800/500",
+        "https://picsum.photos/seed/car4b/800/500",
+      ],
+    },
+    {
+      title: "شيفروليه تاهو 2023 LT",
+      titleEn: "Chevrolet Tahoe 2023 LT",
+      brand: "Chevrolet",
+      model: "Tahoe",
+      year: 2023,
+      dailyPrice: 22,
+      area: "العاصمة",
+      city: "الشويخ",
+      category: "دفع رباعي",
+      type: "فاخرة",
+      seats: 7,
+      transmission: TransmissionType.AUTOMATIC,
+      images: [
+        "https://picsum.photos/seed/car5/800/500",
+        "https://picsum.photos/seed/car5b/800/500",
+      ],
+    },
+    {
+      title: "تويوتا يارس 2021 هاتشباك",
+      titleEn: "Toyota Yaris 2021 Hatchback",
+      brand: "Toyota",
+      model: "Yaris",
+      year: 2021,
+      dailyPrice: 5,
+      area: "حولي",
+      city: "حولي",
+      category: "هاتشباك",
+      type: "اقتصادية",
+      seats: 5,
+      transmission: TransmissionType.AUTOMATIC,
+      images: [
+        "https://picsum.photos/seed/car6/800/500",
+        "https://picsum.photos/seed/car6b/800/500",
+      ],
+    },
+    {
+      title: "لكزس ES 2024 هايبرد",
+      titleEn: "Lexus ES 2024 Hybrid",
+      brand: "Lexus",
+      model: "ES",
       year: 2024,
       dailyPrice: 18,
-      area: 'العاصمة',
-      city: 'الكويت',
-      origin: 'وكالة',
-      type: 'سيدان',
-      category: 'اقتصادي',
+      area: "الفروانية",
+      city: "الرقعي",
+      category: "سيدان",
+      type: "فاخرة",
       seats: 5,
-      transmission: 'AUTOMATIC' as const,
-      smokingPolicy: 'ممنوع التدخين',
-      distancePolicy: '200 كم يومياً',
-      minAge: 21,
-      availabilityText: 'متاح يومياً',
+      transmission: TransmissionType.AUTOMATIC,
       images: [
-        'https://images.unsplash.com/photo-1621007947382-bb3c3994e3fb?w=800&h=500&fit=crop',
+        "https://picsum.photos/seed/car7/800/500",
+        "https://picsum.photos/seed/car7b/800/500",
       ],
     },
     {
-      title: 'نيسان باترول بلاتينيوم 2023',
-      brand: 'Nissan',
-      model: 'Patrol',
-      year: 2023,
-      dailyPrice: 35,
-      area: 'حولي',
-      city: 'السالمية',
-      origin: 'وكالة',
-      type: 'SUV',
-      category: 'فاخر',
-      seats: 7,
-      transmission: 'AUTOMATIC' as const,
-      smokingPolicy: 'ممنوع التدخين',
-      distancePolicy: '250 كم يومياً',
-      minAge: 25,
-      availabilityText: 'متاح يومياً',
-      images: [
-        'https://images.unsplash.com/photo-1609521263047-f8f205293f24?w=800&h=500&fit=crop',
-      ],
-    },
-    {
-      title: 'لكزس ES 350 موديل 2024',
-      brand: 'Lexus',
-      model: 'ES 350',
-      year: 2024,
-      dailyPrice: 28,
-      area: 'الفروانية',
-      city: 'الفروانية',
-      origin: 'وكالة',
-      type: 'سيدان',
-      category: 'فاخر',
-      seats: 5,
-      transmission: 'AUTOMATIC' as const,
-      smokingPolicy: 'ممنوع التدخين',
-      distancePolicy: '200 كم يومياً',
-      minAge: 23,
-      availabilityText: 'متاح من السبت للخميس',
-      images: [
-        'https://images.unsplash.com/photo-1606611013016-969c19ba27d5?w=800&h=500&fit=crop',
-      ],
-    },
-    {
-      title: 'شيفروليه تاهو 2023 LT',
-      brand: 'Chevrolet',
-      model: 'Tahoe',
-      year: 2023,
-      dailyPrice: 30,
-      area: 'الأحمدي',
-      city: 'المنقف',
-      origin: 'وكالة',
-      type: 'SUV',
-      category: 'عائلي',
-      seats: 8,
-      transmission: 'AUTOMATIC' as const,
-      smokingPolicy: 'ممنوع التدخين',
-      distancePolicy: '300 كم يومياً',
-      minAge: 25,
-      availabilityText: 'متاح يومياً',
-      images: [
-        'https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?w=800&h=500&fit=crop',
-      ],
-    },
-    {
-      title: 'كيا K5 موديل 2024 GT Line',
-      brand: 'Kia',
-      model: 'K5',
-      year: 2024,
+      title: "فورد اكسبلورر 2020 XLT",
+      titleEn: "Ford Explorer 2020 XLT",
+      brand: "Ford",
+      model: "Explorer",
+      year: 2020,
       dailyPrice: 15,
-      area: 'الجهراء',
-      city: 'الجهراء',
-      origin: 'وكالة',
-      type: 'سيدان',
-      category: 'اقتصادي',
-      seats: 5,
-      transmission: 'AUTOMATIC' as const,
-      smokingPolicy: 'مسموح بالتدخين',
-      distancePolicy: '200 كم يومياً',
-      minAge: 21,
-      availabilityText: 'متاح يومياً',
-      images: [
-        'https://images.unsplash.com/photo-1552519507-da3b142c6e3d?w=800&h=500&fit=crop',
-      ],
-    },
-    {
-      title: 'مرسيدس C200 كوبيه 2023',
-      brand: 'Mercedes',
-      model: 'C200',
-      year: 2023,
-      dailyPrice: 40,
-      area: 'العاصمة',
-      city: 'شرق',
-      origin: 'وكالة',
-      type: 'كوبيه',
-      category: 'رياضي',
-      seats: 4,
-      transmission: 'AUTOMATIC' as const,
-      smokingPolicy: 'ممنوع التدخين',
-      distancePolicy: '150 كم يومياً',
-      minAge: 25,
-      availabilityText: 'متاح نهاية الأسبوع',
-      images: [
-        'https://images.unsplash.com/photo-1618843479313-40f8afb4b4d8?w=800&h=500&fit=crop',
-      ],
-    },
-    {
-      title: 'هيونداي توسان 2024 بانوراما',
-      brand: 'Hyundai',
-      model: 'Tucson',
-      year: 2024,
-      dailyPrice: 20,
-      area: 'مبارك الكبير',
-      city: 'صباح السالم',
-      origin: 'وكالة',
-      type: 'SUV',
-      category: 'عائلي',
-      seats: 5,
-      transmission: 'AUTOMATIC' as const,
-      smokingPolicy: 'ممنوع التدخين',
-      distancePolicy: '250 كم يومياً',
-      minAge: 21,
-      availabilityText: 'متاح يومياً',
-      images: [
-        'https://images.unsplash.com/photo-1580273916550-e323be2ae537?w=800&h=500&fit=crop',
-      ],
-    },
-    {
-      title: 'تويوتا لاندكروزر VXR 2024',
-      brand: 'Toyota',
-      model: 'Land Cruiser',
-      year: 2024,
-      dailyPrice: 50,
-      area: 'حولي',
-      city: 'حولي',
-      origin: 'وكالة',
-      type: 'SUV',
-      category: 'فاخر',
+      area: "الأحمدي",
+      city: "المنقف",
+      category: "دفع رباعي",
+      type: "عائلية",
       seats: 7,
-      transmission: 'AUTOMATIC' as const,
-      smokingPolicy: 'ممنوع التدخين',
-      distancePolicy: '300 كم يومياً',
-      minAge: 25,
-      availabilityText: 'متاح يومياً',
+      transmission: TransmissionType.AUTOMATIC,
       images: [
-        'https://images.unsplash.com/photo-1519641471654-76ce0107ad1b?w=800&h=500&fit=crop',
+        "https://picsum.photos/seed/car8/800/500",
+        "https://picsum.photos/seed/car8b/800/500",
       ],
     },
-  ]
+  ];
 
-  // Create cars
-  for (const carData of carsData) {
-    await prisma.car.create({
+  for (const car of cars) {
+    const created = await prisma.car.create({
       data: {
-        ...carData,
-        ownerId: demoUser.id,
-        status: 'APPROVED',
+        ownerId: user.id,
+        title: car.title,
+        titleEn: car.titleEn,
+        brand: car.brand,
+        model: car.model,
+        year: car.year,
+        dailyPrice: car.dailyPrice,
+        area: car.area,
+        city: car.city,
+        category: car.category,
+        type: car.type,
+        seats: car.seats,
+        transmission: car.transmission,
+        images: car.images,
         documentImages: [],
+        status: CarStatus.APPROVED,
+        smokingPolicy: "ممنوع التدخين",
+        distancePolicy: "غير محدود",
+        minAge: 21,
+        availabilityText: "متاح يومياً",
       },
-    })
+    });
+    console.log(`✅ Car created: ${created.title} (${created.id})`);
   }
 
-  console.log(`✅ ${carsData.length} sample cars created (APPROVED status)`)
-  console.log('🎉 Seeding complete!')
+  console.log(`\n🌱 Seed complete: 1 user + ${cars.length} cars`);
 }
 
 main()
-  .catch((e) => {
-    console.error('❌ Seed error:', e)
-    process.exit(1)
+  .then(async () => {
+    await prisma.$disconnect();
   })
-  .finally(async () => {
-    await prisma.$disconnect()
-  })
+  .catch(async (e) => {
+    console.error("❌ Seed failed:", e);
+    await prisma.$disconnect();
+    process.exit(1);
+  });

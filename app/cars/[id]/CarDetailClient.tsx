@@ -20,6 +20,7 @@ import {
   Cigarette,
   Gauge,
   UserCheck,
+  Star,
 } from 'lucide-react'
 
 interface CarDetailClientProps {
@@ -49,6 +50,17 @@ interface CarDetailClientProps {
       email?: string | null
       phone?: string | null
     } | null
+    bookings?: Array<{
+      review?: {
+        id: string
+        rating: number
+        comment: string | null
+        createdAt: string
+      } | null
+      renter: {
+        fullName: string | null
+      }
+    }>
   }
   currentUser: {
     fullName: string
@@ -326,6 +338,96 @@ export default function CarDetailClient({
               </div>
             </div>
           )}
+
+          {/* Reviews Section */}
+          {(() => {
+            const reviews = (car.bookings ?? []).filter((b) => b.review)
+            if (reviews.length === 0) return null
+
+            const avgRating =
+              reviews.reduce((sum, b) => sum + (b.review?.rating ?? 0), 0) /
+              reviews.length
+
+            return (
+              <div className="card mt-6">
+                <h2 className="mb-4 flex items-center gap-2 text-lg font-bold text-text-primary">
+                  <Star className="h-5 w-5 text-status-star" />
+                  {lang === 'ar' ? 'التقييمات' : 'Reviews'}
+                </h2>
+
+                {/* Average Rating */}
+                <div className="mb-6 flex items-center gap-3 rounded-xl bg-dark-surface p-4 border border-dark-border">
+                  <div className="text-3xl font-bold text-text-primary">
+                    {avgRating.toFixed(1)}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-0.5">
+                      {[1, 2, 3, 4, 5].map((star) => (
+                        <Star
+                          key={star}
+                          className={`h-5 w-5 ${
+                            star <= Math.round(avgRating)
+                              ? 'fill-status-star text-status-star'
+                              : 'text-dark-border'
+                          }`}
+                        />
+                      ))}
+                    </div>
+                    <div className="mt-1 text-sm text-text-secondary">
+                      {lang === 'ar'
+                        ? `${reviews.length} تقييم`
+                        : `${reviews.length} review${reviews.length !== 1 ? 's' : ''}`}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Individual Reviews */}
+                <div className="space-y-4">
+                  {reviews.map((booking) => {
+                    const review = booking.review!
+                    return (
+                      <div
+                        key={review.id}
+                        className="rounded-xl bg-dark-surface p-4 border border-dark-border"
+                      >
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-text-primary">
+                              {booking.renter.fullName ??
+                                (lang === 'ar' ? 'مستخدم' : 'User')}
+                            </span>
+                            <div className="flex items-center gap-0.5">
+                              {[1, 2, 3, 4, 5].map((star) => (
+                                <Star
+                                  key={star}
+                                  className={`h-3.5 w-3.5 ${
+                                    star <= review.rating
+                                      ? 'fill-status-star text-status-star'
+                                      : 'text-dark-border'
+                                  }`}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                          <span className="text-xs text-text-muted">
+                            {new Date(review.createdAt).toLocaleDateString(
+                              lang === 'ar' ? 'ar-SA' : 'en-US',
+                              { year: 'numeric', month: 'short', day: 'numeric' }
+                            )}
+                          </span>
+                        </div>
+                        {review.comment && (
+                          <p className="text-sm text-text-secondary">
+                            {review.comment}
+                          </p>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
         </div>
 
         {/* Sidebar - Booking Panel */}
