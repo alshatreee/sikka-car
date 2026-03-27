@@ -3,12 +3,20 @@
 import Link from 'next/link'
 import { useLanguage } from '@/components/shared/LanguageProvider'
 import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs'
-import { Car, Globe, Menu, X } from 'lucide-react'
-import { useState } from 'react'
+import { Car, Globe, Menu, X, Shield } from 'lucide-react'
+import { useState, useEffect } from 'react'
 
 export default function Header() {
   const { t, toggleLanguage, lang } = useLanguage()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [isAdminUser, setIsAdminUser] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/me')
+      .then((r) => r.json())
+      .then((data) => setIsAdminUser(data.role === 'ADMIN'))
+      .catch(() => {})
+  }, [])
 
   return (
     <header className="sticky top-0 z-50 border-b border-dark-border bg-dark-bg backdrop-blur-md">
@@ -44,6 +52,15 @@ export default function Header() {
             >
               {t('dashboard')}
             </Link>
+            {isAdminUser && (
+              <Link
+                href="/admin"
+                className="flex items-center gap-1 text-sm text-status-star transition-colors hover:text-status-star/80"
+              >
+                <Shield className="h-3.5 w-3.5" />
+                {t('adminPanel')}
+              </Link>
+            )}
           </SignedIn>
         </nav>
 
@@ -113,6 +130,16 @@ export default function Header() {
               >
                 {t('dashboard')}
               </Link>
+              {isAdminUser && (
+                <Link
+                  href="/admin"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 rounded-lg px-3 py-2 text-status-star transition-colors hover:bg-dark-surface"
+                >
+                  <Shield className="h-4 w-4" />
+                  {t('adminPanel')}
+                </Link>
+              )}
             </SignedIn>
             <SignedOut>
               <Link

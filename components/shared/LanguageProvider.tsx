@@ -99,6 +99,26 @@ const translations: Translations = {
   backToHome: { ar: 'العودة للرئيسية', en: 'Back to Home' },
   viewBookings: { ar: 'عرض حجوزاتي', en: 'View My Bookings' },
 
+  // Admin
+  adminPanel: { ar: 'لوحة التحكم', en: 'Admin Panel' },
+  adminDashboard: { ar: 'نظرة عامة', en: 'Overview' },
+  adminCars: { ar: 'إدارة السيارات', en: 'Cars Management' },
+  adminBookings: { ar: 'إدارة الحجوزات', en: 'Bookings Management' },
+  adminUsers: { ar: 'إدارة المستخدمين', en: 'Users Management' },
+  adminTotalUsers: { ar: 'إجمالي المستخدمين', en: 'Total Users' },
+  adminTotalCars: { ar: 'إجمالي السيارات', en: 'Total Cars' },
+  adminPendingCars: { ar: 'بانتظار الموافقة', en: 'Pending Cars' },
+  adminApprovedCars: { ar: 'سيارات معتمدة', en: 'Approved Cars' },
+  adminRejectedCars: { ar: 'سيارات مرفوضة', en: 'Rejected Cars' },
+  adminTotalBookings: { ar: 'إجمالي الحجوزات', en: 'Total Bookings' },
+  adminActiveBookings: { ar: 'حجوزات نشطة', en: 'Active Bookings' },
+  adminTotalRevenue: { ar: 'إجمالي الإيرادات', en: 'Total Revenue' },
+  adminApprove: { ar: 'موافقة', en: 'Approve' },
+  adminReject: { ar: 'رفض', en: 'Reject' },
+  adminAllCars: { ar: 'جميع السيارات', en: 'All Cars' },
+  backToSite: { ar: 'العودة للموقع', en: 'Back to Site' },
+  kwd: { ar: 'د.ك', en: 'KWD' },
+
   // Footer
   copyright: { ar: '© 2024 سكة كار. جميع الحقوق محفوظة.', en: '© 2024 Sikka Car. All rights reserved.' },
   termsOfService: { ar: 'شروط الاستخدام', en: 'Terms of Service' },

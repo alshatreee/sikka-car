@@ -16,6 +16,11 @@ enum CarStatus {
   REJECTED
 }
 
+enum UserRole {
+  USER
+  ADMIN
+}
+
 enum BookingStatus {
   PENDING
   AWAITING_PAYMENT
@@ -38,6 +43,7 @@ model User {
   email       String    @unique
   fullName    String?
   phone       String?
+  role        UserRole  @default(USER)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
