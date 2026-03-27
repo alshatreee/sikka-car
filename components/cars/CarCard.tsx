@@ -37,7 +37,7 @@ export function CarCard({ car }: CarCardProps) {
   return (
     <Link
       href={`/cars/${car.id}`}
-      className="group overflow-hidden rounded-2xl border border-dark-border bg-dark-card shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
+      className="group overflow-hidden rounded-2xl border border-dark-border-light bg-dark-card shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_20px_rgba(255,184,0,0.1)]"
     >
       {/* Image */}
       <div className="relative aspect-[16/10] overflow-hidden bg-dark-surface">
@@ -54,9 +54,12 @@ export function CarCard({ car }: CarCardProps) {
           </div>
         )}
 
+        {/* Gradient Overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-dark-bg/60 via-transparent to-transparent" />
+
         {/* Price Badge */}
-        <div className="absolute bottom-3 start-3 rounded-xl bg-dark-bg/90 px-3 py-1.5 backdrop-blur-sm border border-dark-border">
-          <span className="text-lg font-bold text-status-star">
+        <div className="absolute bottom-3 start-3 rounded-xl bg-dark-bg/90 px-3 py-2 backdrop-blur-sm border border-dark-border">
+          <span className="text-xl font-bold text-status-star">
             {String(car.dailyPrice)}
           </span>
           <span className="ms-1 text-xs text-text-secondary">{t('perDay')}</span>

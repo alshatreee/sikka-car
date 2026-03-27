@@ -22,6 +22,8 @@ import {
   Calendar,
   ChevronLeft,
   ChevronRight,
+  Instagram,
+  Twitter,
 } from 'lucide-react'
 
 type CarType = Awaited<ReturnType<typeof getApprovedCars>>[number]
@@ -81,13 +83,8 @@ export default function HomePage() {
               </h1>
               <p className="mb-8 text-base text-text-secondary md:text-lg leading-relaxed">
                 {lang === 'ar'
-                  ? 'Sikka Car منصة كويتية تربط بين ملاك السيارات والأشخاص الباحثين عن استئجارها، ضمن تجربة رقمية واضحة وآمنة تساعد على الحجز السريع، وتمنح المالك وسيلة عملية للاستفادة من سيارته.'
-                  : 'Sikka Car is a Kuwaiti platform connecting car owners with renters through a clear, secure digital experience for quick booking.'}
-              </p>
-              <p className="mb-8 text-sm text-text-muted">
-                {lang === 'ar'
-                  ? 'تجربة واضحة وآمنة تبدأ من البحث حتى استلام السيارة.'
-                  : 'A clear and safe experience from search to car pickup.'}
+                  ? 'منصة كويتية موثوقة تربط ملاك السيارات بالمستأجرين ضمن تجربة واضحة وآمنة وسهلة الحجز'
+                  : 'A trusted Kuwaiti platform connecting car owners with renters — easy, secure, and seamless.'}
               </p>
 
               <div className="flex flex-wrap gap-3 justify-start">
@@ -110,7 +107,7 @@ export default function HomePage() {
 
             {/* Car Showcase Card - appears second in DOM so it's on the left in RTL (Arabic) and right in LTR (English) */}
             <div>
-              <div className="overflow-hidden rounded-2xl border border-dark-border bg-dark-card shadow-2xl">
+              <div className="overflow-hidden rounded-2xl border border-dark-border-light bg-dark-card shadow-[0_0_30px_rgba(255,184,0,0.08)] shadow-2xl">
                 {/* Card Header */}
                 <div className="flex items-center justify-between border-b border-dark-border px-5 py-3">
                   <span className="text-sm font-bold text-text-primary">Sikka Car</span>
@@ -248,7 +245,7 @@ export default function HomePage() {
             ].map((stat, i) => (
               <div
                 key={i}
-                className="rounded-xl border border-dark-border bg-dark-card px-4 py-3 text-center"
+                className="rounded-xl border border-dark-border-light bg-dark-card/80 px-4 py-3 text-center"
               >
                 <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
                 <div className="text-xs text-text-secondary">{stat.label}</div>
@@ -322,7 +319,7 @@ export default function HomePage() {
             ].map((feature, i) => (
               <div
                 key={i}
-                className="group rounded-2xl border border-dark-border bg-dark-card p-8 text-center shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl"
+                className="group rounded-2xl border border-dark-border bg-dark-card p-8 text-center shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:border-status-star/30"
               >
                 <div
                   className={`mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-dark-surface border border-dark-border-light shadow-lg`}
@@ -419,18 +416,87 @@ export default function HomePage() {
       </section>
 
       {/* Footer */}
-      <footer className="bg-dark-bg border-t border-dark-border py-10">
-        <div className="container text-center">
-          <div className="mb-4 flex items-center justify-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-dark-card border border-dark-border">
-              <Car className="h-4 w-4 text-status-star" />
+      <footer className="bg-dark-bg border-t border-dark-border py-16">
+        <div className="container">
+          <div className="mb-12 grid gap-12 md:grid-cols-3">
+            {/* Left Column - Logo & Description */}
+            <div>
+              <div className="mb-4 flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-dark-card border border-dark-border">
+                  <Car className="h-4 w-4 text-status-star" />
+                </div>
+                <span className="text-lg font-bold text-text-primary">
+                  Sikka <span className="text-status-star">Car</span>
+                </span>
+              </div>
+              <p className="text-sm text-text-secondary">
+                {lang === 'ar'
+                  ? 'منصة كويتية موثوقة تربط ملاك السيارات بالمستأجرين بكل سهولة وأمان'
+                  : 'A trusted Kuwaiti platform connecting car owners with renters — easy, secure, and seamless.'}
+              </p>
             </div>
-            <span className="text-lg font-bold text-text-primary">
-              Sikka <span className="text-status-star">Car</span>
-            </span>
+
+            {/* Middle Column - Quick Links */}
+            <div>
+              <h4 className="mb-4 font-bold text-text-primary">
+                {lang === 'ar' ? 'الروابط السريعة' : 'Quick Links'}
+              </h4>
+              <ul className="space-y-2 text-sm text-text-secondary">
+                <li>
+                  <Link href="/browse" className="transition-colors hover:text-status-star">
+                    {lang === 'ar' ? 'تصفح السيارات' : 'Browse Cars'}
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/list" className="transition-colors hover:text-status-star">
+                    {lang === 'ar' ? 'ضيف سيارتك' : 'List Your Car'}
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/auth/sign-in" className="transition-colors hover:text-status-star">
+                    {lang === 'ar' ? 'تسجيل الدخول' : 'Sign In'}
+                  </Link>
+                </li>
+              </ul>
+            </div>
+
+            {/* Right Column - Social & Contact */}
+            <div>
+              <h4 className="mb-4 font-bold text-text-primary">
+                {lang === 'ar' ? 'تواصل معنا' : 'Connect With Us'}
+              </h4>
+              <div className="mb-4 flex gap-3">
+                <a
+                  href="https://instagram.com"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-dark-surface"
+                  aria-label="Instagram"
+                >
+                  <Instagram className="h-4 w-4 text-text-secondary hover:text-status-star" />
+                </a>
+                <a
+                  href="https://twitter.com"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-dark-surface"
+                  aria-label="Twitter"
+                >
+                  <Twitter className="h-4 w-4 text-text-secondary hover:text-status-star" />
+                </a>
+              </div>
+              <p className="text-xs text-text-muted">
+                {lang === 'ar' ? 'البريد الإلكتروني:' : 'Email:'}{' '}
+                <a href="mailto:support@sikkacar.com" className="text-status-star hover:underline">
+                  support@sikkacar.com
+                </a>
+              </p>
+            </div>
           </div>
-          <p className="mb-4 text-sm text-text-secondary">{t('copyright')}</p>
-          <LegalLinks />
+
+          {/* Bottom - Copyright & Legal */}
+          <div className="border-t border-dark-border pt-8">
+            <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
+              <p className="text-sm text-text-secondary">{t('copyright')}</p>
+              <LegalLinks />
+            </div>
+          </div>
         </div>
       </footer>
     </main>
