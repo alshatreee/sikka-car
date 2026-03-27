@@ -62,7 +62,7 @@ export default function HomePage() {
 
         <div className="container relative py-12 md:py-20">
           {/* Badge */}
-          <div className={`mb-8 flex ${lang === 'ar' ? 'justify-end' : 'justify-start'}`}>
+          <div className="mb-8 flex justify-start">
             <div className="inline-flex items-center gap-2 rounded-full border border-status-star/30 bg-status-star/10 px-4 py-1.5">
               <Star className="h-4 w-4 text-status-star" />
               <span className="text-sm font-medium text-status-star">
@@ -73,7 +73,7 @@ export default function HomePage() {
 
           <div className="grid items-start gap-10 md:grid-cols-2">
             {/* Text Content - appears first in DOM so it's on the right in RTL (Arabic) and left in LTR (English) */}
-            <div className={lang === 'ar' ? 'text-end' : 'text-start'}>
+            <div className="text-start">
               <h1 className="mb-6 text-4xl font-black leading-tight text-text-primary md:text-5xl lg:text-6xl">
                 {lang === 'ar'
                   ? 'حوّل سيارتك إلى دخل إضافي بثقة وسهولة'
@@ -90,7 +90,7 @@ export default function HomePage() {
                   : 'A clear and safe experience from search to car pickup.'}
               </p>
 
-              <div className={`flex flex-wrap gap-3 ${lang === 'ar' ? 'justify-end' : 'justify-start'}`}>
+              <div className="flex flex-wrap gap-3 justify-start">
                 <Link
                   href="/browse"
                   className="btn-primary flex items-center gap-2 !px-6 !py-3"
