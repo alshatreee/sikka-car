@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import Image from 'next/image'
 import { useLanguage } from '@/components/shared/LanguageProvider'
-import { MapPin, Calendar, Users, Fuel } from 'lucide-react'
+import { MapPin, Calendar, Users, Fuel, Cog } from 'lucide-react'
 
 interface CarCardProps {
   car: {
@@ -97,7 +97,7 @@ export function CarCard({ car }: CarCardProps) {
           )}
           {transmissionLabel && (
             <span className="flex items-center gap-1">
-              <Fuel className="h-3.5 w-3.5 text-text-secondary" />
+              <Cog className="h-3.5 w-3.5 text-text-secondary" />
               {transmissionLabel}
             </span>
           )}

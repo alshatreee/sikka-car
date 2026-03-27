@@ -87,6 +87,11 @@ const translations: Translations = {
   filter: { ar: 'تصفية', en: 'Filter' },
   reset: { ar: 'إعادة ضبط', en: 'Reset' },
   noResults: { ar: 'لا توجد نتائج', en: 'No results found' },
+  carsAvailable: { ar: 'سيارة متاحة', en: 'cars available' },
+  oneCarAvailable: { ar: 'سيارة متاحة', en: 'car available' },
+  noResultsTitle: { ar: 'لم يتم العثور على نتائج', en: 'No results found' },
+  noResultsHint: { ar: 'جرّب تغيير معايير البحث', en: 'Try changing your search criteria' },
+  clearFilters: { ar: 'امسح الفلاتر', en: 'Clear Filters' },
 
   // Payment
   paymentSuccess: { ar: 'تم الدفع بنجاح!', en: 'Payment Successful!' },
