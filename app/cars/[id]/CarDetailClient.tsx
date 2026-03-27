@@ -9,7 +9,7 @@ import {
   MapPin,
   Calendar,
   Users,
-  Fuel,
+  Cog,
   Car,
   ChevronLeft,
   ChevronRight,
@@ -224,7 +224,7 @@ export default function CarDetailClient({
 
               {transmissionLabel && (
                 <div className="flex items-center gap-3 rounded-xl bg-dark-surface p-3 border border-dark-border">
-                  <Fuel className="h-5 w-5 text-text-secondary" />
+                  <Cog className="h-5 w-5 text-text-secondary" />
                   <div>
                     <div className="text-xs text-text-secondary">
                       {t('transmission')}

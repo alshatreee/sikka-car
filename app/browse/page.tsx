@@ -16,12 +16,19 @@ export default function BrowsePage() {
   const [loading, setLoading] = useState(true)
   const [filterKey, setFilterKey] = useState(0)
 
+  const [error, setError] = useState(false)
+
   useEffect(() => {
-    getApprovedCars().then((data) => {
-      setCars(data)
-      setFilteredCars(data)
-      setLoading(false)
-    })
+    getApprovedCars()
+      .then((data) => {
+        setCars(data)
+        setFilteredCars(data)
+        setLoading(false)
+      })
+      .catch(() => {
+        setError(true)
+        setLoading(false)
+      })
   }, [])
 
   const handleFilter = useCallback(
@@ -76,13 +83,36 @@ export default function BrowsePage() {
     )
   }
 
+  if (error) {
+    return (
+      <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
+        <div className="mb-6 rounded-3xl bg-dark-card border border-dark-border p-8">
+          <Car className="mx-auto h-20 w-20 text-status-warning" />
+        </div>
+        <p className="mb-2 text-2xl font-bold text-text-primary">
+          {lang === 'ar' ? 'حدث خطأ في تحميل البيانات' : 'Failed to load data'}
+        </p>
+        <p className="mb-6 text-text-secondary">
+          {lang === 'ar' ? 'يرجى المحاولة مرة أخرى' : 'Please try again'}
+        </p>
+        <button
+          onClick={() => window.location.reload()}
+          className="inline-flex items-center gap-2 rounded-xl bg-status-star/10 border border-status-star/30 px-6 py-3 font-medium text-status-star transition-all hover:bg-status-star/20"
+        >
+          <RotateCcw className="h-4 w-4" />
+          {lang === 'ar' ? 'إعادة المحاولة' : 'Retry'}
+        </button>
+      </div>
+    )
+  }
+
   return (
     <main className="container py-8 pb-24 md:pb-8">
       <div className="mb-8">
         <h1 className="mb-2 text-3xl font-bold text-text-primary">{t('browse')}</h1>
         <p className="text-text-secondary">
           {filteredCars.length}{' '}
-          {filteredCars.length === 1 ? 'سيارة متاحة' : 'سيارة متاحة'}
+          {filteredCars.length === 1 ? t('oneCarAvailable') : t('carsAvailable')}
         </p>
       </div>
 
@@ -93,18 +123,18 @@ export default function BrowsePage() {
           <div className="mb-6 rounded-3xl bg-dark-card border border-dark-border p-8">
             <Car className="mx-auto h-20 w-20 text-status-star" />
           </div>
-          <p className="mb-2 text-2xl font-bold text-text-primary">لم يتم العثور على نتائج</p>
-          <p className="mb-6 text-text-secondary">جرّب تغيير معايير البحث</p>
+          <p className="mb-2 text-2xl font-bold text-text-primary">{t('noResultsTitle')}</p>
+          <p className="mb-6 text-text-secondary">{t('noResultsHint')}</p>
           <button
             onClick={handleResetFilters}
             className="inline-flex items-center gap-2 rounded-xl bg-status-star/10 border border-status-star/30 px-6 py-3 font-medium text-status-star transition-all hover:bg-status-star/20"
           >
             <RotateCcw className="h-4 w-4" />
-            امسح الفلاتر
+            {t('clearFilters')}
           </button>
         </div>
       ) : (
-        <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {filteredCars.map((car) => (
             <CarCard key={car.id} car={car} />
           ))}
