@@ -1,8 +1,11 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useLanguage } from '@/components/shared/LanguageProvider'
 import { LegalLinks } from '@/components/legal/LegalModal'
+import { CarCard } from '@/components/cars/CarCard'
+import { getApprovedCars } from '@/actions/carActions'
 import {
   Car,
   Shield,
@@ -13,11 +16,25 @@ import {
   Star,
   Users,
   MapPin,
+  Loader2,
 } from 'lucide-react'
+
+type CarType = Awaited<ReturnType<typeof getApprovedCars>>[number]
 
 export default function HomePage() {
   const { t, lang } = useLanguage()
   const Arrow = lang === 'ar' ? ArrowLeft : ArrowRight
+  const [featuredCars, setFeaturedCars] = useState<CarType[]>([])
+  const [loadingCars, setLoadingCars] = useState(true)
+
+  useEffect(() => {
+    getApprovedCars()
+      .then((data) => {
+        setFeaturedCars(data.slice(0, 6))
+        setLoadingCars(false)
+      })
+      .catch(() => setLoadingCars(false))
+  }, [])
 
   return (
     <main className="min-h-screen">
@@ -92,6 +109,43 @@ export default function HomePage() {
               ))}
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* Featured Cars */}
+      <section className="bg-dark-card border-t border-dark-border py-20">
+        <div className="container">
+          <div className="mb-10 flex items-center justify-between">
+            <h2 className="text-3xl font-bold text-text-primary">
+              {lang === 'ar' ? 'سيارات مميزة' : 'Featured Cars'}
+            </h2>
+            <Link
+              href="/browse"
+              className="flex items-center gap-1 text-status-star transition-colors hover:text-status-star/80"
+            >
+              {lang === 'ar' ? 'عرض الكل' : 'View All'}
+              <Arrow className="h-4 w-4" />
+            </Link>
+          </div>
+
+          {loadingCars ? (
+            <div className="flex items-center justify-center py-16">
+              <Loader2 className="h-8 w-8 animate-spin text-text-secondary" />
+            </div>
+          ) : featuredCars.length > 0 ? (
+            <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+              {featuredCars.map((car) => (
+                <CarCard key={car.id} car={{ ...car, dailyPrice: String(car.dailyPrice) }} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-dark-border bg-dark-bg p-12 text-center">
+              <Car className="mx-auto mb-4 h-12 w-12 text-text-muted" />
+              <p className="text-lg text-text-secondary">
+                {lang === 'ar' ? 'لا توجد سيارات متاحة حالياً' : 'No cars available yet'}
+              </p>
+            </div>
+          )}
         </div>
       </section>
 
