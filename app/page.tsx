@@ -62,7 +62,7 @@ export default function HomePage() {
 
         <div className="container relative py-12 md:py-20">
           {/* Badge */}
-          <div className="mb-8 flex justify-end md:justify-end">
+          <div className={`mb-8 flex ${lang === 'ar' ? 'justify-end' : 'justify-start'}`}>
             <div className="inline-flex items-center gap-2 rounded-full border border-status-star/30 bg-status-star/10 px-4 py-1.5">
               <Star className="h-4 w-4 text-status-star" />
               <span className="text-sm font-medium text-status-star">
@@ -72,8 +72,44 @@ export default function HomePage() {
           </div>
 
           <div className="grid items-start gap-10 md:grid-cols-2">
-            {/* Left Side - Car Showcase Card */}
-            <div className="order-2 md:order-1">
+            {/* Text Content - appears first in DOM so it's on the right in RTL (Arabic) and left in LTR (English) */}
+            <div className={lang === 'ar' ? 'text-end' : 'text-start'}>
+              <h1 className="mb-6 text-4xl font-black leading-tight text-text-primary md:text-5xl lg:text-6xl">
+                {lang === 'ar'
+                  ? 'حوّل سيارتك إلى دخل إضافي بثقة وسهولة'
+                  : 'Turn Your Car Into Extra Income with Trust'}
+              </h1>
+              <p className="mb-8 text-base text-text-secondary md:text-lg leading-relaxed">
+                {lang === 'ar'
+                  ? 'Sikka Car منصة كويتية تربط بين ملاك السيارات والأشخاص الباحثين عن استئجارها، ضمن تجربة رقمية واضحة وآمنة تساعد على الحجز السريع، وتمنح المالك وسيلة عملية للاستفادة من سيارته.'
+                  : 'Sikka Car is a Kuwaiti platform connecting car owners with renters through a clear, secure digital experience for quick booking.'}
+              </p>
+              <p className="mb-8 text-sm text-text-muted">
+                {lang === 'ar'
+                  ? 'تجربة واضحة وآمنة تبدأ من البحث حتى استلام السيارة.'
+                  : 'A clear and safe experience from search to car pickup.'}
+              </p>
+
+              <div className={`flex flex-wrap gap-3 ${lang === 'ar' ? 'justify-end' : 'justify-start'}`}>
+                <Link
+                  href="/browse"
+                  className="btn-primary flex items-center gap-2 !px-6 !py-3"
+                >
+                  {t('browseNow')}
+                  <Arrow className="h-5 w-5" />
+                </Link>
+                <Link
+                  href="/list"
+                  className="flex items-center gap-2 rounded-xl border border-dark-border bg-dark-surface px-6 py-3 font-medium text-text-primary backdrop-blur-sm transition-all hover:bg-dark-border"
+                >
+                  <Car className="h-5 w-5" />
+                  {lang === 'ar' ? 'عقد المالك' : "Owner's Contract"}
+                </Link>
+              </div>
+            </div>
+
+            {/* Car Showcase Card - appears second in DOM so it's on the left in RTL (Arabic) and right in LTR (English) */}
+            <div>
               <div className="overflow-hidden rounded-2xl border border-dark-border bg-dark-card shadow-2xl">
                 {/* Card Header */}
                 <div className="flex items-center justify-between border-b border-dark-border px-5 py-3">
@@ -200,41 +236,6 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Right Side - Text Content */}
-            <div className="order-1 md:order-2 text-end">
-              <h1 className="mb-6 text-4xl font-black leading-tight text-text-primary md:text-5xl lg:text-6xl">
-                {lang === 'ar'
-                  ? 'حوّل سيارتك إلى دخل إضافي بثقة وسهولة'
-                  : 'Turn Your Car Into Extra Income with Trust'}
-              </h1>
-              <p className="mb-8 text-base text-text-secondary md:text-lg leading-relaxed">
-                {lang === 'ar'
-                  ? 'Sikka Car منصة كويتية تربط بين ملاك السيارات والأشخاص الباحثين عن استئجارها، ضمن تجربة رقمية واضحة وآمنة تساعد على الحجز السريع، وتمنح المالك وسيلة عملية للاستفادة من سيارته.'
-                  : 'Sikka Car is a Kuwaiti platform connecting car owners with renters through a clear, secure digital experience for quick booking.'}
-              </p>
-              <p className="mb-8 text-sm text-text-muted">
-                {lang === 'ar'
-                  ? 'تجربة واضحة وآمنة تبدأ من البحث حتى استلام السيارة.'
-                  : 'A clear and safe experience from search to car pickup.'}
-              </p>
-
-              <div className="flex flex-wrap gap-3 justify-end">
-                <Link
-                  href="/browse"
-                  className="btn-primary flex items-center gap-2 !px-6 !py-3"
-                >
-                  {t('browseNow')}
-                  <Arrow className="h-5 w-5" />
-                </Link>
-                <Link
-                  href="/list"
-                  className="flex items-center gap-2 rounded-xl border border-dark-border bg-dark-surface px-6 py-3 font-medium text-text-primary backdrop-blur-sm transition-all hover:bg-dark-border"
-                >
-                  <Car className="h-5 w-5" />
-                  {lang === 'ar' ? 'عقد المالك' : "Owner's Contract"}
-                </Link>
-              </div>
-            </div>
           </div>
 
           {/* Stats Bar */}
