@@ -1,6 +1,4 @@
 import type { Metadata } from "next";
-import { ClerkProvider } from "@clerk/nextjs";
-import { arSA } from "@clerk/localizations";
 import "./globals.css";
 import ClientLayout from "./ClientLayout";
 
@@ -16,18 +14,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider localization={arSA as any}>
-      <html lang="ar" dir="rtl">
-        <head>
-          <link
-            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
-            rel="stylesheet"
-          />
-        </head>
-        <body className="font-arabic antialiased">
-          <ClientLayout>{children}</ClientLayout>
-        </body>
-      </html>
-    </ClerkProvider>
+    <html lang="ar" dir="rtl">
+      <head>
+        <link
+          href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
+          rel="stylesheet"
+        />
+      </head>
+      <body className="font-arabic antialiased">
+        <ClientLayout>{children}</ClientLayout>
+      </body>
+    </html>
   );
 }

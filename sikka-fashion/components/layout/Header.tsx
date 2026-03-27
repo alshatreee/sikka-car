@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useLanguage } from "@/components/shared/LanguageProvider";
 import { Crown, Globe, Menu, X } from "lucide-react";
 import { useState } from "react";
-import { UserButton, SignedIn, SignedOut } from "@clerk/nextjs";
 
 export default function Header() {
   const { t, toggleLanguage, language, isRTL } = useLanguage();
@@ -41,20 +40,18 @@ export default function Header() {
           >
             {t("buy")}
           </Link>
-          <SignedIn>
-            <Link
-              href="/list"
-              className="text-text-secondary hover:text-fashion-gold transition-colors text-sm font-medium"
-            >
-              {t("list")}
-            </Link>
-            <Link
-              href="/dashboard"
-              className="text-text-secondary hover:text-fashion-gold transition-colors text-sm font-medium"
-            >
-              {t("dashboard")}
-            </Link>
-          </SignedIn>
+          <Link
+            href="/list"
+            className="text-text-secondary hover:text-fashion-gold transition-colors text-sm font-medium"
+          >
+            {t("list")}
+          </Link>
+          <Link
+            href="/dashboard"
+            className="text-text-secondary hover:text-fashion-gold transition-colors text-sm font-medium"
+          >
+            {t("dashboard")}
+          </Link>
         </nav>
 
         {/* Actions */}
@@ -67,20 +64,9 @@ export default function Header() {
             {language === "ar" ? "EN" : "عربي"}
           </button>
 
-          <SignedIn>
-            <UserButton
-              appearance={{
-                elements: {
-                  avatarBox: "w-8 h-8",
-                },
-              }}
-            />
-          </SignedIn>
-          <SignedOut>
-            <Link href="/sign-in" className="btn-primary text-sm py-2 px-4">
-              {t("login")}
-            </Link>
-          </SignedOut>
+          <Link href="/sign-in" className="btn-primary text-sm py-2 px-4">
+            {t("login")}
+          </Link>
 
           {/* Mobile menu toggle */}
           <button
@@ -116,22 +102,20 @@ export default function Header() {
           >
             {t("buy")}
           </Link>
-          <SignedIn>
-            <Link
-              href="/list"
-              className="text-text-secondary hover:text-fashion-gold transition-colors py-2"
-              onClick={() => setMenuOpen(false)}
-            >
-              {t("list")}
-            </Link>
-            <Link
-              href="/dashboard"
-              className="text-text-secondary hover:text-fashion-gold transition-colors py-2"
-              onClick={() => setMenuOpen(false)}
-            >
-              {t("dashboard")}
-            </Link>
-          </SignedIn>
+          <Link
+            href="/list"
+            className="text-text-secondary hover:text-fashion-gold transition-colors py-2"
+            onClick={() => setMenuOpen(false)}
+          >
+            {t("list")}
+          </Link>
+          <Link
+            href="/dashboard"
+            className="text-text-secondary hover:text-fashion-gold transition-colors py-2"
+            onClick={() => setMenuOpen(false)}
+          >
+            {t("dashboard")}
+          </Link>
         </nav>
       )}
     </header>

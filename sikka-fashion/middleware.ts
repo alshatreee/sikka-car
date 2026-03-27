@@ -1,19 +1,12 @@
-import { authMiddleware } from "@clerk/nextjs/server";
+// Middleware disabled for demo mode
+// Re-enable Clerk middleware when auth keys are configured
 
-export default authMiddleware({
-  publicRoutes: [
-    "/",
-    "/rent(.*)",
-    "/buy(.*)",
-    "/sign-in(.*)",
-    "/sign-up(.*)",
-    "/api(.*)",
-  ],
-});
+import { NextResponse } from "next/server";
+
+export function middleware() {
+  return NextResponse.next();
+}
 
 export const config = {
-  matcher: [
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    "/(api|trpc)(.*)",
-  ],
+  matcher: [],
 };
