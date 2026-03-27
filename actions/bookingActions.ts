@@ -80,6 +80,69 @@ export async function getUserBookings() {
           area: true,
         },
       },
+      review: true,
     },
   })
+}
+
+export async function cancelBooking(bookingId: string) {
+  const currentUser = await getOrCreateCurrentUser()
+  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+  })
+
+  if (!booking || booking.renterId !== currentUser.id) {
+    return { success: false, error: 'غير مصرح لك بإلغاء هذا الحجز' }
+  }
+
+  if (['COMPLETED', 'CANCELLED', 'ACTIVE'].includes(booking.status)) {
+    return { success: false, error: 'لا يمكن إلغاء هذا الحجز' }
+  }
+
+  await prisma.booking.update({
+    where: { id: bookingId },
+    data: { status: 'CANCELLED' },
+  })
+
+  revalidatePath('/dashboard')
+  return { success: true }
+}
+
+export async function submitReview(bookingId: string, rating: number, comment?: string) {
+  const currentUser = await getOrCreateCurrentUser()
+  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+
+  const booking = await prisma.booking.findUnique({
+    where: { id: bookingId },
+    include: { review: true },
+  })
+
+  if (!booking || booking.renterId !== currentUser.id) {
+    return { success: false, error: 'غير مصرح لك بتقييم هذا الحجز' }
+  }
+
+  if (booking.status !== 'COMPLETED') {
+    return { success: false, error: 'لا يمكن التقييم إلا بعد اكتمال الرحلة' }
+  }
+
+  if (booking.review) {
+    return { success: false, error: 'تم التقييم مسبقاً' }
+  }
+
+  if (rating < 1 || rating > 5) {
+    return { success: false, error: 'التقييم يجب أن يكون بين 1 و 5' }
+  }
+
+  await prisma.review.create({
+    data: {
+      bookingId,
+      rating,
+      comment: comment || null,
+    },
+  })
+
+  revalidatePath('/dashboard')
+  return { success: true }
 }

@@ -111,8 +111,95 @@ export async function getCarById(id: string) {
           phone: true,
         },
       },
+      bookings: {
+        where: { review: { isNot: null } },
+        select: {
+          review: {
+            select: {
+              id: true,
+              rating: true,
+              comment: true,
+              createdAt: true,
+            },
+          },
+          renter: {
+            select: { fullName: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      },
     },
   })
+}
+
+export async function updateCarListing(carId: string, rawData: unknown) {
+  const currentUser = await getOrCreateCurrentUser()
+  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+
+  const car = await prisma.car.findUnique({ where: { id: carId } })
+  if (!car || car.ownerId !== currentUser.id) {
+    return { success: false, error: 'غير مصرح لك بتعديل هذه السيارة' }
+  }
+
+  const parsed = carListingSchema.safeParse(rawData)
+  if (!parsed.success) {
+    return { success: false, errors: parsed.error.flatten() }
+  }
+
+  const data = parsed.data
+
+  await prisma.car.update({
+    where: { id: carId },
+    data: {
+      title: data.title,
+      year: data.year,
+      dailyPrice: data.dailyPrice,
+      area: data.area,
+      city: data.city,
+      origin: data.origin,
+      type: data.type,
+      category: data.category,
+      seats: data.seats,
+      transmission: data.transmission,
+      smokingPolicy: data.smokingPolicy,
+      distancePolicy: data.distancePolicy,
+      minAge: data.minAge,
+      availabilityText: data.availabilityText,
+      notes: data.notes,
+      images: data.images,
+      documentImages: data.documentImages,
+      status: 'PENDING',
+    },
+  })
+
+  revalidatePath('/dashboard')
+  revalidatePath('/browse')
+  return { success: true, message: 'تم تحديث السيارة وإرسالها للمراجعة' }
+}
+
+export async function deleteCar(carId: string) {
+  const currentUser = await getOrCreateCurrentUser()
+  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+
+  const car = await prisma.car.findUnique({
+    where: { id: carId },
+    include: { bookings: { where: { status: { in: ['APPROVED', 'ACTIVE'] } } } },
+  })
+
+  if (!car || car.ownerId !== currentUser.id) {
+    return { success: false, error: 'غير مصرح لك بحذف هذه السيارة' }
+  }
+
+  if (car.bookings.length > 0) {
+    return { success: false, error: 'لا يمكن حذف سيارة عليها حجوزات نشطة' }
+  }
+
+  await prisma.car.delete({ where: { id: carId } })
+
+  revalidatePath('/dashboard')
+  revalidatePath('/browse')
+  return { success: true }
 }
 
 export async function getOwnerCars() {
