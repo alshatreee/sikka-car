@@ -128,6 +128,19 @@ const translations: Translations = {
   backToSite: { ar: 'العودة للموقع', en: 'Back to Site' },
   kwd: { ar: 'د.ك', en: 'KWD' },
 
+  // Messages
+  messages: { ar: 'الرسائل', en: 'Messages' },
+  noMessages: { ar: 'لا توجد رسائل', en: 'No messages' },
+  typeMessage: { ar: 'اكتب رسالتك...', en: 'Type your message...' },
+  sendMessage: { ar: 'إرسال', en: 'Send' },
+  conversations: { ar: 'المحادثات', en: 'Conversations' },
+  unreadMessages: { ar: 'رسائل غير مقروءة', en: 'Unread messages' },
+  messagesSent: { ar: 'تم إرسال الرسالة', en: 'Message sent' },
+  backToConversations: { ar: 'العودة للمحادثات', en: 'Back to Conversations' },
+  selectConversation: { ar: 'اختر محادثة للبدء', en: 'Select a conversation to start' },
+  startMessaging: { ar: 'ابدأ محادثة جديدة', en: 'Start a new conversation' },
+  loading: { ar: 'جاري التحميل...', en: 'Loading...' },
+
   // Footer
   copyright: { ar: '© 2025 سكة كار. جميع الحقوق محفوظة.', en: '© 2025 Sikka Car. All rights reserved.' },
   termsOfService: { ar: 'شروط الاستخدام', en: 'Terms of Service' },
