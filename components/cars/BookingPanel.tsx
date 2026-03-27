@@ -27,6 +27,7 @@ export function BookingPanel({
   const [dropoffTime, setDropoffTime] = useState('')
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
+  const [showConfirm, setShowConfirm] = useState(false)
   const [bookedRanges, setBookedRanges] = useState<{ start: string; end: string }[]>([])
   const [dateConflict, setDateConflict] = useState(false)
 
@@ -62,15 +63,20 @@ export function BookingPanel({
     setError('')
 
     if (!startDate || !endDate) {
-      setError('يرجى تحديد تواريخ الحجز')
+      setError(lang === 'ar' ? 'يرجى تحديد تواريخ الحجز' : 'Please select booking dates')
       return
     }
 
     if (totalDays <= 0) {
-      setError('تاريخ النهاية يجب أن يكون بعد تاريخ البداية')
+      setError(lang === 'ar' ? 'تاريخ النهاية يجب أن يكون بعد تاريخ البداية' : 'End date must be after start date')
       return
     }
 
+    setShowConfirm(true)
+  }
+
+  function confirmBooking() {
+    setShowConfirm(false)
     startTransition(async () => {
       const bookingResult = await createBooking({
         carId,
@@ -225,14 +231,47 @@ export function BookingPanel({
           </div>
         )}
 
-        <button
-          onClick={handleBooking}
-          disabled={pending || totalDays <= 0 || dateConflict}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-solid py-3.5 font-medium text-text-primary shadow-lg transition-all hover:bg-brand-solid-hover disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <CreditCard className="h-4 w-4" />
-          {pending ? t('processing') : t('completeBooking')}
-        </button>
+        {/* Confirmation Dialog */}
+        {showConfirm && (
+          <div className="rounded-xl border border-status-star/30 bg-status-star/5 p-4">
+            <p className="mb-3 text-sm font-medium text-text-primary">
+              {lang === 'ar' ? 'تأكيد الحجز' : 'Confirm Booking'}
+            </p>
+            <div className="mb-3 space-y-1 text-xs text-text-secondary">
+              <p>{lang === 'ar' ? 'من' : 'From'}: {startDate} → {endDate}</p>
+              <p>{lang === 'ar' ? 'المدة' : 'Duration'}: {totalDays} {lang === 'ar' ? (totalDays === 1 ? 'يوم' : 'أيام') : (totalDays === 1 ? 'day' : 'days')}</p>
+              <p className="text-base font-bold text-status-star">{totalAmount.toFixed(2)} {lang === 'ar' ? 'د.ك' : 'KWD'}</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={confirmBooking}
+                disabled={pending}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand-solid py-2.5 text-sm font-medium text-text-primary transition-all hover:bg-brand-solid-hover disabled:opacity-50"
+              >
+                <CreditCard className="h-4 w-4" />
+                {pending ? t('processing') : (lang === 'ar' ? 'تأكيد والدفع' : 'Confirm & Pay')}
+              </button>
+              <button
+                onClick={() => setShowConfirm(false)}
+                disabled={pending}
+                className="rounded-xl border border-dark-border bg-dark-surface px-4 py-2.5 text-sm text-text-secondary transition-all hover:bg-dark-border disabled:opacity-50"
+              >
+                {lang === 'ar' ? 'إلغاء' : 'Cancel'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {!showConfirm && (
+          <button
+            onClick={handleBooking}
+            disabled={pending || totalDays <= 0 || dateConflict}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-solid py-3.5 font-medium text-text-primary shadow-lg transition-all hover:bg-brand-solid-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <CreditCard className="h-4 w-4" />
+            {t('completeBooking')}
+          </button>
+        )}
       </div>
     </div>
   )

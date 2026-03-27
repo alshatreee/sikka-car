@@ -9,7 +9,7 @@ export async function submitCarListing(rawData: unknown) {
   const currentUser = await getOrCreateCurrentUser()
 
   if (!currentUser) {
-    throw new Error('يجب تسجيل الدخول أولاً')
+    return { success: false, error: 'يجب تسجيل الدخول أولاً' }
   }
 
   const parsed = carListingSchema.safeParse(rawData)
@@ -135,7 +135,7 @@ export async function getCarById(id: string) {
 
 export async function updateCarListing(carId: string, rawData: unknown) {
   const currentUser = await getOrCreateCurrentUser()
-  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+  if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
 
   const car = await prisma.car.findUnique({ where: { id: carId } })
   if (!car || car.ownerId !== currentUser.id) {
@@ -180,7 +180,7 @@ export async function updateCarListing(carId: string, rawData: unknown) {
 
 export async function deleteCar(carId: string) {
   const currentUser = await getOrCreateCurrentUser()
-  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+  if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
 
   const car = await prisma.car.findUnique({
     where: { id: carId },
@@ -204,7 +204,7 @@ export async function deleteCar(carId: string) {
 
 export async function getOwnerCars() {
   const currentUser = await getOrCreateCurrentUser()
-  if (!currentUser) throw new Error('يجب تسجيل الدخول أولاً')
+  if (!currentUser) return []
 
   return prisma.car.findMany({
     where: { ownerId: currentUser.id },
