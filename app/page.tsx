@@ -103,7 +103,7 @@ export default function HomePage() {
                   className="flex items-center gap-2 rounded-xl border border-dark-border bg-dark-surface px-6 py-3 font-medium text-text-primary backdrop-blur-sm transition-all hover:bg-dark-border"
                 >
                   <Car className="h-5 w-5" />
-                  {lang === 'ar' ? 'عقد المالك' : "Owner's Contract"}
+                  {lang === 'ar' ? 'ضيف سيارتك' : 'List Your Car'}
                 </Link>
               </div>
             </div>
