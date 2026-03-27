@@ -22,6 +22,8 @@ import {
   User,
   ChevronDown,
   ChevronUp,
+  TrendingUp,
+  Wallet,
 } from 'lucide-react'
 
 interface DashboardClientProps {
@@ -142,6 +144,29 @@ export default function DashboardClient({
     0
   )
 
+  // Earnings calculations
+  const allBookings = carList.reduce((acc, car) => acc.concat(car.bookings), [] as any[])
+  const totalEarnings = allBookings
+    .filter((b) => b.status === 'COMPLETED' || b.status === 'ACTIVE')
+    .reduce((sum, b) => sum + parseFloat(String(b.totalAmount) || '0'), 0)
+
+  const currentMonth = new Date().getMonth()
+  const currentYear = new Date().getFullYear()
+  const thisMonthEarnings = allBookings
+    .filter((b) => {
+      const bookingDate = new Date(b.startDate)
+      return (
+        (b.status === 'COMPLETED' || b.status === 'ACTIVE') &&
+        bookingDate.getMonth() === currentMonth &&
+        bookingDate.getFullYear() === currentYear
+      )
+    })
+    .reduce((sum, b) => sum + parseFloat(String(b.totalAmount) || '0'), 0)
+
+  const pendingEarnings = allBookings
+    .filter((b) => b.status === 'AWAITING_PAYMENT' || b.status === 'APPROVED')
+    .reduce((sum, b) => sum + parseFloat(String(b.totalAmount) || '0'), 0)
+
   function StatusBadge({ status }: { status: string }) {
     const config = statusConfig[status] || statusConfig.PENDING
     const Icon = config.icon
@@ -229,6 +254,53 @@ export default function DashboardClient({
           </div>
         ))}
       </div>
+
+      {/* Earnings Summary */}
+      <section className="mb-10">
+        <h2 className="mb-4 text-xl font-bold text-text-primary">
+          {lang === 'ar' ? 'الأرباح' : 'Earnings'}
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-3">
+          {/* Total Earnings */}
+          <div className="card flex items-center gap-4">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-dark-surface border border-dark-border-light shadow-lg">
+              <TrendingUp className="h-6 w-6 text-status-star" />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-status-star">{totalEarnings.toFixed(2)}</div>
+              <div className="text-sm text-text-secondary">
+                {lang === 'ar' ? 'إجمالي الأرباح' : 'Total Earnings'}
+              </div>
+            </div>
+          </div>
+
+          {/* This Month Earnings */}
+          <div className="card flex items-center gap-4">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-dark-surface border border-dark-border-light shadow-lg">
+              <Wallet className="h-6 w-6 text-status-star" />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-status-star">{thisMonthEarnings.toFixed(2)}</div>
+              <div className="text-sm text-text-secondary">
+                {lang === 'ar' ? 'هذا الشهر' : 'This Month'}
+              </div>
+            </div>
+          </div>
+
+          {/* Pending Earnings */}
+          <div className="card flex items-center gap-4">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-dark-surface border border-dark-border-light shadow-lg">
+              <Clock className="h-6 w-6 text-status-star" />
+            </div>
+            <div>
+              <div className="text-2xl font-bold text-status-star">{pendingEarnings.toFixed(2)}</div>
+              <div className="text-sm text-text-secondary">
+                {lang === 'ar' ? 'قيد الانتظار' : 'Pending'}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* My Cars */}
       <section className="mb-10">
