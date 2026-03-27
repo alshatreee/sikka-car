@@ -236,12 +236,11 @@ export default function HomePage() {
           </div>
 
           {/* Stats Bar */}
-          <div className="mt-12 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="mt-12 grid grid-cols-3 gap-4">
             {[
               { value: '500+', label: lang === 'ar' ? 'سيارة معروضة' : 'Cars Listed', color: 'text-status-star' },
               { value: '2K+', label: lang === 'ar' ? 'مستخدم' : 'Users', color: 'text-text-primary' },
               { value: '4.9★', label: lang === 'ar' ? 'تقييم' : 'Rating', color: 'text-status-star' },
-              { value: '20%', label: lang === 'ar' ? 'عمولة' : 'Commission', color: 'text-text-primary' },
             ].map((stat, i) => (
               <div
                 key={i}
