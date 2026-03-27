@@ -1,0 +1,69 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-dark-bg text-text-primary antialiased;
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-dark-surface;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-dark-border;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-dark-border-light;
+  }
+}
+
+@layer components {
+  .container {
+    @apply mx-auto max-w-7xl px-4;
+  }
+
+  .btn-primary {
+    @apply rounded-xl border border-text-primary bg-transparent px-6 py-3 font-medium text-text-primary transition-all hover:bg-dark-surface;
+  }
+
+  .btn-secondary {
+    @apply rounded-xl border border-dark-border-light bg-transparent px-6 py-3 font-medium text-text-secondary transition-all hover:bg-dark-surface hover:border-dark-border;
+  }
+
+  .btn-solid {
+    @apply rounded-xl bg-brand-solid px-6 py-3 font-medium text-text-primary transition-all hover:bg-brand-solid-hover;
+  }
+
+  .input-field {
+    @apply w-full rounded-xl border border-dark-border bg-dark-card px-4 py-3 text-sm text-text-primary outline-none transition-all placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50;
+  }
+
+  .card {
+    @apply rounded-2xl border border-dark-border bg-dark-card p-6 shadow-sm transition-all hover:shadow-md;
+  }
+
+  .card-light {
+    @apply rounded-2xl border border-gray-200 bg-white p-6 shadow-sm transition-all hover:shadow-md;
+  }
+}
+
+@layer utilities {
+  .gradient-text {
+    @apply bg-gradient-to-r from-status-star to-status-star bg-clip-text text-transparent;
+  }
+
+  .glass {
+    @apply border border-white/20 bg-white/10 backdrop-blur-md;
+  }
+}

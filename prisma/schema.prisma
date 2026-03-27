@@ -1,0 +1,105 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CarStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum BookingStatus {
+  PENDING
+  AWAITING_PAYMENT
+  APPROVED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  REJECTED
+}
+
+enum TransmissionType {
+  AUTOMATIC
+  MANUAL
+  ELECTRIC
+}
+
+model User {
+  id          String    @id @default(cuid())
+  clerkUserId String    @unique
+  email       String    @unique
+  fullName    String?
+  phone       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  cars        Car[]
+  bookings    Booking[] @relation("RenterBookings")
+}
+
+model Car {
+  id               String           @id @default(cuid())
+  ownerId          String
+  owner            User             @relation(fields: [ownerId], references: [id])
+
+  title            String
+  titleEn          String?
+  brand            String?
+  model            String?
+  year             Int
+  dailyPrice       Decimal          @db.Decimal(10, 2)
+
+  area             String
+  city             String?
+  origin           String?
+  type             String?
+  category         String?
+
+  seats            Int?
+  transmission     TransmissionType?
+  smokingPolicy    String?
+  distancePolicy   String?
+  minAge           Int?
+  availabilityText String?
+  notes            String?
+
+  images           String[]
+  documentImages   String[]
+
+  status           CarStatus        @default(PENDING)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  bookings         Booking[]
+}
+
+model Booking {
+  id               String        @id @default(cuid())
+  carId            String
+  renterId         String
+
+  car              Car           @relation(fields: [carId], references: [id])
+  renter           User          @relation("RenterBookings", fields: [renterId], references: [id])
+
+  startDate        DateTime
+  endDate          DateTime
+  pickupTime       String?
+  dropoffTime      String?
+  totalDays        Int
+  totalAmount      Decimal       @db.Decimal(10, 2)
+  notes            String?
+
+  paymentReference String?
+  paymentUrl       String?
+  status           BookingStatus @default(PENDING)
+
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}
