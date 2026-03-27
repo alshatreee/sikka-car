@@ -452,8 +452,8 @@ export default function HomePage() {
                   </Link>
                 </li>
                 <li>
-                  <Link href="/auth/sign-in" className="transition-colors hover:text-status-star">
-                    {lang === 'ar' ? 'تسجيل الدخول' : 'Sign In'}
+                  <Link href="/contact" className="transition-colors hover:text-status-star">
+                    {lang === 'ar' ? 'تواصل معنا' : 'Contact Us'}
                   </Link>
                 </li>
               </ul>
