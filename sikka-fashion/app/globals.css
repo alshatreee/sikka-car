@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --background: #0C0A09;
+  --foreground: #FAFAF9;
+  --gold: #D4A853;
+  --gold-light: #E8C878;
+  --gold-dark: #B8922F;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: "IBM Plex Sans Arabic", sans-serif;
+}
+
+/* Buttons */
+.btn-primary {
+  @apply bg-fashion-gold text-dark-bg font-semibold px-6 py-3 rounded-xl
+    hover:bg-fashion-gold-dark transition-all duration-200;
+}
+
+.btn-secondary {
+  @apply border border-fashion-gold text-fashion-gold px-6 py-3 rounded-xl
+    hover:bg-fashion-gold hover:text-dark-bg transition-all duration-200;
+}
+
+.btn-solid {
+  @apply bg-fashion-gold text-dark-bg font-bold px-8 py-3 rounded-xl
+    hover:bg-fashion-gold-dark transition-all duration-200 shadow-lg shadow-fashion-gold/20;
+}
+
+/* Cards */
+.card {
+  @apply bg-dark-card border border-dark-border rounded-2xl overflow-hidden
+    hover:border-fashion-gold/30 transition-all duration-300;
+}
+
+.card-light {
+  @apply bg-dark-surface border border-dark-border rounded-xl;
+}
+
+/* Inputs */
+.input-field {
+  @apply w-full bg-dark-surface border border-dark-border rounded-xl px-4 py-3
+    text-text-primary placeholder-text-muted
+    focus:border-fashion-gold focus:outline-none focus:ring-1 focus:ring-fashion-gold/50
+    transition-all duration-200;
+}
+
+/* Glass effect */
+.glass {
+  @apply bg-dark-card/80 backdrop-blur-md border border-dark-border;
+}
+
+/* Gradient text */
+.gradient-text {
+  @apply bg-gradient-to-l from-fashion-gold via-fashion-gold-light to-fashion-gold
+    bg-clip-text text-transparent;
+}
+
+/* Badge styles */
+.badge-rent {
+  @apply bg-fashion-gold/20 text-fashion-gold text-xs font-semibold px-3 py-1 rounded-full;
+}
+
+.badge-sale {
+  @apply bg-fashion-rose/20 text-fashion-rose-light text-xs font-semibold px-3 py-1 rounded-full;
+}
+
+.badge-both {
+  @apply bg-purple-500/20 text-purple-300 text-xs font-semibold px-3 py-1 rounded-full;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3D3530;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gold-dark);
+}

@@ -1,0 +1,179 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum ItemStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ListingType {
+  RENT
+  SALE
+  BOTH
+}
+
+enum ItemCategory {
+  SUIT
+  BLAZER
+  DRESS
+  EVENING_GOWN
+  ABAYA
+  JUMPSUIT
+  SKIRT_SET
+  OTHER
+}
+
+enum ItemSize {
+  XS
+  S
+  M
+  L
+  XL
+  XXL
+}
+
+enum ItemCondition {
+  NEW_WITH_TAGS
+  EXCELLENT
+  VERY_GOOD
+  GOOD
+}
+
+enum Occasion {
+  WEDDING
+  FORMAL
+  BUSINESS
+  PARTY
+  GRADUATION
+  ENGAGEMENT
+  EID
+  NATIONAL_DAY
+  OTHER
+}
+
+enum RentalStatus {
+  PENDING
+  AWAITING_PAYMENT
+  APPROVED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  REJECTED
+}
+
+enum PurchaseStatus {
+  PENDING
+  AWAITING_PAYMENT
+  PAID
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REJECTED
+}
+
+model User {
+  id          String   @id @default(cuid())
+  clerkUserId String   @unique
+  email       String   @unique
+  fullName    String?
+  phone       String?
+  avatarUrl   String?
+  role        UserRole @default(USER)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  items     FashionItem[]
+  rentals   Rental[]
+  purchases Purchase[]
+  reviews   Review[]
+}
+
+model FashionItem {
+  id                String        @id @default(cuid())
+  ownerId           String
+  title             String
+  titleAr           String?
+  brand             String
+  description       String?
+  descriptionAr     String?
+  category          ItemCategory
+  size              ItemSize
+  color             String
+  condition         ItemCondition
+  occasion          Occasion
+  retailPrice       Float
+  listingType       ListingType
+  rentalPricePerDay Float?
+  salePrice         Float?
+  cleaningFee       Float?
+  images            String[]
+  status            ItemStatus    @default(PENDING)
+  area              String?
+  city              String        @default("الكويت")
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  owner     User       @relation(fields: [ownerId], references: [id])
+  rentals   Rental[]
+  purchases Purchase[]
+  reviews   Review[]
+}
+
+model Rental {
+  id               String       @id @default(cuid())
+  itemId           String
+  renterId         String
+  startDate        DateTime
+  endDate          DateTime
+  totalDays        Int
+  totalAmount      Float
+  cleaningIncluded Boolean      @default(false)
+  notes            String?
+  paymentReference String?
+  status           RentalStatus @default(PENDING)
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  item   FashionItem @relation(fields: [itemId], references: [id])
+  renter User        @relation(fields: [renterId], references: [id])
+}
+
+model Purchase {
+  id               String         @id @default(cuid())
+  itemId           String
+  buyerId          String
+  amount           Float
+  notes            String?
+  paymentReference String?
+  status           PurchaseStatus @default(PENDING)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  item  FashionItem @relation(fields: [itemId], references: [id])
+  buyer User        @relation(fields: [buyerId], references: [id])
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  itemId     String
+  reviewerId String
+  rating     Int
+  comment    String?
+  createdAt  DateTime @default(now())
+
+  item     FashionItem @relation(fields: [itemId], references: [id])
+  reviewer User        @relation(fields: [reviewerId], references: [id])
+}
