@@ -1,6 +1,7 @@
 'use server'
 
 import { prisma } from '@/lib/prisma'
+import { sendPaymentConfirmation } from '@/lib/email'
 
 export async function initiatePayment(
   amount: number,
@@ -80,6 +81,19 @@ export async function verifyPayment(bookingId: string, tapId: string) {
     const data = await res.json()
 
     if (data?.status === 'CAPTURED') {
+      // Fetch booking with related data for email
+      const booking = await prisma.booking.findUnique({
+        where: { id: bookingId },
+        include: {
+          renter: {
+            select: { email: true, fullName: true },
+          },
+          car: {
+            select: { title: true },
+          },
+        },
+      })
+
       await prisma.booking.update({
         where: { id: bookingId },
         data: {
@@ -87,6 +101,18 @@ export async function verifyPayment(bookingId: string, tapId: string) {
           paymentReference: tapId,
         },
       })
+
+      // Send payment confirmation email (fire-and-forget)
+      if (booking?.renter?.email) {
+        sendPaymentConfirmation(booking.renter.email, {
+          bookingId,
+          carTitle: booking.car.title,
+          totalAmount: Number(booking.totalAmount),
+          renterName: booking.renter.fullName || 'Guest',
+          paymentReference: tapId,
+        }).catch((err) => console.error('Failed to send payment confirmation:', err))
+      }
+
       return { success: true, status: 'CAPTURED' }
     }
 
