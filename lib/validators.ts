@@ -27,6 +27,14 @@ export const bookingSchema = z.object({
   pickupTime: z.string().optional(),
   dropoffTime: z.string().optional(),
   notes: z.string().optional(),
-  civilId: z.string().regex(/^\d{12}$/, 'Civil ID must be exactly 12 digits'),
-  licenseNumber: z.string().min(1, 'License number is required'),
-})
+  civilId: z.string().optional(),
+  licenseNumber: z.string().optional(),
+  civilIdImage: z.string().optional(),
+  licenseImage: z.string().optional(),
+}).refine(
+  (data) => (data.civilId && data.civilId.length > 0) || (data.civilIdImage && data.civilIdImage.length > 0),
+  { message: 'يرجى إدخال الرقم المدني أو رفع صورة البطاقة المدنية', path: ['civilId'] }
+).refine(
+  (data) => (data.licenseNumber && data.licenseNumber.length > 0) || (data.licenseImage && data.licenseImage.length > 0),
+  { message: 'يرجى إدخال رقم الرخصة أو رفع صورة الرخصة', path: ['licenseNumber'] }
+)

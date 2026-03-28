@@ -8,7 +8,9 @@ export async function updateProfile(data: {
   fullName?: string
   phone?: string
   civilId?: string
+  civilIdImage?: string
   drivingLicense?: string
+  drivingLicenseImage?: string
 }) {
   const currentUser = await getOrCreateCurrentUser()
   if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
@@ -18,8 +20,10 @@ export async function updateProfile(data: {
     data: {
       fullName: data.fullName || currentUser.fullName,
       phone: data.phone || currentUser.phone,
-      civilId: data.civilId || currentUser.civilId,
-      drivingLicense: data.drivingLicense || currentUser.drivingLicense,
+      civilId: data.civilId !== undefined ? data.civilId : currentUser.civilId,
+      civilIdImage: data.civilIdImage !== undefined ? data.civilIdImage : currentUser.civilIdImage,
+      drivingLicense: data.drivingLicense !== undefined ? data.drivingLicense : currentUser.drivingLicense,
+      drivingLicenseImage: data.drivingLicenseImage !== undefined ? data.drivingLicenseImage : currentUser.drivingLicenseImage,
     },
   })
 
@@ -37,7 +41,9 @@ export async function getProfile() {
     email: currentUser.email,
     phone: currentUser.phone,
     civilId: currentUser.civilId,
+    civilIdImage: currentUser.civilIdImage,
     drivingLicense: currentUser.drivingLicense,
+    drivingLicenseImage: currentUser.drivingLicenseImage,
   }
 }
 
