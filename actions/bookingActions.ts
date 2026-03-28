@@ -21,13 +21,7 @@ export async function createBooking(rawData: unknown) {
   const currentUser = await getOrCreateCurrentUser()
   if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
 
-  // Identity verification: require civil ID and driving license
-  if (!currentUser.civilId || !currentUser.drivingLicense) {
-    return {
-      success: false,
-      error: 'يرجى إكمال بيانات الهوية المدنية ورخصة القيادة من صفحة الملف الشخصي قبل الحجز',
-    }
-  }
+
 
   const parsed = bookingSchema.safeParse(rawData)
   if (!parsed.success) {
@@ -79,8 +73,10 @@ export async function createBooking(rawData: unknown) {
           endDate: end,
           pickupTime: data.pickupTime,
           dropoffTime: data.dropoffTime,
-          civilId: data.civilId,
-          licenseNumber: data.licenseNumber,
+          civilId: data.civilId || undefined,
+          licenseNumber: data.licenseNumber || undefined,
+          civilIdImage: data.civilIdImage || undefined,
+          licenseImage: data.licenseImage || undefined,
           totalDays,
           totalAmount,
           notes: data.notes,
