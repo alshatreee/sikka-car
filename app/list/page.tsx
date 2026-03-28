@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useMemo } from 'react'
 import { submitCarListing } from '@/actions/carActions'
 import { uploadToCloudinary } from '@/utils/uploadImage'
 import { useLanguage } from '@/components/shared/LanguageProvider'
@@ -26,6 +26,89 @@ export default function ListPage() {
   const [uploading, setUploading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
+  const [selectedGovernorate, setSelectedGovernorate] = useState('')
+
+  const governorateCities: Record<string, { value: string; en: string }[]> = {
+    'العاصمة': [
+      { value: 'الشرق', en: 'Sharq' },
+      { value: 'المرقاب', en: 'Mirqab' },
+      { value: 'القبلة', en: 'Qibla' },
+      { value: 'الدسمة', en: 'Dasma' },
+      { value: 'الدعية', en: 'Daiya' },
+      { value: 'كيفان', en: 'Kaifan' },
+      { value: 'الشامية', en: 'Shamiya' },
+      { value: 'الروضة', en: 'Rawda' },
+      { value: 'العديلية', en: 'Adailiya' },
+      { value: 'الخالدية', en: 'Khalidiya' },
+      { value: 'النزهة', en: 'Nuzha' },
+      { value: 'الفيحاء', en: 'Faiha' },
+      { value: 'القادسية', en: 'Qadsiya' },
+      { value: 'قرطبة', en: 'Qurtuba' },
+      { value: 'السرة', en: 'Surra' },
+      { value: 'اليرموك', en: 'Yarmouk' },
+      { value: 'الشويخ', en: 'Shuwaikh' },
+    ],
+    'حولي': [
+      { value: 'حولي', en: 'Hawalli' },
+      { value: 'السالمية', en: 'Salmiya' },
+      { value: 'الجابرية', en: 'Jabriya' },
+      { value: 'الرميثية', en: 'Rumaithiya' },
+      { value: 'سلوى', en: 'Salwa' },
+      { value: 'بيان', en: 'Bayan' },
+      { value: 'مشرف', en: 'Mishref' },
+      { value: 'حطين', en: 'Hittin' },
+      { value: 'الشهداء', en: 'Shuhada' },
+      { value: 'الزهراء', en: 'Zahra' },
+    ],
+    'الفروانية': [
+      { value: 'الفروانية', en: 'Farwaniya' },
+      { value: 'خيطان', en: 'Khaitan' },
+      { value: 'العمرية', en: 'Omariya' },
+      { value: 'الرابية', en: 'Rabiya' },
+      { value: 'الأندلس', en: 'Andalus' },
+      { value: 'اشبيلية', en: 'Ishbiliya' },
+      { value: 'جليب الشيوخ', en: 'Jleeb Al-Shuyoukh' },
+      { value: 'الرقعي', en: 'Riggae' },
+      { value: 'الحسانية', en: 'Hassaniya' },
+      { value: 'عبدالله المبارك', en: 'Abdullah Al-Mubarak' },
+    ],
+    'الأحمدي': [
+      { value: 'الأحمدي', en: 'Ahmadi' },
+      { value: 'الفحيحيل', en: 'Fahaheel' },
+      { value: 'المنقف', en: 'Mangaf' },
+      { value: 'المهبولة', en: 'Mahboula' },
+      { value: 'الفنطاس', en: 'Fintas' },
+      { value: 'أبو حليفة', en: 'Abu Halifa' },
+      { value: 'الرقة', en: 'Riqqa' },
+      { value: 'هدية', en: 'Hadiya' },
+      { value: 'العقيلة', en: 'Aqeela' },
+      { value: 'صباح الأحمد', en: 'Sabah Al-Ahmad' },
+    ],
+    'مبارك الكبير': [
+      { value: 'صباح السالم', en: 'Sabah Al-Salem' },
+      { value: 'المسيلة', en: 'Maseela' },
+      { value: 'العدان', en: 'Adan' },
+      { value: 'القصور', en: 'Qusour' },
+      { value: 'القرين', en: 'Qurain' },
+      { value: 'الفنيطيس', en: 'Funaitees' },
+      { value: 'أبو فطيرة', en: 'Abu Ftaira' },
+      { value: 'المسايل', en: 'Masayel' },
+    ],
+    'الجهراء': [
+      { value: 'الجهراء', en: 'Jahra' },
+      { value: 'النسيم', en: 'Naseem' },
+      { value: 'القصر', en: 'Qasr' },
+      { value: 'تيماء', en: 'Taima' },
+      { value: 'سعد العبدالله', en: 'Saad Al-Abdullah' },
+      { value: 'النعيم', en: 'Naeem' },
+      { value: 'العيون', en: 'Oyoun' },
+      { value: 'الصليبية', en: 'Sulaibiya' },
+    ],
+  }
+
+  const availableCities = useMemo(() => {
+    return selectedGovernorate ? governorateCities[selectedGovernorate] || [] : []
+  }, [selectedGovernorate])
 
   async function handleFileUpload(
     files: FileList | null,
@@ -163,15 +246,12 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('year')} *
                   </label>
-                  <input
-                    name="year"
-                    type="number"
-                    required
-                    min="2000"
-                    max="2100"
-                    placeholder="2024"
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="year" required className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- السنة --' : '-- Year --'}</option>
+                    {Array.from({ length: 31 }, (_, i) => 2030 - i).map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-primary">
@@ -192,10 +272,16 @@ export default function ListPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-primary">
-                    {t('area')} *
+                    {lang === 'ar' ? 'المحافظة' : 'Governorate'} *
                   </label>
-                  <select name="area" required className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
-                    <option value="">{t('allAreas')}</option>
+                  <select
+                    name="area"
+                    required
+                    value={selectedGovernorate}
+                    onChange={(e) => setSelectedGovernorate(e.target.value)}
+                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
+                  >
+                    <option value="">{lang === 'ar' ? '-- المحافظة --' : '-- Governorate --'}</option>
                     <option value="العاصمة">{lang === 'ar' ? 'العاصمة' : 'Capital'}</option>
                     <option value="حولي">{lang === 'ar' ? 'حولي' : 'Hawalli'}</option>
                     <option value="الفروانية">{lang === 'ar' ? 'الفروانية' : 'Farwaniya'}</option>
@@ -206,9 +292,25 @@ export default function ListPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-primary">
-                    {t('city')}
+                    {lang === 'ar' ? 'المنطقة' : 'Area'} *
                   </label>
-                  <input name="city" placeholder={t('city')} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50" />
+                  <select
+                    name="city"
+                    required
+                    disabled={!selectedGovernorate}
+                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <option value="">
+                      {!selectedGovernorate
+                        ? (lang === 'ar' ? 'اختر المحافظة أولاً' : 'Select governorate first')
+                        : (lang === 'ar' ? '-- المنطقة --' : '-- Area --')}
+                    </option>
+                    {availableCities.map((city) => (
+                      <option key={city.value} value={city.value}>
+                        {lang === 'ar' ? city.value : city.en}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
             </div>
@@ -225,13 +327,38 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('origin')}
                   </label>
-                  <input name="origin" placeholder={t('origin')} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50" />
+                  <select name="origin" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- بلد المنشأ --' : '-- Origin --'}</option>
+                    <option value="يابانية">{lang === 'ar' ? 'يابانية' : 'Japanese'}</option>
+                    <option value="أمريكية">{lang === 'ar' ? 'أمريكية' : 'American'}</option>
+                    <option value="كورية">{lang === 'ar' ? 'كورية' : 'Korean'}</option>
+                    <option value="ألمانية">{lang === 'ar' ? 'ألمانية' : 'German'}</option>
+                    <option value="بريطانية">{lang === 'ar' ? 'بريطانية' : 'British'}</option>
+                    <option value="صينية">{lang === 'ar' ? 'صينية' : 'Chinese'}</option>
+                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('carType')}
                   </label>
-                  <input name="type" placeholder={t('carType')} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50" />
+                  <select name="type" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- النوع --' : '-- Type --'}</option>
+                    <option value="تويوتا">{lang === 'ar' ? 'تويوتا' : 'Toyota'}</option>
+                    <option value="نيسان">{lang === 'ar' ? 'نيسان' : 'Nissan'}</option>
+                    <option value="هوندا">{lang === 'ar' ? 'هوندا' : 'Honda'}</option>
+                    <option value="هيونداي">{lang === 'ar' ? 'هيونداي' : 'Hyundai'}</option>
+                    <option value="كيا">{lang === 'ar' ? 'كيا' : 'Kia'}</option>
+                    <option value="شيفروليه">{lang === 'ar' ? 'شيفروليه' : 'Chevrolet'}</option>
+                    <option value="فورد">{lang === 'ar' ? 'فورد' : 'Ford'}</option>
+                    <option value="مرسيدس">{lang === 'ar' ? 'مرسيدس' : 'Mercedes'}</option>
+                    <option value="بي ام دبليو">{lang === 'ar' ? 'بي ام دبليو' : 'BMW'}</option>
+                    <option value="لكزس">{lang === 'ar' ? 'لكزس' : 'Lexus'}</option>
+                    <option value="جي ام سي">{lang === 'ar' ? 'جي ام سي' : 'GMC'}</option>
+                    <option value="لاند روفر">{lang === 'ar' ? 'لاند روفر' : 'Land Rover'}</option>
+                    <option value="بورشه">{lang === 'ar' ? 'بورشه' : 'Porsche'}</option>
+                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  </select>
                 </div>
               </div>
 
@@ -255,14 +382,15 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('seats')}
                   </label>
-                  <input
-                    name="seats"
-                    type="number"
-                    min="1"
-                    max="15"
-                    placeholder="5"
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="seats" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- المقاعد --' : '-- Seats --'}</option>
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
+                    <option value="9">9</option>
+                  </select>
                 </div>
               </div>
 
@@ -281,13 +409,13 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('minAge')}
                   </label>
-                  <input
-                    name="minAge"
-                    type="number"
-                    min="18"
-                    placeholder="21"
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="minAge" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- العمر --' : '-- Age --'}</option>
+                    <option value="18">18</option>
+                    <option value="21">21</option>
+                    <option value="25">25</option>
+                    <option value="30">30</option>
+                  </select>
                 </div>
               </div>
 
@@ -305,11 +433,15 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('distancePolicy')}
                   </label>
-                  <input
-                    name="distancePolicy"
-                    placeholder={lang === 'ar' ? 'مثال: 200 كم/يوم' : 'e.g. 200 km/day'}
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="distancePolicy" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- المسافة --' : '-- Distance --'}</option>
+                    <option value="مفتوحة">{lang === 'ar' ? 'مفتوحة (بدون حد)' : 'Unlimited'}</option>
+                    <option value="100 كم/يوم">{lang === 'ar' ? '100 كم/يوم' : '100 km/day'}</option>
+                    <option value="150 كم/يوم">{lang === 'ar' ? '150 كم/يوم' : '150 km/day'}</option>
+                    <option value="200 كم/يوم">{lang === 'ar' ? '200 كم/يوم' : '200 km/day'}</option>
+                    <option value="250 كم/يوم">{lang === 'ar' ? '250 كم/يوم' : '250 km/day'}</option>
+                    <option value="300 كم/يوم">{lang === 'ar' ? '300 كم/يوم' : '300 km/day'}</option>
+                  </select>
                 </div>
               </div>
 
@@ -317,11 +449,13 @@ export default function ListPage() {
                 <label className="mb-1 block text-sm font-medium text-text-primary">
                   {t('availability')}
                 </label>
-                <input
-                  name="availabilityText"
-                  placeholder={lang === 'ar' ? 'مثال: متاح يومياً من 8 صباحاً' : 'e.g. Available daily from 8 AM'}
-                  className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                />
+                <select name="availabilityText" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                  <option value="">{lang === 'ar' ? '-- التوفر --' : '-- Availability --'}</option>
+                  <option value="متاح يومياً">{lang === 'ar' ? 'متاح يومياً' : 'Available daily'}</option>
+                  <option value="أيام العمل فقط">{lang === 'ar' ? 'أيام العمل فقط' : 'Weekdays only'}</option>
+                  <option value="عطلة نهاية الأسبوع">{lang === 'ar' ? 'عطلة نهاية الأسبوع فقط' : 'Weekends only'}</option>
+                  <option value="حسب الاتفاق">{lang === 'ar' ? 'حسب الاتفاق' : 'By arrangement'}</option>
+                </select>
               </div>
 
               <div>

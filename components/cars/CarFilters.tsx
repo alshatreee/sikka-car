@@ -90,7 +90,7 @@ export function CarFilters({ onFilter }: CarFiltersProps) {
         <div className="space-y-4 rounded-2xl border border-dark-border bg-dark-card p-4">
           <div>
             <label className="mb-2 block text-sm font-medium text-text-primary">
-              {t('area')}
+              {lang === 'ar' ? 'المحافظة' : 'Governorate'}
             </label>
             <div className="flex flex-wrap gap-2">
               <button

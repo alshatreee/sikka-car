@@ -21,6 +21,14 @@ export async function createBooking(rawData: unknown) {
   const currentUser = await getOrCreateCurrentUser()
   if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
 
+  // Identity verification: require civil ID and driving license
+  if (!currentUser.civilId || !currentUser.drivingLicense) {
+    return {
+      success: false,
+      error: 'يرجى إكمال بيانات الهوية المدنية ورخصة القيادة من صفحة الملف الشخصي قبل الحجز',
+    }
+  }
+
   const parsed = bookingSchema.safeParse(rawData)
   if (!parsed.success) {
     return {
@@ -44,38 +52,48 @@ export async function createBooking(rawData: unknown) {
     return { success: false, error: 'تاريخ الحجز غير صحيح' }
   }
 
-  // Check for date conflicts with existing bookings
-  const conflictingBooking = await prisma.booking.findFirst({
-    where: {
-      carId: data.carId,
-      status: { in: ['AWAITING_PAYMENT', 'APPROVED', 'ACTIVE'] },
-      startDate: { lt: end },
-      endDate: { gt: start },
-    },
-  })
-
-  if (conflictingBooking) {
-    return { success: false, error: 'السيارة محجوزة في هذه الفترة، يرجى اختيار تواريخ أخرى' }
-  }
-
   const totalAmount = Number(car.dailyPrice) * totalDays
 
-  const booking = await prisma.booking.create({
-    data: {
-      carId: car.id,
-      renterId: currentUser.id,
-      startDate: start,
-      endDate: end,
-      pickupTime: data.pickupTime,
-      dropoffTime: data.dropoffTime,
-      civilId: data.civilId,
-      licenseNumber: data.licenseNumber,
-      totalDays,
-      totalAmount,
-      notes: data.notes,
-      status: 'AWAITING_PAYMENT',
-    },
-  })
+  // Wrap conflict check and creation in a transaction for atomicity
+  let booking
+  try {
+    booking = await prisma.$transaction(async (tx) => {
+      const conflictingBooking = await tx.booking.findFirst({
+        where: {
+          carId: data.carId,
+          status: { in: ['AWAITING_PAYMENT', 'APPROVED', 'ACTIVE'] },
+          startDate: { lt: end },
+          endDate: { gt: start },
+        },
+      })
+
+      if (conflictingBooking) {
+        throw new Error('CONFLICT')
+      }
+
+      return tx.booking.create({
+        data: {
+          carId: car.id,
+          renterId: currentUser.id,
+          startDate: start,
+          endDate: end,
+          pickupTime: data.pickupTime,
+          dropoffTime: data.dropoffTime,
+          civilId: data.civilId,
+          licenseNumber: data.licenseNumber,
+          totalDays,
+          totalAmount,
+          notes: data.notes,
+          status: 'AWAITING_PAYMENT',
+        },
+      })
+    })
+  } catch (error: any) {
+    if (error?.message === 'CONFLICT') {
+      return { success: false, error: 'السيارة محجوزة في هذه الفترة، يرجى اختيار تواريخ أخرى' }
+    }
+    throw error
+  }
 
   // Log booking creation (fire-and-forget)
   logAudit({

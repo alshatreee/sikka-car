@@ -1,6 +1,7 @@
 'use server'
 
 import { prisma } from '@/lib/prisma'
+import { getOrCreateCurrentUser } from '@/lib/auth'
 import { sendPaymentConfirmation } from '@/lib/email'
 
 export async function initiatePayment(
@@ -69,6 +70,9 @@ export async function initiatePayment(
 
 export async function verifyPayment(bookingId: string, tapId: string) {
   try {
+    const currentUser = await getOrCreateCurrentUser()
+    if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
+
     const tapSecretKey = process.env.TAP_SECRET_KEY
     if (!tapSecretKey) throw new Error('TAP_SECRET_KEY is missing')
 
@@ -86,7 +90,7 @@ export async function verifyPayment(bookingId: string, tapId: string) {
         where: { id: bookingId },
         include: {
           renter: {
-            select: { email: true, fullName: true },
+            select: { id: true, email: true, fullName: true },
           },
           car: {
             select: { title: true },
@@ -94,8 +98,16 @@ export async function verifyPayment(bookingId: string, tapId: string) {
         },
       })
 
-      await prisma.booking.update({
-        where: { id: bookingId },
+      if (!booking || booking.renterId !== currentUser.id) {
+        return { success: false, error: 'غير مصرح لك بالتحقق من هذا الدفع' }
+      }
+
+      if (booking.status !== 'AWAITING_PAYMENT') {
+        return { success: false, error: 'حالة الحجز لا تسمح بالدفع' }
+      }
+
+      await prisma.booking.updateMany({
+        where: { id: bookingId, status: 'AWAITING_PAYMENT' },
         data: {
           status: 'APPROVED',
           paymentReference: tapId,
