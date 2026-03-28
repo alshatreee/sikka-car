@@ -89,6 +89,9 @@ model Car {
   updatedAt        DateTime         @updatedAt
 
   bookings         Booking[]
+
+  @@index([ownerId])
+  @@index([status])
 }
 
 model Booking {
@@ -96,8 +99,8 @@ model Booking {
   carId            String
   renterId         String
 
-  car              Car           @relation(fields: [carId], references: [id])
-  renter           User          @relation("RenterBookings", fields: [renterId], references: [id])
+  car              Car           @relation(fields: [carId], references: [id], onDelete: Cascade)
+  renter           User          @relation("RenterBookings", fields: [renterId], references: [id], onDelete: Cascade)
 
   startDate        DateTime
   endDate          DateTime
@@ -117,12 +120,16 @@ model Booking {
   review           Review?
   photos           BookingPhoto[]
   messages         Message[]
+
+  @@index([carId])
+  @@index([renterId])
+  @@index([status])
 }
 
 model BookingPhoto {
   id          String   @id @default(cuid())
   bookingId   String
-  booking     Booking  @relation(fields: [bookingId], references: [id])
+  booking     Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   url         String
   type        String
   uploadedBy  String
@@ -132,7 +139,7 @@ model BookingPhoto {
 model Review {
   id        String   @id @default(cuid())
   bookingId String   @unique
-  booking   Booking  @relation(fields: [bookingId], references: [id])
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   rating    Int
   comment   String?
   createdAt DateTime @default(now())
@@ -147,7 +154,11 @@ model Message {
   read       Boolean  @default(false)
   createdAt  DateTime @default(now())
 
-  sender     User     @relation("SentMessages", fields: [senderId], references: [id])
-  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
-  booking    Booking? @relation(fields: [bookingId], references: [id])
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id], onDelete: Cascade)
+  booking    Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+
+  @@index([receiverId, read])
+  @@index([senderId])
+  @@index([bookingId])
 }
