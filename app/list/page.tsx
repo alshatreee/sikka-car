@@ -274,8 +274,14 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {lang === 'ar' ? 'المحافظة' : 'Governorate'} *
                   </label>
-                  <select name="area" required value={selectedGovernorate} onChange={(e) => setSelectedGovernorate(e.target.value)} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
-                    <option value="">{lang === 'ar' ? '-- اختر المحافظة --' : '-- Select Governorate --'}</option>
+                  <select
+                    name="area"
+                    required
+                    value={selectedGovernorate}
+                    onChange={(e) => setSelectedGovernorate(e.target.value)}
+                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
+                  >
+                    <option value="">{lang === 'ar' ? '-- المحافظة --' : '-- Governorate --'}</option>
                     <option value="العاصمة">{lang === 'ar' ? 'العاصمة' : 'Capital'}</option>
                     <option value="حولي">{lang === 'ar' ? 'حولي' : 'Hawalli'}</option>
                     <option value="الفروانية">{lang === 'ar' ? 'الفروانية' : 'Farwaniya'}</option>
@@ -288,10 +294,21 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {lang === 'ar' ? 'المنطقة' : 'Area'} *
                   </label>
-                  <select name="city" required disabled={!selectedGovernorate} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <option value="">{lang === 'ar' ? '-- اختر المنطقة --' : '-- Select Area --'}</option>
+                  <select
+                    name="city"
+                    required
+                    disabled={!selectedGovernorate}
+                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <option value="">
+                      {!selectedGovernorate
+                        ? (lang === 'ar' ? 'اختر المحافظة أولاً' : 'Select governorate first')
+                        : (lang === 'ar' ? '-- المنطقة --' : '-- Area --')}
+                    </option>
                     {availableCities.map((city) => (
-                      <option key={city.value} value={city.value}>{lang === 'ar' ? city.value : city.en}</option>
+                      <option key={city.value} value={city.value}>
+                        {lang === 'ar' ? city.value : city.en}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -311,7 +328,7 @@ export default function ListPage() {
                     {t('origin')}
                   </label>
                   <select name="origin" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
-                    <option value="">{lang === 'ar' ? '-- المنشأ --' : '-- Origin --'}</option>
+                    <option value="">{lang === 'ar' ? '-- بلد المنشأ --' : '-- Origin --'}</option>
                     <option value="يابانية">{lang === 'ar' ? 'يابانية' : 'Japanese'}</option>
                     <option value="أمريكية">{lang === 'ar' ? 'أمريكية' : 'American'}</option>
                     <option value="كورية">{lang === 'ar' ? 'كورية' : 'Korean'}</option>
@@ -326,7 +343,7 @@ export default function ListPage() {
                     {t('carType')}
                   </label>
                   <select name="type" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
-                    <option value="">{lang === 'ar' ? '-- الماركة --' : '-- Brand --'}</option>
+                    <option value="">{lang === 'ar' ? '-- النوع --' : '-- Type --'}</option>
                     <option value="تويوتا">{lang === 'ar' ? 'تويوتا' : 'Toyota'}</option>
                     <option value="نيسان">{lang === 'ar' ? 'نيسان' : 'Nissan'}</option>
                     <option value="هوندا">{lang === 'ar' ? 'هوندا' : 'Honda'}</option>
@@ -393,7 +410,7 @@ export default function ListPage() {
                     {t('minAge')}
                   </label>
                   <select name="minAge" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
-                    <option value="">{lang === 'ar' ? '-- الحد الأدنى --' : '-- Min Age --'}</option>
+                    <option value="">{lang === 'ar' ? '-- العمر --' : '-- Age --'}</option>
                     <option value="18">18</option>
                     <option value="21">21</option>
                     <option value="25">25</option>
@@ -416,11 +433,15 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('distancePolicy')}
                   </label>
-                  <input
-                    name="distancePolicy"
-                    placeholder={lang === 'ar' ? 'مثال: 200 كم/يوم' : 'e.g. 200 km/day'}
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="distancePolicy" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- المسافة --' : '-- Distance --'}</option>
+                    <option value="مفتوحة">{lang === 'ar' ? 'مفتوحة (بدون حد)' : 'Unlimited'}</option>
+                    <option value="100 كم/يوم">{lang === 'ar' ? '100 كم/يوم' : '100 km/day'}</option>
+                    <option value="150 كم/يوم">{lang === 'ar' ? '150 كم/يوم' : '150 km/day'}</option>
+                    <option value="200 كم/يوم">{lang === 'ar' ? '200 كم/يوم' : '200 km/day'}</option>
+                    <option value="250 كم/يوم">{lang === 'ar' ? '250 كم/يوم' : '250 km/day'}</option>
+                    <option value="300 كم/يوم">{lang === 'ar' ? '300 كم/يوم' : '300 km/day'}</option>
+                  </select>
                 </div>
               </div>
 
@@ -428,11 +449,13 @@ export default function ListPage() {
                 <label className="mb-1 block text-sm font-medium text-text-primary">
                   {t('availability')}
                 </label>
-                <input
-                  name="availabilityText"
-                  placeholder={lang === 'ar' ? 'مثال: متاح يومياً من 8 صباحاً' : 'e.g. Available daily from 8 AM'}
-                  className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                />
+                <select name="availabilityText" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                  <option value="">{lang === 'ar' ? '-- التوفر --' : '-- Availability --'}</option>
+                  <option value="متاح يومياً">{lang === 'ar' ? 'متاح يومياً' : 'Available daily'}</option>
+                  <option value="أيام العمل فقط">{lang === 'ar' ? 'أيام العمل فقط' : 'Weekdays only'}</option>
+                  <option value="عطلة نهاية الأسبوع">{lang === 'ar' ? 'عطلة نهاية الأسبوع فقط' : 'Weekends only'}</option>
+                  <option value="حسب الاتفاق">{lang === 'ar' ? 'حسب الاتفاق' : 'By arrangement'}</option>
+                </select>
               </div>
 
               <div>

@@ -10,11 +10,11 @@ export default function NotFound() {
   return (
     <main className="flex min-h-[80vh] items-center justify-center px-4">
       <div className="text-center">
-        <div className="mb-4 text-8xl font-black text-gray-200">404</div>
-        <h1 className="mb-3 text-2xl font-bold text-gray-900">
+        <div className="mb-4 text-8xl font-black text-text-secondary">404</div>
+        <h1 className="mb-3 text-2xl font-bold text-text-primary">
           {lang === 'ar' ? 'الصفحة غير موجودة' : 'Page Not Found'}
         </h1>
-        <p className="mb-8 text-gray-500">
+        <p className="mb-8 text-text-secondary">
           {lang === 'ar'
             ? 'الصفحة التي تبحث عنها غير موجودة أو تم نقلها'
             : "The page you're looking for doesn't exist or has been moved"}
