@@ -421,13 +421,11 @@ export default function DashboardClient({
                                 {lang === 'ar' ? 'توثيق الإرجاع' : 'Document Return'}
                               </Link>
                             )}
-                          </div>
-                          {/* Owner delivery photos */}
-                          {['APPROVED', 'ACTIVE'].includes(booking.status) && (
-                            <div className="mt-2">
+                            {/* Owner delivery photos */}
+                            {['APPROVED', 'ACTIVE'].includes(booking.status) && (
                               <BookingPhotos bookingId={booking.id} role="OWNER" phase="DELIVERY" />
-                            </div>
-                          )}
+                            )}
+                          </div>
                         ))}
                       </div>
                     )}
