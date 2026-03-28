@@ -227,7 +227,7 @@ export default function ListPage() {
     }
 
     if (documentImages.length === 0) {
-      setError(lang === 'ar' ? 'يرجى رفع صورة واحدة على الأقل للمستندات' : 'Please upload at least one document image')
+      setError(lang === 'ar' ? 'يرجى رفع صورة دفتر السيارة' : 'Please upload car registration book image')
       return
     }
 
@@ -555,7 +555,7 @@ export default function ListPage() {
           {/* Images */}
           <div className="rounded-2xl border border-dark-border bg-dark-card p-6">
             <h2 className="mb-4 text-lg font-bold text-text-primary">
-              {lang === 'ar' ? 'الصور والمستندات' : 'Images & Documents'}
+              {lang === 'ar' ? 'صور السيارة ودفتر السيارة' : 'Car Images & Registration Book'}
             </h2>
 
             <div className="space-y-6">
@@ -606,7 +606,7 @@ export default function ListPage() {
               <div>
                 <label className="mb-2 flex items-center gap-2 text-sm font-medium text-text-primary">
                   <FileText className="h-4 w-4 text-status-star" />
-                  {t('documents')} *
+                  {lang === 'ar' ? 'دفتر السيارة' : 'Car Registration Book'} *
                 </label>
 
                 <div className="flex flex-wrap gap-3">
@@ -630,7 +630,7 @@ export default function ListPage() {
                       <>
                         <Upload className="mb-1 h-5 w-5 text-text-muted" />
                         <span className="text-[10px] text-text-muted">
-                          {lang === 'ar' ? 'رفع مستندات' : 'Upload'}
+                          {lang === 'ar' ? 'رفع دفتر السيارة' : 'Upload'}
                         </span>
                       </>
                     )}

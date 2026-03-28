@@ -8,9 +8,11 @@ export async function updateProfile(data: {
   fullName?: string
   phone?: string
   civilId?: string
-  civilIdImage?: string
+  civilIdImageFront?: string
+  civilIdImageBack?: string
   drivingLicense?: string
-  drivingLicenseImage?: string
+  drivingLicenseImageFront?: string
+  drivingLicenseImageBack?: string
 }) {
   const currentUser = await getOrCreateCurrentUser()
   if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
@@ -21,9 +23,11 @@ export async function updateProfile(data: {
       fullName: data.fullName || currentUser.fullName,
       phone: data.phone || currentUser.phone,
       civilId: data.civilId !== undefined ? data.civilId : currentUser.civilId,
-      civilIdImage: data.civilIdImage !== undefined ? data.civilIdImage : currentUser.civilIdImage,
+      civilIdImageFront: data.civilIdImageFront !== undefined ? data.civilIdImageFront : (currentUser as any).civilIdImageFront,
+      civilIdImageBack: data.civilIdImageBack !== undefined ? data.civilIdImageBack : (currentUser as any).civilIdImageBack,
       drivingLicense: data.drivingLicense !== undefined ? data.drivingLicense : currentUser.drivingLicense,
-      drivingLicenseImage: data.drivingLicenseImage !== undefined ? data.drivingLicenseImage : currentUser.drivingLicenseImage,
+      drivingLicenseImageFront: data.drivingLicenseImageFront !== undefined ? data.drivingLicenseImageFront : (currentUser as any).drivingLicenseImageFront,
+      drivingLicenseImageBack: data.drivingLicenseImageBack !== undefined ? data.drivingLicenseImageBack : (currentUser as any).drivingLicenseImageBack,
     },
   })
 
@@ -41,9 +45,11 @@ export async function getProfile() {
     email: currentUser.email,
     phone: currentUser.phone,
     civilId: currentUser.civilId,
-    civilIdImage: currentUser.civilIdImage,
+    civilIdImageFront: (currentUser as any).civilIdImageFront,
+    civilIdImageBack: (currentUser as any).civilIdImageBack,
     drivingLicense: currentUser.drivingLicense,
-    drivingLicenseImage: currentUser.drivingLicenseImage,
+    drivingLicenseImageFront: (currentUser as any).drivingLicenseImageFront,
+    drivingLicenseImageBack: (currentUser as any).drivingLicenseImageBack,
   }
 }
 
