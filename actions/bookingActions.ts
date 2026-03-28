@@ -9,6 +9,7 @@ import {
   sendBookingNotificationToOwner,
   sendBookingCancellation,
 } from '@/lib/email'
+import { logAudit } from '@/lib/audit'
 
 function calculateDays(startDate: Date, endDate: Date) {
   const diffMs = endDate.getTime() - startDate.getTime()
@@ -78,6 +79,8 @@ export async function createBooking(rawData: unknown) {
           endDate: end,
           pickupTime: data.pickupTime,
           dropoffTime: data.dropoffTime,
+          civilId: data.civilId,
+          licenseNumber: data.licenseNumber,
           totalDays,
           totalAmount,
           notes: data.notes,
@@ -91,6 +94,15 @@ export async function createBooking(rawData: unknown) {
     }
     throw error
   }
+
+  // Log booking creation (fire-and-forget)
+  logAudit({
+    userId: currentUser.id,
+    action: 'BOOKING_CREATED',
+    entity: 'Booking',
+    entityId: booking.id,
+    details: `Car: ${car.title}, Days: ${totalDays}, Amount: ${totalAmount}`,
+  }).catch((err) => console.error('Failed to log booking creation:', err))
 
   // Send emails (fire-and-forget)
   // Send confirmation to renter
@@ -175,7 +187,10 @@ export async function getUserBookings() {
   })
 }
 
-export async function cancelBooking(bookingId: string) {
+export async function cancelBooking(
+  bookingId: string,
+  cancellationReason?: string
+) {
   const currentUser = await getOrCreateCurrentUser()
   if (!currentUser) return { success: false, error: 'يجب تسجيل الدخول أولاً' }
 
@@ -196,10 +211,36 @@ export async function cancelBooking(bookingId: string) {
     return { success: false, error: 'لا يمكن إلغاء هذا الحجز' }
   }
 
+  // Calculate refund percentage based on cancellation policy
+  const now = new Date()
+  const hoursUntilStart = (booking.startDate.getTime() - now.getTime()) / (1000 * 60 * 60)
+
+  let refundPercentage = 0
+  if (hoursUntilStart > 48) {
+    refundPercentage = 100 // Free cancellation
+  } else if (hoursUntilStart > 24) {
+    refundPercentage = 50 // 50% refund
+  }
+  // else: < 24 hours: No refund (0%)
+
   await prisma.booking.update({
     where: { id: bookingId },
-    data: { status: 'CANCELLED' },
+    data: {
+      status: 'CANCELLED',
+      cancellationReason: cancellationReason || null,
+      cancelledAt: new Date(),
+      refundPercentage,
+    },
   })
+
+  // Log booking cancellation (fire-and-forget)
+  logAudit({
+    userId: currentUser.id,
+    action: 'BOOKING_CANCELLED',
+    entity: 'Booking',
+    entityId: booking.id,
+    details: `Refund: ${refundPercentage}%, Reason: ${cancellationReason || 'Not provided'}`,
+  }).catch((err) => console.error('Failed to log booking cancellation:', err))
 
   // Send cancellation email (fire-and-forget)
   if (currentUser.email) {
@@ -217,7 +258,7 @@ export async function cancelBooking(bookingId: string) {
   }
 
   revalidatePath('/dashboard')
-  return { success: true }
+  return { success: true, refundPercentage }
 }
 
 export async function submitReview(bookingId: string, rating: number, comment?: string) {

@@ -1,8 +1,9 @@
 'use server'
 
 import { prisma } from '@/lib/prisma'
-import { requireAdmin } from '@/lib/auth'
+import { requireAdmin, getOrCreateCurrentUser } from '@/lib/auth'
 import { revalidatePath } from 'next/cache'
+import { logAudit } from '@/lib/audit'
 
 // ==================== STATS ====================
 
@@ -61,12 +62,22 @@ export async function getAdminCars(status?: string) {
 }
 
 export async function updateCarStatus(carId: string, status: 'APPROVED' | 'REJECTED') {
-  await requireAdmin()
+  const currentUser = await requireAdmin()
 
   const car = await prisma.car.update({
     where: { id: carId },
     data: { status },
   })
+
+  // Log car approval/rejection (fire-and-forget)
+  const action = status === 'APPROVED' ? 'CAR_APPROVED' : 'CAR_REJECTED'
+  logAudit({
+    userId: currentUser.id,
+    action,
+    entity: 'Car',
+    entityId: carId,
+    details: `Status changed to: ${status}`,
+  }).catch((err) => console.error(`Failed to log car ${action}:`, err))
 
   revalidatePath('/admin/cars')
   revalidatePath('/admin')
@@ -97,12 +108,21 @@ export async function updateBookingStatus(
   bookingId: string,
   status: 'APPROVED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED' | 'REJECTED'
 ) {
-  await requireAdmin()
+  const currentUser = await requireAdmin()
 
   const booking = await prisma.booking.update({
     where: { id: bookingId },
     data: { status },
   })
+
+  // Log booking status change (fire-and-forget)
+  logAudit({
+    userId: currentUser.id,
+    action: 'BOOKING_STATUS_CHANGED',
+    entity: 'Booking',
+    entityId: bookingId,
+    details: `Status changed to: ${status}`,
+  }).catch((err) => console.error('Failed to log booking status change:', err))
 
   revalidatePath('/admin/bookings')
   revalidatePath('/admin')
@@ -127,12 +147,21 @@ export async function getAdminUsers() {
 }
 
 export async function updateUserRole(userId: string, role: 'USER' | 'ADMIN') {
-  await requireAdmin()
+  const currentUser = await requireAdmin()
 
   const user = await prisma.user.update({
     where: { id: userId },
     data: { role },
   })
+
+  // Log user role change (fire-and-forget)
+  logAudit({
+    userId: currentUser.id,
+    action: 'USER_ROLE_CHANGED',
+    entity: 'User',
+    entityId: userId,
+    details: `Role changed to: ${role}`,
+  }).catch((err) => console.error('Failed to log user role change:', err))
 
   revalidatePath('/admin/users')
   return user

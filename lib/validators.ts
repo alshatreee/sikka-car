@@ -27,4 +27,6 @@ export const bookingSchema = z.object({
   pickupTime: z.string().optional(),
   dropoffTime: z.string().optional(),
   notes: z.string().optional(),
+  civilId: z.string().regex(/^\d{12}$/, 'Civil ID must be exactly 12 digits'),
+  licenseNumber: z.string().min(1, 'License number is required'),
 })

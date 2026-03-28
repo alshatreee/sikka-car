@@ -4,7 +4,7 @@ import { useState, useTransition, useMemo, useEffect } from 'react'
 import { createBooking, getBookedDates } from '@/actions/bookingActions'
 import { initiatePayment } from '@/actions/paymentActions'
 import { useLanguage } from '@/components/shared/LanguageProvider'
-import { Calendar, Clock, FileText, CreditCard, AlertTriangle } from 'lucide-react'
+import { Calendar, Clock, FileText, CreditCard, AlertTriangle, Shield } from 'lucide-react'
 
 interface BookingPanelProps {
   carId: string
@@ -25,7 +25,10 @@ export function BookingPanel({
   const [endDate, setEndDate] = useState('')
   const [pickupTime, setPickupTime] = useState('')
   const [dropoffTime, setDropoffTime] = useState('')
+  const [civilId, setCivilId] = useState('')
+  const [licenseNumber, setLicenseNumber] = useState('')
   const [notes, setNotes] = useState('')
+  const [contractAccepted, setContractAccepted] = useState(false)
   const [error, setError] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
   const [agreedToTerms, setAgreedToTerms] = useState(false)
@@ -73,8 +76,23 @@ export function BookingPanel({
       return
     }
 
-    if (!agreedToTerms) {
-      setError(lang === 'ar' ? 'يرجى الموافقة على شروط الاستخدام وسياسة الخصوصية' : 'Please agree to the Terms of Service and Privacy Policy')
+    if (!civilId) {
+      setError(lang === 'ar' ? 'يرجى إدخال الرقم المدني' : 'Please enter Civil ID')
+      return
+    }
+
+    if (!/^\d{12}$/.test(civilId)) {
+      setError(lang === 'ar' ? 'الرقم المدني يجب أن يكون 12 رقم' : 'Civil ID must be exactly 12 digits')
+      return
+    }
+
+    if (!licenseNumber) {
+      setError(lang === 'ar' ? 'يرجى إدخال رقم الرخصة' : 'Please enter License Number')
+      return
+    }
+
+    if (!contractAccepted) {
+      setError(lang === 'ar' ? 'يجب قبول شروط عقد التأجير' : 'You must accept the rental agreement terms')
       return
     }
 
@@ -90,6 +108,8 @@ export function BookingPanel({
         endDate,
         pickupTime,
         dropoffTime,
+        civilId,
+        licenseNumber,
         notes,
       })
 
@@ -178,6 +198,36 @@ export function BookingPanel({
           </div>
         </div>
 
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 flex items-center gap-1 text-sm font-medium text-text-primary">
+              <Shield className="h-3.5 w-3.5 text-text-secondary" />
+              {lang === 'ar' ? 'الرقم المدني' : 'Civil ID'}
+            </label>
+            <input
+              type="text"
+              value={civilId}
+              onChange={(e) => setCivilId(e.target.value.replace(/\D/g, '').slice(0, 12))}
+              placeholder={lang === 'ar' ? '123456789012' : '123456789012'}
+              maxLength={12}
+              className="w-full rounded-xl border border-dark-border bg-dark-surface px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
+            />
+          </div>
+          <div>
+            <label className="mb-1 flex items-center gap-1 text-sm font-medium text-text-primary">
+              <Shield className="h-3.5 w-3.5 text-text-secondary" />
+              {lang === 'ar' ? 'رقم الرخصة' : 'License Number'}
+            </label>
+            <input
+              type="text"
+              value={licenseNumber}
+              onChange={(e) => setLicenseNumber(e.target.value)}
+              placeholder={lang === 'ar' ? 'أدخل رقم الرخصة' : 'Enter license number'}
+              className="w-full rounded-xl border border-dark-border bg-dark-surface px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
+            />
+          </div>
+        </div>
+
         <div>
           <label className="mb-1 flex items-center gap-1 text-sm font-medium text-text-primary">
             <FileText className="h-3.5 w-3.5 text-text-secondary" />
@@ -213,6 +263,36 @@ export function BookingPanel({
                 </span>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Contract Agreement Checkbox */}
+        {totalDays > 0 && !dateConflict && (
+          <div className="rounded-xl border border-dark-border bg-dark-surface/50 p-3">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={contractAccepted}
+                onChange={(e) => setContractAccepted(e.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-dark-border bg-dark-surface text-status-star outline-none accent-status-star"
+              />
+              <div className="flex-1">
+                <p className="text-sm text-text-primary">
+                  {lang === 'ar' ? 'أوافق على شروط وأحكام عقد التأجير' : 'I agree to the rental agreement terms'}
+                </p>
+                <a
+                  href="javascript:void(0)"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    // This will be used if we want to show the full contract in a modal
+                    // For now, users can view it after booking
+                  }}
+                  className="text-xs text-status-star hover:underline"
+                >
+                  {lang === 'ar' ? 'عرض الشروط' : 'View terms'}
+                </a>
+              </div>
+            </label>
           </div>
         )}
 

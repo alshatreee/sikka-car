@@ -37,6 +37,31 @@ export default function RootLayout({
             href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@300;400;500;600;700;800&display=swap"
             rel="stylesheet"
           />
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{
+              __html: JSON.stringify({
+                "@context": "https://schema.org",
+                "@type": "Organization",
+                "name": "Sikka Car",
+                "alternateName": "سكة كار",
+                "url": "https://sikka-car.vercel.app",
+                "logo": "https://sikka-car.vercel.app/icon.svg",
+                "description": "منصة كويتية موثوقة لتأجير السيارات بين الأفراد",
+                "areaServed": {
+                  "@type": "Country",
+                  "name": "Kuwait"
+                },
+                "contactPoint": {
+                  "@type": "ContactPoint",
+                  "email": "support@sikkacar.com",
+                  "contactType": "customer service",
+                  "availableLanguage": ["Arabic", "English"]
+                },
+                "sameAs": []
+              })
+            }}
+          />
         </head>
         <body className="font-arabic">
           <ClientLayout>{children}</ClientLayout>

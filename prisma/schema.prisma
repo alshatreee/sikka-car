@@ -110,9 +110,16 @@ model Booking {
   totalAmount      Decimal       @db.Decimal(10, 2)
   notes            String?
 
+  civilId          String?
+  licenseNumber    String?
+
   paymentReference String?
   paymentUrl       String?
   status           BookingStatus @default(PENDING)
+
+  cancellationReason String?
+  cancelledAt        DateTime?
+  refundPercentage   Int?
 
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
@@ -120,6 +127,7 @@ model Booking {
   review           Review?
   photos           BookingPhoto[]
   messages         Message[]
+  inspections      CarInspection[]
 
   @@index([carId])
   @@index([renterId])
@@ -161,4 +169,28 @@ model Message {
   @@index([receiverId, read])
   @@index([senderId])
   @@index([bookingId])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  ipAddress String?
+  createdAt DateTime @default(now())
+}
+
+model CarInspection {
+  id        String   @id @default(cuid())
+  bookingId String
+  booking   Booking  @relation(fields: [bookingId], references: [id])
+  type      String   // "PICKUP" or "RETURN"
+  photos    String[] // Array of Cloudinary URLs
+  notes     String?
+  mileage   Int?
+  fuelLevel String?  // "FULL", "3/4", "1/2", "1/4", "EMPTY"
+  createdBy String   // userId who submitted
+  createdAt DateTime @default(now())
 }

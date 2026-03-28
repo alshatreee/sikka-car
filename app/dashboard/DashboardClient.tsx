@@ -25,6 +25,8 @@ import {
   ChevronUp,
   TrendingUp,
   Wallet,
+  FileText,
+  Camera,
 } from 'lucide-react'
 
 interface DashboardClientProps {
@@ -395,19 +397,30 @@ export default function DashboardClient({
                         {car.bookings.map((booking) => (
                           <div
                             key={booking.id}
-                            className="flex items-center justify-between rounded-xl bg-dark-surface p-3 text-sm"
+                            className="flex flex-col gap-2 rounded-xl bg-dark-surface p-3 text-sm"
                           >
-                            <div>
-                              <p className="flex items-center gap-1 font-medium text-text-primary">
-                                <User className="h-3.5 w-3.5 text-text-secondary" />
-                                {booking.renter.fullName || booking.renter.email}
-                              </p>
-                              <p className="mt-0.5 text-xs text-text-secondary">
-                                {formatDate(booking.startDate)} → {formatDate(booking.endDate)}
-                                <span className="ms-2 text-status-star">{booking.totalAmount} {lang === 'ar' ? 'د.ك' : 'KWD'}</span>
-                              </p>
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="flex items-center gap-1 font-medium text-text-primary">
+                                  <User className="h-3.5 w-3.5 text-text-secondary" />
+                                  {booking.renter.fullName || booking.renter.email}
+                                </p>
+                                <p className="mt-0.5 text-xs text-text-secondary">
+                                  {formatDate(booking.startDate)} → {formatDate(booking.endDate)}
+                                  <span className="ms-2 text-status-star">{booking.totalAmount} {lang === 'ar' ? 'د.ك' : 'KWD'}</span>
+                                </p>
+                              </div>
+                              <StatusBadge status={booking.status} />
                             </div>
-                            <StatusBadge status={booking.status} />
+                            {booking.status === 'ACTIVE' && (
+                              <Link
+                                href={`/inspection/${booking.id}`}
+                                className="inline-flex items-center justify-center gap-1 rounded-lg bg-status-star/10 border border-status-star/20 px-2 py-1.5 text-xs font-medium text-status-star hover:bg-status-star/20 transition-colors"
+                              >
+                                <Camera className="h-3.5 w-3.5" />
+                                {lang === 'ar' ? 'توثيق الإرجاع' : 'Document Return'}
+                              </Link>
+                            )}
                           </div>
                           {/* Owner delivery photos */}
                           {['APPROVED', 'ACTIVE'].includes(booking.status) && (
@@ -471,6 +484,28 @@ export default function DashboardClient({
 
                     {/* Actions row */}
                     <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {/* View Contract button */}
+                      {['APPROVED', 'ACTIVE', 'COMPLETED'].includes(booking.status) && (
+                        <Link
+                          href={`/contract/${booking.id}`}
+                          className="inline-flex items-center gap-1 rounded-lg bg-blue-400/10 border border-blue-400/20 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-400/20 transition-colors"
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                          {lang === 'ar' ? 'عرض العقد' : 'View Contract'}
+                        </Link>
+                      )}
+
+                      {/* Document Inspection button */}
+                      {booking.status === 'ACTIVE' && (
+                        <Link
+                          href={`/inspection/${booking.id}`}
+                          className="inline-flex items-center gap-1 rounded-lg bg-status-star/10 border border-status-star/20 px-3 py-1.5 text-xs font-medium text-status-star hover:bg-status-star/20 transition-colors"
+                        >
+                          <Camera className="h-3.5 w-3.5" />
+                          {lang === 'ar' ? 'توثيق الاستلام' : 'Document Pickup'}
+                        </Link>
+                      )}
+
                       {/* Cancel button */}
                       {!['COMPLETED', 'CANCELLED', 'ACTIVE'].includes(booking.status) && (
                         <button
