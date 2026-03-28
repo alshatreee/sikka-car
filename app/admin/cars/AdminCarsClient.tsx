@@ -190,7 +190,6 @@ export default function AdminCarsClient({ cars: initialCars }: { cars: AdminCar[
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <Link
                     href={`/cars/${car.id}`}
-                    target="_blank"
                     className="inline-flex items-center gap-1 rounded-lg border border-dark-border px-3 py-1.5 text-xs text-text-secondary hover:bg-dark-surface transition-colors"
                   >
                     <Eye className="h-3.5 w-3.5" />
