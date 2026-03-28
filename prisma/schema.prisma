@@ -49,8 +49,10 @@ model User {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  cars           Car[]
-  bookings       Booking[] @relation("RenterBookings")
+  cars              Car[]
+  bookings          Booking[]         @relation("RenterBookings")
+  sentMessages      Message[]         @relation("SentMessages")
+  receivedMessages  Message[]         @relation("ReceivedMessages")
 }
 
 model Car {
@@ -114,6 +116,7 @@ model Booking {
 
   review           Review?
   photos           BookingPhoto[]
+  messages         Message[]
 }
 
 model BookingPhoto {
@@ -121,8 +124,8 @@ model BookingPhoto {
   bookingId   String
   booking     Booking  @relation(fields: [bookingId], references: [id])
   url         String
-  type        String   // DELIVERY_FRONT, DELIVERY_BACK, DELIVERY_LEFT, DELIVERY_RIGHT, RETURN_FRONT, RETURN_BACK, RETURN_LEFT, RETURN_RIGHT
-  uploadedBy  String   // OWNER, RENTER, ADMIN
+  type        String
+  uploadedBy  String
   createdAt   DateTime @default(now())
 }
 
@@ -133,4 +136,18 @@ model Review {
   rating    Int
   comment   String?
   createdAt DateTime @default(now())
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  senderId   String
+  receiverId String
+  bookingId  String?
+  content    String
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  sender     User     @relation("SentMessages", fields: [senderId], references: [id])
+  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  booking    Booking? @relation(fields: [bookingId], references: [id])
 }

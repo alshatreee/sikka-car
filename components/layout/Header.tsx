@@ -3,19 +3,35 @@
 import Link from 'next/link'
 import { useLanguage } from '@/components/shared/LanguageProvider'
 import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs'
-import { Car, Globe, Menu, X, Shield } from 'lucide-react'
+import { Car, Globe, Menu, X, Shield, MessageCircle } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
 export default function Header() {
   const { t, toggleLanguage, lang } = useLanguage()
   const [menuOpen, setMenuOpen] = useState(false)
   const [isAdminUser, setIsAdminUser] = useState(false)
+  const [unreadCount, setUnreadCount] = useState(0)
 
   useEffect(() => {
     fetch('/api/me')
       .then((r) => r.json())
       .then((data) => setIsAdminUser(data.role === 'ADMIN'))
       .catch(() => {})
+
+    // Load unread message count
+    const loadUnreadCount = async () => {
+      try {
+        const response = await fetch('/api/messages/unread')
+        const data = await response.json()
+        setUnreadCount(data.count || 0)
+      } catch (error) {
+        console.error('Failed to load unread count:', error)
+      }
+    }
+
+    loadUnreadCount()
+    const interval = setInterval(loadUnreadCount, 30000) // Refresh every 30 seconds
+    return () => clearInterval(interval)
   }, [])
 
   return (
@@ -57,6 +73,18 @@ export default function Header() {
               className="text-sm text-text-secondary transition-colors hover:text-text-primary"
             >
               {lang === 'ar' ? 'ملفي' : 'Profile'}
+            </Link>
+            <Link
+              href="/messages"
+              className="relative flex items-center gap-1 text-sm text-text-secondary transition-colors hover:text-text-primary"
+            >
+              <MessageCircle className="h-4 w-4" />
+              {t('messages')}
+              {unreadCount > 0 && (
+                <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-status-star text-dark-bg text-xs font-bold absolute -top-2 -right-2">
+                  {unreadCount > 9 ? '9+' : unreadCount}
+                </span>
+              )}
             </Link>
             {isAdminUser && (
               <Link
@@ -142,6 +170,19 @@ export default function Header() {
                 className="rounded-lg px-3 py-2 text-text-secondary transition-colors hover:bg-dark-surface hover:text-text-primary"
               >
                 {lang === 'ar' ? 'ملفي' : 'Profile'}
+              </Link>
+              <Link
+                href="/messages"
+                onClick={() => setMenuOpen(false)}
+                className="relative flex items-center gap-2 rounded-lg px-3 py-2 text-text-secondary transition-colors hover:bg-dark-surface hover:text-text-primary"
+              >
+                <MessageCircle className="h-4 w-4" />
+                {t('messages')}
+                {unreadCount > 0 && (
+                  <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-status-star text-dark-bg text-xs font-bold">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
               </Link>
               {isAdminUser && (
                 <Link

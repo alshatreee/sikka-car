@@ -34,7 +34,7 @@ export default function RootLayout({
       <html lang="ar" dir="rtl" suppressHydrationWarning>
         <head>
           <link
-            href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&display=swap"
+            href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@300;400;500;600;700;800&display=swap"
             rel="stylesheet"
           />
         </head>

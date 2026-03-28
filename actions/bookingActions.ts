@@ -4,6 +4,11 @@ import { prisma } from '@/lib/prisma'
 import { getOrCreateCurrentUser } from '@/lib/auth'
 import { bookingSchema } from '@/lib/validators'
 import { revalidatePath } from 'next/cache'
+import {
+  sendBookingConfirmation,
+  sendBookingNotificationToOwner,
+  sendBookingCancellation,
+} from '@/lib/email'
 
 function calculateDays(startDate: Date, endDate: Date) {
   const diffMs = endDate.getTime() - startDate.getTime()
@@ -69,6 +74,42 @@ export async function createBooking(rawData: unknown) {
     },
   })
 
+  // Send emails (fire-and-forget)
+  // Send confirmation to renter
+  if (currentUser.email) {
+    sendBookingConfirmation(currentUser.email, {
+      bookingId: booking.id,
+      carTitle: car.title,
+      startDate: start,
+      endDate: end,
+      pickupTime: data.pickupTime,
+      dropoffTime: data.dropoffTime,
+      totalDays,
+      totalAmount: Number(totalAmount),
+      renterName: currentUser.fullName || 'Guest',
+    }).catch((err) => console.error('Failed to send booking confirmation:', err))
+  }
+
+  // Send notification to owner
+  const owner = await prisma.user.findUnique({
+    where: { id: car.ownerId },
+    select: { email: true, fullName: true },
+  })
+  if (owner?.email) {
+    sendBookingNotificationToOwner(owner.email, {
+      bookingId: booking.id,
+      carTitle: car.title,
+      startDate: start,
+      endDate: end,
+      pickupTime: data.pickupTime,
+      dropoffTime: data.dropoffTime,
+      totalDays,
+      totalAmount: Number(totalAmount),
+      renterName: currentUser.fullName || 'Guest',
+      ownerName: owner.fullName || 'Car Owner',
+    }).catch((err) => console.error('Failed to send owner notification:', err))
+  }
+
   revalidatePath('/dashboard')
 
   return {
@@ -122,6 +163,11 @@ export async function cancelBooking(bookingId: string) {
 
   const booking = await prisma.booking.findUnique({
     where: { id: bookingId },
+    include: {
+      car: {
+        select: { title: true },
+      },
+    },
   })
 
   if (!booking || booking.renterId !== currentUser.id) {
@@ -136,6 +182,21 @@ export async function cancelBooking(bookingId: string) {
     where: { id: bookingId },
     data: { status: 'CANCELLED' },
   })
+
+  // Send cancellation email (fire-and-forget)
+  if (currentUser.email) {
+    sendBookingCancellation(currentUser.email, {
+      bookingId: booking.id,
+      carTitle: booking.car.title,
+      startDate: booking.startDate,
+      endDate: booking.endDate,
+      pickupTime: booking.pickupTime,
+      dropoffTime: booking.dropoffTime,
+      totalDays: booking.totalDays,
+      totalAmount: Number(booking.totalAmount),
+      renterName: currentUser.fullName || 'Guest',
+    }).catch((err) => console.error('Failed to send cancellation email:', err))
+  }
 
   revalidatePath('/dashboard')
   return { success: true }
