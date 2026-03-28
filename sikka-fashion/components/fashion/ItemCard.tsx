@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useLanguage } from "@/components/shared/LanguageProvider";
-import { Star, MapPin } from "lucide-react";
+import { Star, MapPin, Tag } from "lucide-react";
 import { MockFashionItem } from "@/lib/mockData";
 
 interface ItemCardProps {
@@ -32,17 +32,45 @@ export default function ItemCard({ item, mode }: ItemCardProps) {
       ? t("forSale")
       : t("forBoth");
 
+  // Calculate savings percentage for sale items
+  const savingsPercent =
+    item.salePrice && item.retailPrice
+      ? Math.round((1 - item.salePrice / item.retailPrice) * 100)
+      : null;
+
+  // Calculate rent vs buy savings
+  const rentSavingsPercent =
+    item.rentalPricePerDay && item.retailPrice
+      ? Math.round((1 - item.rentalPricePerDay / item.retailPrice) * 100)
+      : null;
+
   return (
-    <Link href={href} className="card group cursor-pointer">
+    <Link href={href} className="card group cursor-pointer overflow-hidden">
       {/* Image */}
       <div className="relative aspect-[3/4] bg-dark-surface overflow-hidden">
-        <div className="w-full h-full bg-gradient-to-br from-dark-surface to-dark-border flex items-center justify-center">
+        <div className="w-full h-full bg-gradient-to-br from-dark-surface to-dark-border flex items-center justify-center group-hover:scale-105 transition-transform duration-500">
           <span className="text-4xl opacity-30">👗</span>
         </div>
         {/* Badge */}
         <div className="absolute top-3 start-3">
           <span className={badgeClass}>{badgeText}</span>
         </div>
+        {/* Savings badge */}
+        {mode === "buy" && savingsPercent && savingsPercent > 0 && (
+          <div className="absolute top-3 end-3">
+            <span className="bg-green-500/90 text-white text-[10px] font-bold px-2 py-1 rounded-lg flex items-center gap-0.5">
+              <Tag className="w-3 h-3" />
+              {savingsPercent}%-
+            </span>
+          </div>
+        )}
+        {mode === "rent" && rentSavingsPercent && rentSavingsPercent > 0 && (
+          <div className="absolute top-3 end-3">
+            <span className="bg-fashion-gold/90 text-dark-bg text-[10px] font-bold px-2 py-1 rounded-lg">
+              {isRTL ? `وفري ${rentSavingsPercent}٪` : `Save ${rentSavingsPercent}%`}
+            </span>
+          </div>
+        )}
         {/* Brand */}
         <div className="absolute bottom-3 start-3">
           <span className="bg-dark-bg/80 backdrop-blur-sm text-text-secondary text-xs px-2 py-1 rounded-lg">
@@ -58,7 +86,7 @@ export default function ItemCard({ item, mode }: ItemCardProps) {
         </h3>
 
         <div className="flex items-center gap-1 text-text-muted text-xs mb-2">
-          <MapPin className="w-3 h-3" />
+          <MapPin className="w-3 h-3 flex-shrink-0" />
           <span>{item.area}</span>
           <span className="mx-1">•</span>
           <span>{t(item.size as any)}</span>
@@ -90,11 +118,18 @@ export default function ItemCard({ item, mode }: ItemCardProps) {
             </div>
           )}
           {item.salePrice && (mode === "buy" || (!mode && !item.rentalPricePerDay)) && (
-            <div className="flex items-baseline gap-1">
-              <span className="text-fashion-rose-light font-bold text-lg">
-                {item.salePrice}
-              </span>
-              <span className="text-text-muted text-xs">{t("kwd")}</span>
+            <div>
+              <div className="flex items-baseline gap-1">
+                <span className="text-fashion-rose-light font-bold text-lg">
+                  {item.salePrice}
+                </span>
+                <span className="text-text-muted text-xs">{t("kwd")}</span>
+              </div>
+              {item.retailPrice && (
+                <span className="text-text-muted text-[10px] line-through">
+                  {item.retailPrice} {t("kwd")}
+                </span>
+              )}
             </div>
           )}
           {item.salePrice && item.rentalPricePerDay && !mode && (
