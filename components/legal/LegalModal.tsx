@@ -83,29 +83,29 @@ We do not share your personal information with third parties except where legall
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <div className="relative max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+      <div className="relative max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-dark-card p-6 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Shield className="h-5 w-5 text-primary-500" />
-            <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+            <Shield className="h-5 w-5 text-status-star" />
+            <h2 className="text-lg font-bold text-text-primary">{title}</h2>
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
+            className="rounded-lg p-1 text-text-muted transition-colors hover:bg-dark-surface hover:text-text-primary"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="whitespace-pre-line text-sm leading-relaxed text-gray-600">
+        <div className="whitespace-pre-line text-sm leading-relaxed text-text-secondary">
           {type === 'terms' ? termsContent : privacyContent}
         </div>
 
         <button
           onClick={onClose}
-          className="mt-6 w-full rounded-xl bg-primary-500 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600"
+          className="mt-6 w-full rounded-xl bg-status-star py-2.5 text-sm font-medium text-white transition-colors hover:bg-status-star/80"
         >
-          {lang === 'ar' ? 'فهمت' : 'I Understand'}
+          {t('iUnderstand')}
         </button>
       </div>
     </div>
@@ -118,17 +118,17 @@ export function LegalLinks() {
 
   return (
     <>
-      <div className="flex items-center gap-4 text-xs text-gray-400">
+      <div className="flex items-center gap-4 text-xs text-text-muted">
         <button
           onClick={() => setModalType('terms')}
-          className="transition-colors hover:text-gray-300"
+          className="transition-colors hover:text-text-secondary"
         >
           {t('termsOfService')}
         </button>
         <span>|</span>
         <button
           onClick={() => setModalType('privacy')}
-          className="transition-colors hover:text-gray-300"
+          className="transition-colors hover:text-text-secondary"
         >
           {t('privacyPolicy')}
         </button>

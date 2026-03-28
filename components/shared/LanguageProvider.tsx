@@ -141,10 +141,24 @@ const translations: Translations = {
   startMessaging: { ar: 'ابدأ محادثة جديدة', en: 'Start a new conversation' },
   loading: { ar: 'جاري التحميل...', en: 'Loading...' },
 
+  // Car detail
+  ownerInfo: { ar: 'معلومات المالك', en: 'Owner Information' },
+  messageOwner: { ar: 'راسل المالك', en: 'Message Owner' },
+  whatsapp: { ar: 'واتساب', en: 'WhatsApp' },
+  reviews: { ar: 'التقييمات', en: 'Reviews' },
+  user: { ar: 'مستخدم', en: 'User' },
+  noReviews: { ar: 'لا توجد تقييمات بعد', en: 'No reviews yet' },
+
+  // Error
+  errorTitle: { ar: 'حدث خطأ', en: 'Something went wrong' },
+  errorMessage: { ar: 'عذراً، حدث خطأ غير متوقع. يرجى المحاولة مرة أخرى.', en: 'Sorry, an unexpected error occurred. Please try again.' },
+  retry: { ar: 'حاول مرة أخرى', en: 'Try Again' },
+
   // Footer
   copyright: { ar: '© 2025 سكة كار. جميع الحقوق محفوظة.', en: '© 2025 Sikka Car. All rights reserved.' },
   termsOfService: { ar: 'شروط الاستخدام', en: 'Terms of Service' },
   privacyPolicy: { ar: 'سياسة الخصوصية', en: 'Privacy Policy' },
+  iUnderstand: { ar: 'فهمت', en: 'I Understand' },
 }
 
 interface LanguageContextType {
