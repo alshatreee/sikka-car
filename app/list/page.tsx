@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useMemo } from 'react'
 import { submitCarListing } from '@/actions/carActions'
 import { uploadToCloudinary } from '@/utils/uploadImage'
 import { useLanguage } from '@/components/shared/LanguageProvider'
@@ -26,6 +26,89 @@ export default function ListPage() {
   const [uploading, setUploading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
+  const [selectedGovernorate, setSelectedGovernorate] = useState('')
+
+  const governorateCities: Record<string, { value: string; en: string }[]> = {
+    'العاصمة': [
+      { value: 'الشرق', en: 'Sharq' },
+      { value: 'المرقاب', en: 'Mirqab' },
+      { value: 'القبلة', en: 'Qibla' },
+      { value: 'الدسمة', en: 'Dasma' },
+      { value: 'الدعية', en: 'Daiya' },
+      { value: 'كيفان', en: 'Kaifan' },
+      { value: 'الشامية', en: 'Shamiya' },
+      { value: 'الروضة', en: 'Rawda' },
+      { value: 'العديلية', en: 'Adailiya' },
+      { value: 'الخالدية', en: 'Khalidiya' },
+      { value: 'النزهة', en: 'Nuzha' },
+      { value: 'الفيحاء', en: 'Faiha' },
+      { value: 'القادسية', en: 'Qadsiya' },
+      { value: 'قرطبة', en: 'Qurtuba' },
+      { value: 'السرة', en: 'Surra' },
+      { value: 'اليرموك', en: 'Yarmouk' },
+      { value: 'الشويخ', en: 'Shuwaikh' },
+    ],
+    'حولي': [
+      { value: 'حولي', en: 'Hawalli' },
+      { value: 'السالمية', en: 'Salmiya' },
+      { value: 'الجابرية', en: 'Jabriya' },
+      { value: 'الرميثية', en: 'Rumaithiya' },
+      { value: 'سلوى', en: 'Salwa' },
+      { value: 'بيان', en: 'Bayan' },
+      { value: 'مشرف', en: 'Mishref' },
+      { value: 'حطين', en: 'Hittin' },
+      { value: 'الشهداء', en: 'Shuhada' },
+      { value: 'الزهراء', en: 'Zahra' },
+    ],
+    'الفروانية': [
+      { value: 'الفروانية', en: 'Farwaniya' },
+      { value: 'خيطان', en: 'Khaitan' },
+      { value: 'العمرية', en: 'Omariya' },
+      { value: 'الرابية', en: 'Rabiya' },
+      { value: 'الأندلس', en: 'Andalus' },
+      { value: 'اشبيلية', en: 'Ishbiliya' },
+      { value: 'جليب الشيوخ', en: 'Jleeb Al-Shuyoukh' },
+      { value: 'الرقعي', en: 'Riggae' },
+      { value: 'الحسانية', en: 'Hassaniya' },
+      { value: 'عبدالله المبارك', en: 'Abdullah Al-Mubarak' },
+    ],
+    'الأحمدي': [
+      { value: 'الأحمدي', en: 'Ahmadi' },
+      { value: 'الفحيحيل', en: 'Fahaheel' },
+      { value: 'المنقف', en: 'Mangaf' },
+      { value: 'المهبولة', en: 'Mahboula' },
+      { value: 'الفنطاس', en: 'Fintas' },
+      { value: 'أبو حليفة', en: 'Abu Halifa' },
+      { value: 'الرقة', en: 'Riqqa' },
+      { value: 'هدية', en: 'Hadiya' },
+      { value: 'العقيلة', en: 'Aqeela' },
+      { value: 'صباح الأحمد', en: 'Sabah Al-Ahmad' },
+    ],
+    'مبارك الكبير': [
+      { value: 'صباح السالم', en: 'Sabah Al-Salem' },
+      { value: 'المسيلة', en: 'Maseela' },
+      { value: 'العدان', en: 'Adan' },
+      { value: 'القصور', en: 'Qusour' },
+      { value: 'القرين', en: 'Qurain' },
+      { value: 'الفنيطيس', en: 'Funaitees' },
+      { value: 'أبو فطيرة', en: 'Abu Ftaira' },
+      { value: 'المسايل', en: 'Masayel' },
+    ],
+    'الجهراء': [
+      { value: 'الجهراء', en: 'Jahra' },
+      { value: 'النسيم', en: 'Naseem' },
+      { value: 'القصر', en: 'Qasr' },
+      { value: 'تيماء', en: 'Taima' },
+      { value: 'سعد العبدالله', en: 'Saad Al-Abdullah' },
+      { value: 'النعيم', en: 'Naeem' },
+      { value: 'العيون', en: 'Oyoun' },
+      { value: 'الصليبية', en: 'Sulaibiya' },
+    ],
+  }
+
+  const availableCities = useMemo(() => {
+    return selectedGovernorate ? governorateCities[selectedGovernorate] || [] : []
+  }, [selectedGovernorate])
 
   async function handleFileUpload(
     files: FileList | null,
@@ -165,7 +248,7 @@ export default function ListPage() {
                   </label>
                   <select name="year" required className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
                     <option value="">{lang === 'ar' ? '-- السنة --' : '-- Year --'}</option>
-                    {Array.from({ length: 27 }, (_, i) => 2026 - i).map((y) => (
+                    {Array.from({ length: 31 }, (_, i) => 2030 - i).map((y) => (
                       <option key={y} value={y}>{y}</option>
                     ))}
                   </select>
@@ -189,10 +272,16 @@ export default function ListPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-primary">
-                    {t('area')} *
+                    {lang === 'ar' ? 'المحافظة' : 'Governorate'} *
                   </label>
-                  <select name="area" required className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
-                    <option value="">{t('allAreas')}</option>
+                  <select
+                    name="area"
+                    required
+                    value={selectedGovernorate}
+                    onChange={(e) => setSelectedGovernorate(e.target.value)}
+                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
+                  >
+                    <option value="">{lang === 'ar' ? '-- المحافظة --' : '-- Governorate --'}</option>
                     <option value="العاصمة">{lang === 'ar' ? 'العاصمة' : 'Capital'}</option>
                     <option value="حولي">{lang === 'ar' ? 'حولي' : 'Hawalli'}</option>
                     <option value="الفروانية">{lang === 'ar' ? 'الفروانية' : 'Farwaniya'}</option>
@@ -203,25 +292,24 @@ export default function ListPage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-primary">
-                    {t('city')}
+                    {lang === 'ar' ? 'المنطقة' : 'Area'} *
                   </label>
-                  <select name="city" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
-                    <option value="">{lang === 'ar' ? '-- المدينة --' : '-- City --'}</option>
-                    <option value="الكويت">{lang === 'ar' ? 'الكويت' : 'Kuwait City'}</option>
-                    <option value="حولي">{lang === 'ar' ? 'حولي' : 'Hawalli'}</option>
-                    <option value="السالمية">{lang === 'ar' ? 'السالمية' : 'Salmiya'}</option>
-                    <option value="الجهراء">{lang === 'ar' ? 'الجهراء' : 'Jahra'}</option>
-                    <option value="الفحيحيل">{lang === 'ar' ? 'الفحيحيل' : 'Fahaheel'}</option>
-                    <option value="المنقف">{lang === 'ar' ? 'المنقف' : 'Mangaf'}</option>
-                    <option value="الأحمدي">{lang === 'ar' ? 'الأحمدي' : 'Ahmadi'}</option>
-                    <option value="صباح السالم">{lang === 'ar' ? 'صباح السالم' : 'Sabah Al-Salem'}</option>
-                    <option value="الفروانية">{lang === 'ar' ? 'الفروانية' : 'Farwaniya'}</option>
-                    <option value="خيطان">{lang === 'ar' ? 'خيطان' : 'Khaitan'}</option>
-                    <option value="الجابرية">{lang === 'ar' ? 'الجابرية' : 'Jabriya'}</option>
-                    <option value="بيان">{lang === 'ar' ? 'بيان' : 'Bayan'}</option>
-                    <option value="مشرف">{lang === 'ar' ? 'مشرف' : 'Mishref'}</option>
-                    <option value="العقيلة">{lang === 'ar' ? 'العقيلة' : 'Aqeela'}</option>
-                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  <select
+                    name="city"
+                    required
+                    disabled={!selectedGovernorate}
+                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <option value="">
+                      {!selectedGovernorate
+                        ? (lang === 'ar' ? 'اختر المحافظة أولاً' : 'Select governorate first')
+                        : (lang === 'ar' ? '-- المنطقة --' : '-- Area --')}
+                    </option>
+                    {availableCities.map((city) => (
+                      <option key={city.value} value={city.value}>
+                        {lang === 'ar' ? city.value : city.en}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
