@@ -52,6 +52,12 @@ export default function Header() {
             >
               {t('dashboard')}
             </Link>
+            <Link
+              href="/profile"
+              className="text-sm text-text-secondary transition-colors hover:text-text-primary"
+            >
+              {lang === 'ar' ? 'ملفي' : 'Profile'}
+            </Link>
             {isAdminUser && (
               <Link
                 href="/admin"
@@ -129,6 +135,13 @@ export default function Header() {
                 className="rounded-lg px-3 py-2 text-text-secondary transition-colors hover:bg-dark-surface hover:text-text-primary"
               >
                 {t('dashboard')}
+              </Link>
+              <Link
+                href="/profile"
+                onClick={() => setMenuOpen(false)}
+                className="rounded-lg px-3 py-2 text-text-secondary transition-colors hover:bg-dark-surface hover:text-text-primary"
+              >
+                {lang === 'ar' ? 'ملفي' : 'Profile'}
               </Link>
               {isAdminUser && (
                 <Link

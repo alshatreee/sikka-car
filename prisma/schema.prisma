@@ -38,17 +38,19 @@ enum TransmissionType {
 }
 
 model User {
-  id          String    @id @default(cuid())
-  clerkUserId String    @unique
-  email       String    @unique
-  fullName    String?
-  phone       String?
-  role        UserRole  @default(USER)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id             String    @id @default(cuid())
+  clerkUserId    String    @unique
+  email          String    @unique
+  fullName       String?
+  phone          String?
+  civilId        String?
+  drivingLicense String?
+  role           UserRole  @default(USER)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  cars        Car[]
-  bookings    Booking[] @relation("RenterBookings")
+  cars           Car[]
+  bookings       Booking[] @relation("RenterBookings")
 }
 
 model Car {
@@ -111,6 +113,17 @@ model Booking {
   updatedAt        DateTime      @updatedAt
 
   review           Review?
+  photos           BookingPhoto[]
+}
+
+model BookingPhoto {
+  id          String   @id @default(cuid())
+  bookingId   String
+  booking     Booking  @relation(fields: [bookingId], references: [id])
+  url         String
+  type        String   // DELIVERY_FRONT, DELIVERY_BACK, DELIVERY_LEFT, DELIVERY_RIGHT, RETURN_FRONT, RETURN_BACK, RETURN_LEFT, RETURN_RIGHT
+  uploadedBy  String   // OWNER, RENTER, ADMIN
+  createdAt   DateTime @default(now())
 }
 
 model Review {

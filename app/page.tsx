@@ -456,6 +456,21 @@ export default function HomePage() {
                     {lang === 'ar' ? 'تواصل معنا' : 'Contact Us'}
                   </Link>
                 </li>
+                <li>
+                  <Link href="/faq" className="transition-colors hover:text-status-star">
+                    {lang === 'ar' ? 'الأسئلة الشائعة' : 'FAQ'}
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/terms" className="transition-colors hover:text-status-star">
+                    {lang === 'ar' ? 'شروط الاستخدام' : 'Terms'}
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/privacy" className="transition-colors hover:text-status-star">
+                    {lang === 'ar' ? 'سياسة الخصوصية' : 'Privacy'}
+                  </Link>
+                </li>
               </ul>
             </div>
 
