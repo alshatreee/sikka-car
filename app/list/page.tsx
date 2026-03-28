@@ -310,13 +310,38 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('origin')}
                   </label>
-                  <input name="origin" placeholder={t('origin')} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50" />
+                  <select name="origin" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- المنشأ --' : '-- Origin --'}</option>
+                    <option value="يابانية">{lang === 'ar' ? 'يابانية' : 'Japanese'}</option>
+                    <option value="أمريكية">{lang === 'ar' ? 'أمريكية' : 'American'}</option>
+                    <option value="كورية">{lang === 'ar' ? 'كورية' : 'Korean'}</option>
+                    <option value="ألمانية">{lang === 'ar' ? 'ألمانية' : 'German'}</option>
+                    <option value="بريطانية">{lang === 'ar' ? 'بريطانية' : 'British'}</option>
+                    <option value="صينية">{lang === 'ar' ? 'صينية' : 'Chinese'}</option>
+                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('carType')}
                   </label>
-                  <input name="type" placeholder={t('carType')} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50" />
+                  <select name="type" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- الماركة --' : '-- Brand --'}</option>
+                    <option value="تويوتا">{lang === 'ar' ? 'تويوتا' : 'Toyota'}</option>
+                    <option value="نيسان">{lang === 'ar' ? 'نيسان' : 'Nissan'}</option>
+                    <option value="هوندا">{lang === 'ar' ? 'هوندا' : 'Honda'}</option>
+                    <option value="هيونداي">{lang === 'ar' ? 'هيونداي' : 'Hyundai'}</option>
+                    <option value="كيا">{lang === 'ar' ? 'كيا' : 'Kia'}</option>
+                    <option value="شيفروليه">{lang === 'ar' ? 'شيفروليه' : 'Chevrolet'}</option>
+                    <option value="فورد">{lang === 'ar' ? 'فورد' : 'Ford'}</option>
+                    <option value="مرسيدس">{lang === 'ar' ? 'مرسيدس' : 'Mercedes'}</option>
+                    <option value="بي ام دبليو">{lang === 'ar' ? 'بي ام دبليو' : 'BMW'}</option>
+                    <option value="لكزس">{lang === 'ar' ? 'لكزس' : 'Lexus'}</option>
+                    <option value="جي ام سي">{lang === 'ar' ? 'جي ام سي' : 'GMC'}</option>
+                    <option value="لاند روفر">{lang === 'ar' ? 'لاند روفر' : 'Land Rover'}</option>
+                    <option value="بورشه">{lang === 'ar' ? 'بورشه' : 'Porsche'}</option>
+                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  </select>
                 </div>
               </div>
 
@@ -340,14 +365,15 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('seats')}
                   </label>
-                  <input
-                    name="seats"
-                    type="number"
-                    min="1"
-                    max="15"
-                    placeholder="5"
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="seats" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- المقاعد --' : '-- Seats --'}</option>
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
+                    <option value="9">9</option>
+                  </select>
                 </div>
               </div>
 
@@ -366,13 +392,13 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('minAge')}
                   </label>
-                  <input
-                    name="minAge"
-                    type="number"
-                    min="18"
-                    placeholder="21"
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="minAge" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- الحد الأدنى --' : '-- Min Age --'}</option>
+                    <option value="18">18</option>
+                    <option value="21">21</option>
+                    <option value="25">25</option>
+                    <option value="30">30</option>
+                  </select>
                 </div>
               </div>
 
