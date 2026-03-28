@@ -28,6 +28,7 @@ export function BookingPanel({
   const [notes, setNotes] = useState('')
   const [error, setError] = useState('')
   const [showConfirm, setShowConfirm] = useState(false)
+  const [agreedToTerms, setAgreedToTerms] = useState(false)
   const [bookedRanges, setBookedRanges] = useState<{ start: string; end: string }[]>([])
   const [dateConflict, setDateConflict] = useState(false)
 
@@ -69,6 +70,11 @@ export function BookingPanel({
 
     if (totalDays <= 0) {
       setError(lang === 'ar' ? 'تاريخ النهاية يجب أن يكون بعد تاريخ البداية' : 'End date must be after start date')
+      return
+    }
+
+    if (!agreedToTerms) {
+      setError(lang === 'ar' ? 'يرجى الموافقة على شروط الاستخدام وسياسة الخصوصية' : 'Please agree to the Terms of Service and Privacy Policy')
       return
     }
 
@@ -225,6 +231,23 @@ export function BookingPanel({
           </div>
         )}
 
+        {/* Terms Agreement */}
+        <label className="flex items-start gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={agreedToTerms}
+            onChange={(e) => setAgreedToTerms(e.target.checked)}
+            className="mt-1 h-4 w-4 shrink-0 rounded border-dark-border accent-status-star"
+          />
+          <span className="text-xs text-text-secondary">
+            {lang === 'ar' ? (
+              <>أوافق على <a href="/terms" target="_blank" className="text-status-star underline">شروط الاستخدام</a> و<a href="/privacy" target="_blank" className="text-status-star underline">سياسة الخصوصية</a></>
+            ) : (
+              <>I agree to the <a href="/terms" target="_blank" className="text-status-star underline">Terms of Service</a> and <a href="/privacy" target="_blank" className="text-status-star underline">Privacy Policy</a></>
+            )}
+          </span>
+        </label>
+
         {error && (
           <div className="rounded-xl bg-status-warning/10 p-3 text-sm text-status-warning border border-status-warning/20">
             {error}
@@ -265,7 +288,7 @@ export function BookingPanel({
         {!showConfirm && (
           <button
             onClick={handleBooking}
-            disabled={pending || totalDays <= 0 || dateConflict}
+            disabled={pending || totalDays <= 0 || dateConflict || !agreedToTerms}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-solid py-3.5 font-medium text-text-primary shadow-lg transition-all hover:bg-brand-solid-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
             <CreditCard className="h-4 w-4" />

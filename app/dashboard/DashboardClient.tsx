@@ -6,6 +6,7 @@ import Image from 'next/image'
 import { useState, useTransition } from 'react'
 import { cancelBooking, submitReview } from '@/actions/bookingActions'
 import { deleteCar } from '@/actions/carActions'
+import { BookingPhotos } from '@/components/cars/BookingPhotos'
 import {
   Car,
   CheckCircle,
@@ -408,6 +409,12 @@ export default function DashboardClient({
                             </div>
                             <StatusBadge status={booking.status} />
                           </div>
+                          {/* Owner delivery photos */}
+                          {['APPROVED', 'ACTIVE'].includes(booking.status) && (
+                            <div className="mt-2">
+                              <BookingPhotos bookingId={booking.id} role="OWNER" phase="DELIVERY" />
+                            </div>
+                          )}
                         ))}
                       </div>
                     )}
@@ -498,6 +505,13 @@ export default function DashboardClient({
                         </div>
                       )}
                     </div>
+
+                    {/* Renter return photos */}
+                    {['ACTIVE', 'COMPLETED'].includes(booking.status) && (
+                      <div className="mt-2">
+                        <BookingPhotos bookingId={booking.id} role="RENTER" phase="RETURN" />
+                      </div>
+                    )}
 
                     {/* Review form */}
                     {reviewingBooking === booking.id && (
