@@ -163,15 +163,12 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('year')} *
                   </label>
-                  <input
-                    name="year"
-                    type="number"
-                    required
-                    min="2000"
-                    max="2100"
-                    placeholder="2024"
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="year" required className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- السنة --' : '-- Year --'}</option>
+                    {Array.from({ length: 27 }, (_, i) => 2026 - i).map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-primary">
@@ -208,7 +205,24 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('city')}
                   </label>
-                  <input name="city" placeholder={t('city')} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50" />
+                  <select name="city" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- المدينة --' : '-- City --'}</option>
+                    <option value="الكويت">{lang === 'ar' ? 'الكويت' : 'Kuwait City'}</option>
+                    <option value="حولي">{lang === 'ar' ? 'حولي' : 'Hawalli'}</option>
+                    <option value="السالمية">{lang === 'ar' ? 'السالمية' : 'Salmiya'}</option>
+                    <option value="الجهراء">{lang === 'ar' ? 'الجهراء' : 'Jahra'}</option>
+                    <option value="الفحيحيل">{lang === 'ar' ? 'الفحيحيل' : 'Fahaheel'}</option>
+                    <option value="المنقف">{lang === 'ar' ? 'المنقف' : 'Mangaf'}</option>
+                    <option value="الأحمدي">{lang === 'ar' ? 'الأحمدي' : 'Ahmadi'}</option>
+                    <option value="صباح السالم">{lang === 'ar' ? 'صباح السالم' : 'Sabah Al-Salem'}</option>
+                    <option value="الفروانية">{lang === 'ar' ? 'الفروانية' : 'Farwaniya'}</option>
+                    <option value="خيطان">{lang === 'ar' ? 'خيطان' : 'Khaitan'}</option>
+                    <option value="الجابرية">{lang === 'ar' ? 'الجابرية' : 'Jabriya'}</option>
+                    <option value="بيان">{lang === 'ar' ? 'بيان' : 'Bayan'}</option>
+                    <option value="مشرف">{lang === 'ar' ? 'مشرف' : 'Mishref'}</option>
+                    <option value="العقيلة">{lang === 'ar' ? 'العقيلة' : 'Aqeela'}</option>
+                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -225,13 +239,38 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('origin')}
                   </label>
-                  <input name="origin" placeholder={t('origin')} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50" />
+                  <select name="origin" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- بلد المنشأ --' : '-- Origin --'}</option>
+                    <option value="يابانية">{lang === 'ar' ? 'يابانية' : 'Japanese'}</option>
+                    <option value="أمريكية">{lang === 'ar' ? 'أمريكية' : 'American'}</option>
+                    <option value="كورية">{lang === 'ar' ? 'كورية' : 'Korean'}</option>
+                    <option value="ألمانية">{lang === 'ar' ? 'ألمانية' : 'German'}</option>
+                    <option value="بريطانية">{lang === 'ar' ? 'بريطانية' : 'British'}</option>
+                    <option value="صينية">{lang === 'ar' ? 'صينية' : 'Chinese'}</option>
+                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('carType')}
                   </label>
-                  <input name="type" placeholder={t('carType')} className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50" />
+                  <select name="type" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- النوع --' : '-- Type --'}</option>
+                    <option value="تويوتا">{lang === 'ar' ? 'تويوتا' : 'Toyota'}</option>
+                    <option value="نيسان">{lang === 'ar' ? 'نيسان' : 'Nissan'}</option>
+                    <option value="هوندا">{lang === 'ar' ? 'هوندا' : 'Honda'}</option>
+                    <option value="هيونداي">{lang === 'ar' ? 'هيونداي' : 'Hyundai'}</option>
+                    <option value="كيا">{lang === 'ar' ? 'كيا' : 'Kia'}</option>
+                    <option value="شيفروليه">{lang === 'ar' ? 'شيفروليه' : 'Chevrolet'}</option>
+                    <option value="فورد">{lang === 'ar' ? 'فورد' : 'Ford'}</option>
+                    <option value="مرسيدس">{lang === 'ar' ? 'مرسيدس' : 'Mercedes'}</option>
+                    <option value="بي ام دبليو">{lang === 'ar' ? 'بي ام دبليو' : 'BMW'}</option>
+                    <option value="لكزس">{lang === 'ar' ? 'لكزس' : 'Lexus'}</option>
+                    <option value="جي ام سي">{lang === 'ar' ? 'جي ام سي' : 'GMC'}</option>
+                    <option value="لاند روفر">{lang === 'ar' ? 'لاند روفر' : 'Land Rover'}</option>
+                    <option value="بورشه">{lang === 'ar' ? 'بورشه' : 'Porsche'}</option>
+                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  </select>
                 </div>
               </div>
 
@@ -255,14 +294,15 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('seats')}
                   </label>
-                  <input
-                    name="seats"
-                    type="number"
-                    min="1"
-                    max="15"
-                    placeholder="5"
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="seats" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- المقاعد --' : '-- Seats --'}</option>
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
+                    <option value="9">9</option>
+                  </select>
                 </div>
               </div>
 
@@ -281,13 +321,13 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('minAge')}
                   </label>
-                  <input
-                    name="minAge"
-                    type="number"
-                    min="18"
-                    placeholder="21"
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="minAge" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- العمر --' : '-- Age --'}</option>
+                    <option value="18">18</option>
+                    <option value="21">21</option>
+                    <option value="25">25</option>
+                    <option value="30">30</option>
+                  </select>
                 </div>
               </div>
 
@@ -305,11 +345,15 @@ export default function ListPage() {
                   <label className="mb-1 block text-sm font-medium text-text-primary">
                     {t('distancePolicy')}
                   </label>
-                  <input
-                    name="distancePolicy"
-                    placeholder={lang === 'ar' ? 'مثال: 200 كم/يوم' : 'e.g. 200 km/day'}
-                    className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                  />
+                  <select name="distancePolicy" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                    <option value="">{lang === 'ar' ? '-- المسافة --' : '-- Distance --'}</option>
+                    <option value="مفتوحة">{lang === 'ar' ? 'مفتوحة (بدون حد)' : 'Unlimited'}</option>
+                    <option value="100 كم/يوم">{lang === 'ar' ? '100 كم/يوم' : '100 km/day'}</option>
+                    <option value="150 كم/يوم">{lang === 'ar' ? '150 كم/يوم' : '150 km/day'}</option>
+                    <option value="200 كم/يوم">{lang === 'ar' ? '200 كم/يوم' : '200 km/day'}</option>
+                    <option value="250 كم/يوم">{lang === 'ar' ? '250 كم/يوم' : '250 km/day'}</option>
+                    <option value="300 كم/يوم">{lang === 'ar' ? '300 كم/يوم' : '300 km/day'}</option>
+                  </select>
                 </div>
               </div>
 
@@ -317,11 +361,13 @@ export default function ListPage() {
                 <label className="mb-1 block text-sm font-medium text-text-primary">
                   {t('availability')}
                 </label>
-                <input
-                  name="availabilityText"
-                  placeholder={lang === 'ar' ? 'مثال: متاح يومياً من 8 صباحاً' : 'e.g. Available daily from 8 AM'}
-                  className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                />
+                <select name="availabilityText" className="w-full rounded-xl border border-dark-border bg-dark-surface px-4 py-3 text-sm text-text-primary outline-none transition-colors focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50">
+                  <option value="">{lang === 'ar' ? '-- التوفر --' : '-- Availability --'}</option>
+                  <option value="متاح يومياً">{lang === 'ar' ? 'متاح يومياً' : 'Available daily'}</option>
+                  <option value="أيام العمل فقط">{lang === 'ar' ? 'أيام العمل فقط' : 'Weekdays only'}</option>
+                  <option value="عطلة نهاية الأسبوع">{lang === 'ar' ? 'عطلة نهاية الأسبوع فقط' : 'Weekends only'}</option>
+                  <option value="حسب الاتفاق">{lang === 'ar' ? 'حسب الاتفاق' : 'By arrangement'}</option>
+                </select>
               </div>
 
               <div>
