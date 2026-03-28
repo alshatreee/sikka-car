@@ -1,5 +1,5 @@
 import { getCarById } from '@/actions/carActions'
-import { getOrCreateCurrentUser } from '@/lib/auth'
+import { getOrCreateCurrentUser, isAdmin } from '@/lib/auth'
 import { notFound } from 'next/navigation'
 import CarDetailClient from './CarDetailClient'
 import type { Metadata } from 'next'
@@ -26,11 +26,13 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function CarDetailPage({ params }: Props) {
   const car = await getCarById(params.id)
 
-  if (!car || car.status !== 'APPROVED') {
+  const currentUser = await getOrCreateCurrentUser()
+  const adminUser = await isAdmin()
+
+  // Allow admins to view any car, but regular users can only see approved cars
+  if (!car || (!adminUser && car.status !== 'APPROVED')) {
     notFound()
   }
-
-  const currentUser = await getOrCreateCurrentUser()
 
   const jsonLd = {
     '@context': 'https://schema.org',
