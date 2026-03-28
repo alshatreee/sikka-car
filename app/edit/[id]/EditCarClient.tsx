@@ -154,7 +154,11 @@ export default function EditCarClient({ car }: EditCarClientProps) {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-secondary">{t('year')} *</label>
-                  <input name="year" type="number" required defaultValue={car.year} className="input-field" />
+                  <select name="year" required defaultValue={car.year} className="input-field">
+                    {Array.from({ length: 31 }, (_, i) => 2030 - i).map((y) => (
+                      <option key={y} value={y}>{y}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-secondary">{t('dailyPrice')} ({lang === 'ar' ? 'د.ك' : 'KWD'}) *</label>
@@ -163,18 +167,18 @@ export default function EditCarClient({ car }: EditCarClientProps) {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-text-secondary">{t('area')} *</label>
+                  <label className="mb-1 block text-sm font-medium text-text-secondary">{lang === 'ar' ? 'المحافظة' : 'Governorate'} *</label>
                   <select name="area" required defaultValue={car.area} className="input-field">
-                    <option value="العاصمة">العاصمة</option>
-                    <option value="حولي">حولي</option>
-                    <option value="الفروانية">الفروانية</option>
-                    <option value="الأحمدي">الأحمدي</option>
-                    <option value="مبارك الكبير">مبارك الكبير</option>
-                    <option value="الجهراء">الجهراء</option>
+                    <option value="العاصمة">{lang === 'ar' ? 'العاصمة' : 'Capital'}</option>
+                    <option value="حولي">{lang === 'ar' ? 'حولي' : 'Hawalli'}</option>
+                    <option value="الفروانية">{lang === 'ar' ? 'الفروانية' : 'Farwaniya'}</option>
+                    <option value="الأحمدي">{lang === 'ar' ? 'الأحمدي' : 'Ahmadi'}</option>
+                    <option value="مبارك الكبير">{lang === 'ar' ? 'مبارك الكبير' : 'Mubarak Al-Kabeer'}</option>
+                    <option value="الجهراء">{lang === 'ar' ? 'الجهراء' : 'Jahra'}</option>
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-sm font-medium text-text-secondary">{t('city')}</label>
+                  <label className="mb-1 block text-sm font-medium text-text-secondary">{lang === 'ar' ? 'المنطقة' : 'Area'}</label>
                   <input name="city" defaultValue={car.city || ''} className="input-field" />
                 </div>
               </div>
@@ -190,11 +194,36 @@ export default function EditCarClient({ car }: EditCarClientProps) {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-secondary">{t('origin')}</label>
-                  <input name="origin" defaultValue={car.origin || ''} className="input-field" />
+                  <select name="origin" defaultValue={car.origin || ''} className="input-field">
+                    <option value="">{lang === 'ar' ? '-- المنشأ --' : '-- Origin --'}</option>
+                    <option value="يابانية">{lang === 'ar' ? 'يابانية' : 'Japanese'}</option>
+                    <option value="أمريكية">{lang === 'ar' ? 'أمريكية' : 'American'}</option>
+                    <option value="كورية">{lang === 'ar' ? 'كورية' : 'Korean'}</option>
+                    <option value="ألمانية">{lang === 'ar' ? 'ألمانية' : 'German'}</option>
+                    <option value="بريطانية">{lang === 'ar' ? 'بريطانية' : 'British'}</option>
+                    <option value="صينية">{lang === 'ar' ? 'صينية' : 'Chinese'}</option>
+                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-secondary">{t('carType')}</label>
-                  <input name="type" defaultValue={car.type || ''} className="input-field" />
+                  <select name="type" defaultValue={car.type || ''} className="input-field">
+                    <option value="">{lang === 'ar' ? '-- الماركة --' : '-- Brand --'}</option>
+                    <option value="تويوتا">{lang === 'ar' ? 'تويوتا' : 'Toyota'}</option>
+                    <option value="نيسان">{lang === 'ar' ? 'نيسان' : 'Nissan'}</option>
+                    <option value="هوندا">{lang === 'ar' ? 'هوندا' : 'Honda'}</option>
+                    <option value="هيونداي">{lang === 'ar' ? 'هيونداي' : 'Hyundai'}</option>
+                    <option value="كيا">{lang === 'ar' ? 'كيا' : 'Kia'}</option>
+                    <option value="شيفروليه">{lang === 'ar' ? 'شيفروليه' : 'Chevrolet'}</option>
+                    <option value="فورد">{lang === 'ar' ? 'فورد' : 'Ford'}</option>
+                    <option value="مرسيدس">{lang === 'ar' ? 'مرسيدس' : 'Mercedes'}</option>
+                    <option value="بي ام دبليو">{lang === 'ar' ? 'بي ام دبليو' : 'BMW'}</option>
+                    <option value="لكزس">{lang === 'ar' ? 'لكزس' : 'Lexus'}</option>
+                    <option value="جي ام سي">{lang === 'ar' ? 'جي ام سي' : 'GMC'}</option>
+                    <option value="لاند روفر">{lang === 'ar' ? 'لاند روفر' : 'Land Rover'}</option>
+                    <option value="بورشه">{lang === 'ar' ? 'بورشه' : 'Porsche'}</option>
+                    <option value="أخرى">{lang === 'ar' ? 'أخرى' : 'Other'}</option>
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -202,18 +231,26 @@ export default function EditCarClient({ car }: EditCarClientProps) {
                   <label className="mb-1 block text-sm font-medium text-text-secondary">{t('category')}</label>
                   <select name="category" defaultValue={car.category || ''} className="input-field">
                     <option value="">--</option>
-                    <option value="سيدان">سيدان</option>
+                    <option value="سيدان">{lang === 'ar' ? 'سيدان' : 'Sedan'}</option>
                     <option value="SUV">SUV</option>
-                    <option value="كوبيه">كوبيه</option>
-                    <option value="بيك أب">بيك أب</option>
-                    <option value="فان">فان</option>
-                    <option value="رياضية">رياضية</option>
-                    <option value="كلاسيك">كلاسيك</option>
+                    <option value="كوبيه">{lang === 'ar' ? 'كوبيه' : 'Coupe'}</option>
+                    <option value="بيك أب">{lang === 'ar' ? 'بيك أب' : 'Pickup'}</option>
+                    <option value="فان">{lang === 'ar' ? 'فان' : 'Van'}</option>
+                    <option value="رياضية">{lang === 'ar' ? 'رياضية' : 'Sport'}</option>
+                    <option value="كلاسيك">{lang === 'ar' ? 'كلاسيك' : 'Classic'}</option>
                   </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-secondary">{t('seats')}</label>
-                  <input name="seats" type="number" defaultValue={car.seats || ''} className="input-field" />
+                  <select name="seats" defaultValue={car.seats || ''} className="input-field">
+                    <option value="">{lang === 'ar' ? '-- المقاعد --' : '-- Seats --'}</option>
+                    <option value="2">2</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
+                    <option value="9">9</option>
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -227,7 +264,13 @@ export default function EditCarClient({ car }: EditCarClientProps) {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-secondary">{t('minAge')}</label>
-                  <input name="minAge" type="number" defaultValue={car.minAge || ''} className="input-field" />
+                  <select name="minAge" defaultValue={car.minAge || ''} className="input-field">
+                    <option value="">{lang === 'ar' ? '-- العمر --' : '-- Age --'}</option>
+                    <option value="18">18</option>
+                    <option value="21">21</option>
+                    <option value="25">25</option>
+                    <option value="30">30</option>
+                  </select>
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -240,12 +283,26 @@ export default function EditCarClient({ car }: EditCarClientProps) {
                 </div>
                 <div>
                   <label className="mb-1 block text-sm font-medium text-text-secondary">{t('distancePolicy')}</label>
-                  <input name="distancePolicy" defaultValue={car.distancePolicy || ''} className="input-field" />
+                  <select name="distancePolicy" defaultValue={car.distancePolicy || ''} className="input-field">
+                    <option value="">{lang === 'ar' ? '-- المسافة --' : '-- Distance --'}</option>
+                    <option value="مفتوحة">{lang === 'ar' ? 'مفتوحة (بدون حد)' : 'Unlimited'}</option>
+                    <option value="100 كم/يوم">{lang === 'ar' ? '100 كم/يوم' : '100 km/day'}</option>
+                    <option value="150 كم/يوم">{lang === 'ar' ? '150 كم/يوم' : '150 km/day'}</option>
+                    <option value="200 كم/يوم">{lang === 'ar' ? '200 كم/يوم' : '200 km/day'}</option>
+                    <option value="250 كم/يوم">{lang === 'ar' ? '250 كم/يوم' : '250 km/day'}</option>
+                    <option value="300 كم/يوم">{lang === 'ar' ? '300 كم/يوم' : '300 km/day'}</option>
+                  </select>
                 </div>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-text-secondary">{t('availability')}</label>
-                <input name="availabilityText" defaultValue={car.availabilityText || ''} className="input-field" />
+                <select name="availabilityText" defaultValue={car.availabilityText || ''} className="input-field">
+                  <option value="">{lang === 'ar' ? '-- التوفر --' : '-- Availability --'}</option>
+                  <option value="متاح يومياً">{lang === 'ar' ? 'متاح يومياً' : 'Available daily'}</option>
+                  <option value="أيام العمل فقط">{lang === 'ar' ? 'أيام العمل فقط' : 'Weekdays only'}</option>
+                  <option value="عطلة نهاية الأسبوع">{lang === 'ar' ? 'عطلة نهاية الأسبوع فقط' : 'Weekends only'}</option>
+                  <option value="حسب الاتفاق">{lang === 'ar' ? 'حسب الاتفاق' : 'By arrangement'}</option>
+                </select>
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-text-secondary">{t('notes')}</label>

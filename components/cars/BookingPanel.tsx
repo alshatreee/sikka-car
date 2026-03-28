@@ -281,12 +281,7 @@ export function BookingPanel({
                   {lang === 'ar' ? 'أوافق على شروط وأحكام عقد التأجير' : 'I agree to the rental agreement terms'}
                 </p>
                 <a
-                  href="javascript:void(0)"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    // This will be used if we want to show the full contract in a modal
-                    // For now, users can view it after booking
-                  }}
+                  href="/terms"
                   className="text-xs text-status-star hover:underline"
                 >
                   {lang === 'ar' ? 'عرض الشروط' : 'View terms'}
@@ -321,9 +316,9 @@ export function BookingPanel({
           />
           <span className="text-xs text-text-secondary">
             {lang === 'ar' ? (
-              <>أوافق على <a href="/terms" target="_blank" className="text-status-star underline">شروط الاستخدام</a> و<a href="/privacy" target="_blank" className="text-status-star underline">سياسة الخصوصية</a></>
+              <>أوافق على <a href="/terms" className="text-status-star underline">شروط الاستخدام</a> و<a href="/privacy" className="text-status-star underline">سياسة الخصوصية</a></>
             ) : (
-              <>I agree to the <a href="/terms" target="_blank" className="text-status-star underline">Terms of Service</a> and <a href="/privacy" target="_blank" className="text-status-star underline">Privacy Policy</a></>
+              <>I agree to the <a href="/terms" className="text-status-star underline">Terms of Service</a> and <a href="/privacy" className="text-status-star underline">Privacy Policy</a></>
             )}
           </span>
         </label>
