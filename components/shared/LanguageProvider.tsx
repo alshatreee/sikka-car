@@ -37,7 +37,7 @@ const translations: Translations = {
   year: { ar: 'السنة', en: 'Year' },
   seats: { ar: 'المقاعد', en: 'Seats' },
   transmission: { ar: 'ناقل الحركة', en: 'Transmission' },
-  area: { ar: 'المنطقة', en: 'Area' },
+  area: { ar: 'المحافظة', en: 'Governorate' },
   automatic: { ar: 'أوتوماتيك', en: 'Automatic' },
   manual: { ar: 'عادي', en: 'Manual' },
   electric: { ar: 'كهربائي', en: 'Electric' },
@@ -80,7 +80,7 @@ const translations: Translations = {
   submitForReview: { ar: 'إرسال للمراجعة', en: 'Submit for Review' },
 
   // Filters
-  allAreas: { ar: 'جميع المناطق', en: 'All Areas' },
+  allAreas: { ar: 'جميع المحافظات', en: 'All Governorates' },
   allTransmissions: { ar: 'جميع الأنواع', en: 'All Transmissions' },
   allCategories: { ar: 'جميع الفئات', en: 'All Categories' },
   search: { ar: 'بحث...', en: 'Search...' },

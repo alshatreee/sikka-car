@@ -6,7 +6,7 @@ export async function GET() {
   try {
     const user = await getOrCreateCurrentUser()
     if (!user) {
-      return NextResponse.json({ count: 0 })
+      return NextResponse.json({ count: 0 }, { status: 401 })
     }
 
     const count = await prisma.message.count({
@@ -19,6 +19,6 @@ export async function GET() {
     return NextResponse.json({ count })
   } catch (error) {
     console.error('Failed to get unread count:', error)
-    return NextResponse.json({ count: 0 })
+    return NextResponse.json({ count: 0 }, { status: 500 })
   }
 }

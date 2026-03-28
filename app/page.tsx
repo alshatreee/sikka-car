@@ -482,6 +482,7 @@ export default function HomePage() {
               <div className="mb-4 flex gap-3">
                 <a
                   href="https://instagram.com"
+                  rel="noopener noreferrer"
                   className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-dark-surface"
                   aria-label="Instagram"
                 >
@@ -489,6 +490,7 @@ export default function HomePage() {
                 </a>
                 <a
                   href="https://twitter.com"
+                  rel="noopener noreferrer"
                   className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-dark-surface"
                   aria-label="Twitter"
                 >
