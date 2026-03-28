@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { getOrCreateCurrentUser } from '@/lib/auth'
 import { carListingSchema } from '@/lib/validators'
 import { revalidatePath } from 'next/cache'
+import { logAudit } from '@/lib/audit'
 
 export async function submitCarListing(rawData: unknown) {
   const currentUser = await getOrCreateCurrentUser()
@@ -45,6 +46,15 @@ export async function submitCarListing(rawData: unknown) {
       status: 'PENDING',
     },
   })
+
+  // Log car creation (fire-and-forget)
+  logAudit({
+    userId: currentUser.id,
+    action: 'CAR_CREATED',
+    entity: 'Car',
+    entityId: car.id,
+    details: `Title: ${data.title}, Price: ${data.dailyPrice}, Area: ${data.area}`,
+  }).catch((err) => console.error('Failed to log car creation:', err))
 
   revalidatePath('/dashboard')
   revalidatePath('/browse')
@@ -173,6 +183,15 @@ export async function updateCarListing(carId: string, rawData: unknown) {
     },
   })
 
+  // Log car update (fire-and-forget)
+  logAudit({
+    userId: currentUser.id,
+    action: 'CAR_UPDATED',
+    entity: 'Car',
+    entityId: carId,
+    details: `Title: ${data.title}, Price: ${data.dailyPrice}, Area: ${data.area}`,
+  }).catch((err) => console.error('Failed to log car update:', err))
+
   revalidatePath('/dashboard')
   revalidatePath('/browse')
   return { success: true, message: 'تم تحديث السيارة وإرسالها للمراجعة' }
@@ -196,6 +215,14 @@ export async function deleteCar(carId: string) {
   }
 
   await prisma.car.delete({ where: { id: carId } })
+
+  // Log car deletion (fire-and-forget)
+  logAudit({
+    userId: currentUser.id,
+    action: 'CAR_DELETED',
+    entity: 'Car',
+    entityId: carId,
+  }).catch((err) => console.error('Failed to log car deletion:', err))
 
   revalidatePath('/dashboard')
   revalidatePath('/browse')
