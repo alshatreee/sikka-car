@@ -29,12 +29,14 @@ export const bookingSchema = z.object({
   notes: z.string().optional(),
   civilId: z.string().optional(),
   licenseNumber: z.string().optional(),
-  civilIdImage: z.string().optional(),
-  licenseImage: z.string().optional(),
+  civilIdImageFront: z.string().optional(),
+  civilIdImageBack: z.string().optional(),
+  licenseImageFront: z.string().optional(),
+  licenseImageBack: z.string().optional(),
 }).refine(
-  (data) => (data.civilId && data.civilId.length > 0) || (data.civilIdImage && data.civilIdImage.length > 0),
+  (data) => (data.civilId && data.civilId.length > 0) || (data.civilIdImageFront && data.civilIdImageFront.length > 0),
   { message: 'يرجى إدخال الرقم المدني أو رفع صورة البطاقة المدنية', path: ['civilId'] }
 ).refine(
-  (data) => (data.licenseNumber && data.licenseNumber.length > 0) || (data.licenseImage && data.licenseImage.length > 0),
+  (data) => (data.licenseNumber && data.licenseNumber.length > 0) || (data.licenseImageFront && data.licenseImageFront.length > 0),
   { message: 'يرجى إدخال رقم الرخصة أو رفع صورة الرخصة', path: ['licenseNumber'] }
 )

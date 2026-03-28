@@ -43,10 +43,12 @@ model User {
   email          String    @unique
   fullName       String?
   phone          String?
-  civilId             String?
-  civilIdImage        String?
-  drivingLicense      String?
-  drivingLicenseImage String?
+  civilId                  String?
+  civilIdImageFront        String?
+  civilIdImageBack         String?
+  drivingLicense           String?
+  drivingLicenseImageFront String?
+  drivingLicenseImageBack  String?
   role                UserRole  @default(USER)
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -112,10 +114,12 @@ model Booking {
   totalAmount      Decimal       @db.Decimal(10, 2)
   notes            String?
 
-  civilId          String?
-  licenseNumber    String?
-  civilIdImage     String?
-  licenseImage     String?
+  civilId               String?
+  licenseNumber         String?
+  civilIdImageFront     String?
+  civilIdImageBack      String?
+  licenseImageFront     String?
+  licenseImageBack      String?
 
   paymentReference String?
   paymentUrl       String?

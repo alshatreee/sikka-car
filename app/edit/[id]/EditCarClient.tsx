@@ -314,7 +314,7 @@ export default function EditCarClient({ car }: EditCarClientProps) {
           {/* Images */}
           <div className="card">
             <h2 className="mb-4 text-lg font-bold text-text-primary">
-              {lang === 'ar' ? 'الصور والمستندات' : 'Images & Documents'}
+              {lang === 'ar' ? 'صور السيارة ودفتر السيارة' : 'Car Images & Registration Book'}
             </h2>
             <div className="space-y-6">
               <div>
@@ -351,7 +351,7 @@ export default function EditCarClient({ car }: EditCarClientProps) {
               <div>
                 <label className="mb-2 flex items-center gap-2 text-sm font-medium text-text-secondary">
                   <FileText className="h-4 w-4" />
-                  {t('documents')} *
+                  {lang === 'ar' ? 'دفتر السيارة' : 'Car Registration Book'} *
                 </label>
                 <div className="flex flex-wrap gap-3">
                   {documentImages.map((url) => (

@@ -29,11 +29,14 @@ export function BookingPanel({
   const [dropoffTime, setDropoffTime] = useState('')
   const [civilId, setCivilId] = useState('')
   const [licenseNumber, setLicenseNumber] = useState('')
-  const [civilIdImage, setCivilIdImage] = useState('')
-  const [licenseImage, setLicenseImage] = useState('')
-  const [idMethod, setIdMethod] = useState<'text' | 'upload'>('text')
-  const [uploadingCivil, setUploadingCivil] = useState(false)
-  const [uploadingLicense, setUploadingLicense] = useState(false)
+  const [civilIdImageFront, setCivilIdImageFront] = useState('')
+  const [civilIdImageBack, setCivilIdImageBack] = useState('')
+  const [licenseImageFront, setLicenseImageFront] = useState('')
+  const [licenseImageBack, setLicenseImageBack] = useState('')
+  const [uploadingCivilFront, setUploadingCivilFront] = useState(false)
+  const [uploadingCivilBack, setUploadingCivilBack] = useState(false)
+  const [uploadingLicenseFront, setUploadingLicenseFront] = useState(false)
+  const [uploadingLicenseBack, setUploadingLicenseBack] = useState(false)
   const [notes, setNotes] = useState('')
   const [contractAccepted, setContractAccepted] = useState(false)
   const [error, setError] = useState('')
@@ -83,28 +86,17 @@ export function BookingPanel({
       return
     }
 
-    if (idMethod === 'text') {
-      if (!civilId) {
-        setError(lang === 'ar' ? 'يرجى إدخال الرقم المدني' : 'Please enter Civil ID')
-        return
-      }
-      if (!/^\d{12}$/.test(civilId)) {
-        setError(lang === 'ar' ? 'الرقم المدني يجب أن يكون 12 رقم' : 'Civil ID must be exactly 12 digits')
-        return
-      }
-      if (!licenseNumber) {
-        setError(lang === 'ar' ? 'يرجى إدخال رقم الرخصة' : 'Please enter License Number')
-        return
-      }
-    } else {
-      if (!civilIdImage) {
-        setError(lang === 'ar' ? 'يرجى رفع صورة البطاقة المدنية' : 'Please upload Civil ID image')
-        return
-      }
-      if (!licenseImage) {
-        setError(lang === 'ar' ? 'يرجى رفع صورة الرخصة' : 'Please upload License image')
-        return
-      }
+    if (!civilId && !civilIdImageFront) {
+      setError(lang === 'ar' ? 'يرجى إدخال الرقم المدني أو رفع صورة البطاقة المدنية' : 'Please enter Civil ID or upload Civil ID image')
+      return
+    }
+    if (civilId && !/^\d{12}$/.test(civilId)) {
+      setError(lang === 'ar' ? 'الرقم المدني يجب أن يكون 12 رقم' : 'Civil ID must be exactly 12 digits')
+      return
+    }
+    if (!licenseNumber && !licenseImageFront) {
+      setError(lang === 'ar' ? 'يرجى إدخال رقم الرخصة أو رفع صورة الرخصة' : 'Please enter License Number or upload License image')
+      return
     }
 
     if (!contractAccepted) {
@@ -124,10 +116,12 @@ export function BookingPanel({
         endDate,
         pickupTime,
         dropoffTime,
-        civilId: idMethod === 'text' ? civilId : undefined,
-        licenseNumber: idMethod === 'text' ? licenseNumber : undefined,
-        civilIdImage: idMethod === 'upload' ? civilIdImage : undefined,
-        licenseImage: idMethod === 'upload' ? licenseImage : undefined,
+        civilId: civilId || undefined,
+        licenseNumber: licenseNumber || undefined,
+        civilIdImageFront: civilIdImageFront || undefined,
+        civilIdImageBack: civilIdImageBack || undefined,
+        licenseImageFront: licenseImageFront || undefined,
+        licenseImageBack: licenseImageBack || undefined,
         notes,
       })
 
@@ -216,165 +210,157 @@ export function BookingPanel({
           </div>
         </div>
 
-        {/* Identity Verification */}
+        {/* Identity Verification - Civil ID */}
         <div className="rounded-xl border border-dark-border bg-dark-surface/50 p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
-              <Shield className="h-4 w-4 text-status-star" />
-              {lang === 'ar' ? 'التحقق من الهوية' : 'Identity Verification'}
+          <label className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
+            <Shield className="h-4 w-4 text-status-star" />
+            {lang === 'ar' ? 'البطاقة المدنية' : 'Civil ID'}
+          </label>
+          <div>
+            <label className="mb-1 block text-xs text-text-secondary">
+              {lang === 'ar' ? 'الرقم المدني' : 'Civil ID Number'}
             </label>
-            <div className="flex rounded-lg border border-dark-border overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setIdMethod('text')}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  idMethod === 'text'
-                    ? 'bg-status-star text-dark-bg'
-                    : 'bg-dark-surface text-text-secondary hover:bg-dark-border'
-                }`}
-              >
-                {lang === 'ar' ? 'كتابة' : 'Type'}
-              </button>
-              <button
-                type="button"
-                onClick={() => setIdMethod('upload')}
-                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-                  idMethod === 'upload'
-                    ? 'bg-status-star text-dark-bg'
-                    : 'bg-dark-surface text-text-secondary hover:bg-dark-border'
-                }`}
-              >
-                {lang === 'ar' ? 'رفع صورة' : 'Upload'}
-              </button>
+            <input
+              type="text"
+              value={civilId}
+              onChange={(e) => setCivilId(e.target.value.replace(/\D/g, '').slice(0, 12))}
+              placeholder="123456789012"
+              maxLength={12}
+              className="w-full rounded-xl border border-dark-border bg-dark-surface px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-text-secondary">
+                {lang === 'ar' ? 'الوجه الأمامي' : 'Front Side'}
+              </label>
+              {civilIdImageFront ? (
+                <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
+                  <Image src={civilIdImageFront} alt="Civil ID Front" fill className="object-cover" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                    <Check className="h-6 w-6 text-green-400" />
+                  </div>
+                  <button type="button" onClick={() => setCivilIdImageFront('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">✕</button>
+                </div>
+              ) : (
+                <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
+                  {uploadingCivilFront ? <Loader2 className="h-6 w-6 animate-spin text-text-muted" /> : (
+                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'الوجه الأمامي' : 'Front'}</span></>
+                  )}
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
+                    const file = e.target.files?.[0]; if (!file) return
+                    setUploadingCivilFront(true)
+                    const url = await uploadToCloudinary(file, 'sikka_id_docs')
+                    if (url) setCivilIdImageFront(url)
+                    setUploadingCivilFront(false)
+                  }} />
+                </label>
+              )}
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-text-secondary">
+                {lang === 'ar' ? 'الوجه الخلفي' : 'Back Side'}
+              </label>
+              {civilIdImageBack ? (
+                <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
+                  <Image src={civilIdImageBack} alt="Civil ID Back" fill className="object-cover" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                    <Check className="h-6 w-6 text-green-400" />
+                  </div>
+                  <button type="button" onClick={() => setCivilIdImageBack('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">✕</button>
+                </div>
+              ) : (
+                <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
+                  {uploadingCivilBack ? <Loader2 className="h-6 w-6 animate-spin text-text-muted" /> : (
+                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'الوجه الخلفي' : 'Back'}</span></>
+                  )}
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
+                    const file = e.target.files?.[0]; if (!file) return
+                    setUploadingCivilBack(true)
+                    const url = await uploadToCloudinary(file, 'sikka_id_docs')
+                    if (url) setCivilIdImageBack(url)
+                    setUploadingCivilBack(false)
+                  }} />
+                </label>
+              )}
             </div>
           </div>
+        </div>
 
-          {idMethod === 'text' ? (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-text-secondary">
-                  {lang === 'ar' ? 'الرقم المدني' : 'Civil ID'}
-                </label>
-                <input
-                  type="text"
-                  value={civilId}
-                  onChange={(e) => setCivilId(e.target.value.replace(/\D/g, '').slice(0, 12))}
-                  placeholder="123456789012"
-                  maxLength={12}
-                  className="w-full rounded-xl border border-dark-border bg-dark-surface px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-text-secondary">
-                  {lang === 'ar' ? 'رقم الرخصة' : 'License Number'}
-                </label>
-                <input
-                  type="text"
-                  value={licenseNumber}
-                  onChange={(e) => setLicenseNumber(e.target.value)}
-                  placeholder={lang === 'ar' ? 'رقم الرخصة' : 'License number'}
-                  className="w-full rounded-xl border border-dark-border bg-dark-surface px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
-                />
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs text-text-secondary">
-                  {lang === 'ar' ? 'صورة البطاقة المدنية' : 'Civil ID Photo'}
-                </label>
-                {civilIdImage ? (
-                  <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
-                    <Image src={civilIdImage} alt="Civil ID" fill className="object-cover" />
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                      <Check className="h-6 w-6 text-green-400" />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setCivilIdImage('')}
-                      className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary"
-                    >
-                      ✕
-                    </button>
+        {/* Identity Verification - License */}
+        <div className="rounded-xl border border-dark-border bg-dark-surface/50 p-4 space-y-3">
+          <label className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
+            <CreditCard className="h-4 w-4 text-status-star" />
+            {lang === 'ar' ? 'رخصة القيادة' : 'Driving License'}
+          </label>
+          <div>
+            <label className="mb-1 block text-xs text-text-secondary">
+              {lang === 'ar' ? 'رقم الرخصة' : 'License Number'}
+            </label>
+            <input
+              type="text"
+              value={licenseNumber}
+              onChange={(e) => setLicenseNumber(e.target.value)}
+              placeholder={lang === 'ar' ? 'رقم الرخصة' : 'License number'}
+              className="w-full rounded-xl border border-dark-border bg-dark-surface px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs text-text-secondary">
+                {lang === 'ar' ? 'الوجه الأمامي' : 'Front Side'}
+              </label>
+              {licenseImageFront ? (
+                <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
+                  <Image src={licenseImageFront} alt="License Front" fill className="object-cover" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                    <Check className="h-6 w-6 text-green-400" />
                   </div>
-                ) : (
-                  <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
-                    {uploadingCivil ? (
-                      <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
-                    ) : (
-                      <>
-                        <Camera className="mb-1 h-5 w-5 text-text-muted" />
-                        <span className="text-[10px] text-text-muted">
-                          {lang === 'ar' ? 'رفع صورة البطاقة' : 'Upload ID'}
-                        </span>
-                      </>
-                    )}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0]
-                        if (!file) return
-                        setUploadingCivil(true)
-                        const url = await uploadToCloudinary(file, 'sikka_id_docs')
-                        if (url) setCivilIdImage(url)
-                        setUploadingCivil(false)
-                      }}
-                    />
-                  </label>
-                )}
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-text-secondary">
-                  {lang === 'ar' ? 'صورة رخصة القيادة' : 'License Photo'}
+                  <button type="button" onClick={() => setLicenseImageFront('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">✕</button>
+                </div>
+              ) : (
+                <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
+                  {uploadingLicenseFront ? <Loader2 className="h-6 w-6 animate-spin text-text-muted" /> : (
+                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'الوجه الأمامي' : 'Front'}</span></>
+                  )}
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
+                    const file = e.target.files?.[0]; if (!file) return
+                    setUploadingLicenseFront(true)
+                    const url = await uploadToCloudinary(file, 'sikka_id_docs')
+                    if (url) setLicenseImageFront(url)
+                    setUploadingLicenseFront(false)
+                  }} />
                 </label>
-                {licenseImage ? (
-                  <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
-                    <Image src={licenseImage} alt="License" fill className="object-cover" />
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                      <Check className="h-6 w-6 text-green-400" />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setLicenseImage('')}
-                      className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ) : (
-                  <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
-                    {uploadingLicense ? (
-                      <Loader2 className="h-6 w-6 animate-spin text-text-muted" />
-                    ) : (
-                      <>
-                        <Camera className="mb-1 h-5 w-5 text-text-muted" />
-                        <span className="text-[10px] text-text-muted">
-                          {lang === 'ar' ? 'رفع صورة الرخصة' : 'Upload License'}
-                        </span>
-                      </>
-                    )}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={async (e) => {
-                        const file = e.target.files?.[0]
-                        if (!file) return
-                        setUploadingLicense(true)
-                        const url = await uploadToCloudinary(file, 'sikka_id_docs')
-                        if (url) setLicenseImage(url)
-                        setUploadingLicense(false)
-                      }}
-                    />
-                  </label>
-                )}
-              </div>
+              )}
             </div>
-          )}
+            <div>
+              <label className="mb-1 block text-xs text-text-secondary">
+                {lang === 'ar' ? 'الوجه الخلفي' : 'Back Side'}
+              </label>
+              {licenseImageBack ? (
+                <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
+                  <Image src={licenseImageBack} alt="License Back" fill className="object-cover" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                    <Check className="h-6 w-6 text-green-400" />
+                  </div>
+                  <button type="button" onClick={() => setLicenseImageBack('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">✕</button>
+                </div>
+              ) : (
+                <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
+                  {uploadingLicenseBack ? <Loader2 className="h-6 w-6 animate-spin text-text-muted" /> : (
+                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'الوجه الخلفي' : 'Back'}</span></>
+                  )}
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
+                    const file = e.target.files?.[0]; if (!file) return
+                    setUploadingLicenseBack(true)
+                    const url = await uploadToCloudinary(file, 'sikka_id_docs')
+                    if (url) setLicenseImageBack(url)
+                    setUploadingLicenseBack(false)
+                  }} />
+                </label>
+              )}
+            </div>
+          </div>
         </div>
 
         <div>
