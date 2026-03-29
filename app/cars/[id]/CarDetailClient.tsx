@@ -207,7 +207,9 @@ export default function CarDetailClient({
             {/* Specs Grid */}
             <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
               <div className="flex items-center gap-3 rounded-xl bg-dark-surface p-3 border border-dark-border">
-                <MapPin className="h-5 w-5 text-text-secondary" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-status-star/10">
+                  <MapPin className="h-4 w-4 text-status-star" />
+                </div>
                 <div>
                   <div className="text-xs text-text-secondary">{t('area')}</div>
                   <div className="text-sm font-medium text-text-primary">
@@ -218,7 +220,9 @@ export default function CarDetailClient({
               </div>
 
               <div className="flex items-center gap-3 rounded-xl bg-dark-surface p-3 border border-dark-border">
-                <Calendar className="h-5 w-5 text-text-secondary" />
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-status-star/10">
+                  <Calendar className="h-4 w-4 text-status-star" />
+                </div>
                 <div>
                   <div className="text-xs text-text-secondary">{t('year')}</div>
                   <div className="text-sm font-medium text-text-primary">{car.year}</div>
@@ -227,7 +231,9 @@ export default function CarDetailClient({
 
               {car.seats && (
                 <div className="flex items-center gap-3 rounded-xl bg-dark-surface p-3 border border-dark-border">
-                  <Users className="h-5 w-5 text-text-secondary" />
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-status-star/10">
+                    <Users className="h-4 w-4 text-status-star" />
+                  </div>
                   <div>
                     <div className="text-xs text-text-secondary">{t('seats')}</div>
                     <div className="text-sm font-medium text-text-primary">{car.seats}</div>
@@ -237,7 +243,9 @@ export default function CarDetailClient({
 
               {transmissionLabel && (
                 <div className="flex items-center gap-3 rounded-xl bg-dark-surface p-3 border border-dark-border">
-                  <Cog className="h-5 w-5 text-text-secondary" />
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-status-star/10">
+                    <Cog className="h-4 w-4 text-status-star" />
+                  </div>
                   <div>
                     <div className="text-xs text-text-secondary">
                       {t('transmission')}
@@ -248,59 +256,42 @@ export default function CarDetailClient({
                   </div>
                 </div>
               )}
-
-              {car.smokingPolicy && (
-                <div className="flex items-center gap-3 rounded-xl bg-dark-surface p-3 border border-dark-border">
-                  <Cigarette className="h-5 w-5 text-text-secondary" />
-                  <div>
-                    <div className="text-xs text-text-secondary">
-                      {t('smokingPolicy')}
-                    </div>
-                    <div className="text-sm font-medium text-text-primary">
-                      {car.smokingPolicy}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {car.distancePolicy && (
-                <div className="flex items-center gap-3 rounded-xl bg-dark-surface p-3 border border-dark-border">
-                  <Gauge className="h-5 w-5 text-text-secondary" />
-                  <div>
-                    <div className="text-xs text-text-secondary">
-                      {t('distancePolicy')}
-                    </div>
-                    <div className="text-sm font-medium text-text-primary">
-                      {car.distancePolicy}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {car.minAge && (
-                <div className="flex items-center gap-3 rounded-xl bg-dark-surface p-3 border border-dark-border">
-                  <UserCheck className="h-5 w-5 text-text-secondary" />
-                  <div>
-                    <div className="text-xs text-text-secondary">{t('minAge')}</div>
-                    <div className="text-sm font-medium text-text-primary">{car.minAge}+</div>
-                  </div>
-                </div>
-              )}
-
-              {car.availabilityText && (
-                <div className="flex items-center gap-3 rounded-xl bg-dark-surface p-3 border border-dark-border">
-                  <Clock className="h-5 w-5 text-text-secondary" />
-                  <div>
-                    <div className="text-xs text-text-secondary">
-                      {t('availability')}
-                    </div>
-                    <div className="text-sm font-medium text-text-primary">
-                      {car.availabilityText}
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
+
+            {/* Policies Section */}
+            {(car.smokingPolicy || car.distancePolicy || car.minAge || car.availabilityText) && (
+              <div className="mt-4">
+                <h3 className="mb-3 text-sm font-bold text-text-primary">
+                  {lang === 'ar' ? 'سياسات الاستخدام' : 'Usage Policies'}
+                </h3>
+                <div className="flex flex-wrap gap-2">
+                  {car.smokingPolicy && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-dark-border-light bg-dark-surface px-3 py-1.5 text-xs text-text-secondary">
+                      <Cigarette className="h-3.5 w-3.5 text-status-star" />
+                      {car.smokingPolicy}
+                    </span>
+                  )}
+                  {car.distancePolicy && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-dark-border-light bg-dark-surface px-3 py-1.5 text-xs text-text-secondary">
+                      <Gauge className="h-3.5 w-3.5 text-status-star" />
+                      {car.distancePolicy}
+                    </span>
+                  )}
+                  {car.minAge && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-dark-border-light bg-dark-surface px-3 py-1.5 text-xs text-text-secondary">
+                      <UserCheck className="h-3.5 w-3.5 text-status-star" />
+                      {t('minAge')}: {car.minAge}+
+                    </span>
+                  )}
+                  {car.availabilityText && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full border border-dark-border-light bg-dark-surface px-3 py-1.5 text-xs text-text-secondary">
+                      <Clock className="h-3.5 w-3.5 text-status-star" />
+                      {car.availabilityText}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
 
             {car.notes && (
               <div className="mt-4 rounded-xl bg-status-warning/10 p-4 border border-status-warning/20">
@@ -313,26 +304,31 @@ export default function CarDetailClient({
 
           {/* Owner Info */}
           {car.owner && (
-            <div className="card">
-              <h2 className="mb-4 flex items-center gap-2 text-lg font-bold text-text-primary">
-                <Shield className="h-5 w-5 text-status-star" />
-                {lang === 'ar' ? 'معلومات المالك' : 'Owner Information'}
-              </h2>
-              <div className="space-y-2 mb-4">
-                {car.owner.fullName && (
-                  <p className="text-sm text-text-primary">
-                    <strong>{car.owner.fullName}</strong>
+            <div className="card border-status-star/10">
+              <div className="mb-4 flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-status-star/10 border border-status-star/20">
+                  <Shield className="h-6 w-6 text-status-star" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-text-primary">
+                    {car.owner.fullName || (lang === 'ar' ? 'المالك' : 'Owner')}
+                  </h2>
+                  <p className="text-xs text-text-muted">
+                    {lang === 'ar' ? 'مالك السيارة' : 'Car Owner'}
                   </p>
-                )}
+                </div>
+              </div>
+
+              <div className="mb-4 space-y-2">
                 {car.owner.email && (
                   <p className="flex items-center gap-2 text-sm text-text-secondary">
-                    <Mail className="h-4 w-4" />
+                    <Mail className="h-4 w-4 text-status-star" />
                     {car.owner.email}
                   </p>
                 )}
                 {car.owner.phone && (
                   <p className="flex items-center gap-2 text-sm text-text-secondary">
-                    <Phone className="h-4 w-4" />
+                    <Phone className="h-4 w-4 text-status-star" />
                     {car.owner.phone}
                   </p>
                 )}
@@ -340,10 +336,9 @@ export default function CarDetailClient({
 
               {/* Contact Buttons */}
               <div className="flex gap-3 flex-wrap">
-                {/* Message Owner Button */}
                 <Link
                   href="/messages"
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl border border-status-star/30 bg-status-star/10 text-status-star hover:bg-status-star/20 transition-colors"
+                  className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-status-star/30 bg-status-star/10 px-4 py-2.5 text-status-star hover:bg-status-star hover:text-dark-bg transition-all"
                 >
                   <MessageCircle className="h-4 w-4" />
                   <span className="text-sm font-medium">
@@ -351,13 +346,12 @@ export default function CarDetailClient({
                   </span>
                 </Link>
 
-                {/* WhatsApp Button */}
                 {car.owner.phone && (
                   <a
                     href={`https://wa.me/${car.owner.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(`مرحبا، أنا مهتم بسيارتك ${car.title} على سكة كار`)}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-4 py-2 rounded-xl border border-green-500/20 bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-colors"
+                    className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-green-500/20 bg-green-500/10 px-4 py-2.5 text-green-400 hover:bg-green-500 hover:text-white transition-all"
                   >
                     <Phone className="h-4 w-4" />
                     <span className="text-sm font-medium">

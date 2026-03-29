@@ -24,7 +24,7 @@ interface CarCardProps {
 }
 
 export function CarCard({ car }: CarCardProps) {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
 
   const transmissionLabel = car.transmission
     ? car.transmission === 'AUTOMATIC'
@@ -37,7 +37,7 @@ export function CarCard({ car }: CarCardProps) {
   return (
     <Link
       href={`/cars/${car.id}`}
-      className="group overflow-hidden rounded-2xl border border-dark-border-light bg-dark-card shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-[0_4px_20px_rgba(255,184,0,0.1)]"
+      className="group overflow-hidden rounded-2xl border border-dark-border-light bg-dark-card shadow-sm transition-all duration-300 hover:-translate-y-1 hover:border-status-star/30 gold-glow-hover"
     >
       {/* Image */}
       <div className="relative aspect-[16/10] overflow-hidden bg-dark-surface">
@@ -55,7 +55,7 @@ export function CarCard({ car }: CarCardProps) {
         )}
 
         {/* Gradient Overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-dark-bg/60 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-dark-bg/70 via-transparent to-transparent" />
 
         {/* Price Badge */}
         <div className="absolute bottom-3 start-3 rounded-xl bg-dark-bg/90 px-3 py-2 backdrop-blur-sm border border-dark-border">
@@ -108,6 +108,11 @@ export function CarCard({ car }: CarCardProps) {
             {car.owner.fullName}
           </p>
         )}
+
+        {/* Book Now Button */}
+        <div className="mt-3 w-full rounded-xl border border-status-star/30 bg-status-star/10 py-2 text-center text-sm font-medium text-status-star transition-all group-hover:bg-status-star group-hover:text-dark-bg">
+          {lang === 'ar' ? 'احجز الآن' : 'Book Now'}
+        </div>
       </div>
     </Link>
   )

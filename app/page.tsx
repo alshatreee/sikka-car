@@ -28,6 +28,8 @@ import {
   Wallet,
   Clock,
   Heart,
+  Phone,
+  Mail,
 } from 'lucide-react'
 
 type CarType = Awaited<ReturnType<typeof getApprovedCars>>[number]
@@ -143,7 +145,7 @@ export default function HomePage() {
               <div className="flex flex-wrap gap-3 justify-start">
                 <Link
                   href="/browse"
-                  className="btn-primary flex items-center gap-2 !px-6 !py-3"
+                  className="flex items-center gap-2 rounded-xl border-2 border-status-star px-6 py-3 font-medium text-status-star transition-all hover:bg-status-star hover:text-dark-bg"
                 >
                   {t('browseNow')}
                   <Arrow className="h-5 w-5" />
@@ -277,7 +279,7 @@ export default function HomePage() {
                     </div>
                     <Link
                       href="/browse"
-                      className="rounded-lg bg-text-primary px-3 py-2 text-dark-bg transition hover:bg-text-secondary"
+                      className="rounded-lg bg-status-star px-3 py-2 text-dark-bg transition hover:bg-status-star/90"
                     >
                       <Search className="h-4 w-4" />
                     </Link>
@@ -291,18 +293,23 @@ export default function HomePage() {
           {/* Stats Bar */}
           <div className="mt-12 grid grid-cols-3 gap-4 animate-hero-stats">
             {[
-              { target: 500, suffix: '+', label: lang === 'ar' ? 'سيارة معروضة' : 'Cars Listed', color: 'text-status-star' },
-              { target: 2000, suffix: '+', label: lang === 'ar' ? 'مستخدم' : 'Users', color: 'text-text-primary' },
-              { target: 4.9, suffix: '★', label: lang === 'ar' ? 'تقييم' : 'Rating', color: 'text-status-star', decimal: true },
+              { target: 500, suffix: '+', label: lang === 'ar' ? 'سيارة معروضة' : 'Cars Listed', icon: Car },
+              { target: 2000, suffix: '+', label: lang === 'ar' ? 'مستخدم' : 'Users', icon: Users },
+              { target: 4.9, suffix: '★', label: lang === 'ar' ? 'تقييم' : 'Rating', icon: Star, decimal: true },
             ].map((stat, i) => (
               <div
                 key={i}
-                className="rounded-xl border border-dark-border-light bg-dark-card/80 px-4 py-3 text-center transition-all duration-500 hover:border-status-star/30"
+                className="flex items-center gap-3 rounded-xl border border-dark-border-light bg-dark-card/80 px-4 py-3 transition-all duration-500 hover:border-status-star/30"
               >
-                <div className={`text-2xl font-bold ${stat.color}`}>
-                  {stat.decimal ? <>{stat.target}{stat.suffix}</> : <CountUp target={stat.target} suffix={stat.suffix} />}
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-status-star/10">
+                  <stat.icon className="h-5 w-5 text-status-star" />
                 </div>
-                <div className="text-xs text-text-secondary">{stat.label}</div>
+                <div>
+                  <div className="text-xl font-bold text-text-primary">
+                    {stat.decimal ? <>{stat.target}{stat.suffix}</> : <CountUp target={stat.target} suffix={stat.suffix} />}
+                  </div>
+                  <div className="text-xs text-text-secondary">{stat.label}</div>
+                </div>
               </div>
             ))}
           </div>
@@ -310,7 +317,7 @@ export default function HomePage() {
       </section>
 
       {/* Featured Cars */}
-      <section className="bg-dark-card border-t border-dark-border py-20">
+      <section className="bg-darker border-t border-dark-border py-20">
         <div ref={section1.ref} className={`container transition-all duration-700 ${section1.isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
           <div className="mb-10 flex items-center justify-between">
             <h2 className="text-3xl font-bold text-text-primary">
@@ -373,11 +380,9 @@ export default function HomePage() {
             ].map((feature, i) => (
               <div
                 key={i}
-                className="group rounded-2xl border border-dark-border bg-dark-card p-8 text-center shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:border-status-star/30"
+                className="group rounded-2xl border border-dark-border bg-dark-card p-8 text-center shadow-sm transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:border-status-star/40"
               >
-                <div
-                  className={`mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-dark-surface border border-dark-border-light shadow-lg`}
-                >
+                <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-status-star/10 border border-status-star/20 transition-all duration-300 group-hover:bg-status-star/20">
                   <feature.icon className="h-7 w-7 text-status-star" />
                 </div>
                 <h3 className="mb-3 text-xl font-bold text-text-primary">
@@ -391,13 +396,16 @@ export default function HomePage() {
       </section>
 
       {/* How It Works */}
-      <section className="bg-dark-bg py-20">
+      <section className="bg-darker py-20">
         <div ref={section3.ref} className={`container transition-all duration-700 ${section3.isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
           <h2 className="mb-12 text-center text-3xl font-bold text-text-primary">
             {lang === 'ar' ? 'كيف يعمل سكة كار؟' : 'How Sikka Car Works?'}
           </h2>
 
-          <div className="grid gap-8 md:grid-cols-4">
+          <div className="relative grid gap-8 md:grid-cols-4">
+            {/* Connecting line */}
+            <div className="absolute top-7 hidden h-0.5 bg-gradient-to-r from-status-star/0 via-status-star/30 to-status-star/0 md:block" style={{ left: '12.5%', right: '12.5%' }} />
+
             {[
               {
                 step: '1',
@@ -432,8 +440,8 @@ export default function HomePage() {
                     : 'Pick up the car from the owner and enjoy your ride',
               },
             ].map((item, i) => (
-              <div key={i} className="text-center">
-                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-dark-card border border-dark-border-light text-xl font-bold text-status-star shadow-lg">
+              <div key={i} className="relative text-center">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-status-star text-xl font-bold text-dark-bg shadow-lg shadow-status-star/20">
                   {item.step}
                 </div>
                 <h3 className="mb-2 text-lg font-bold text-text-primary">
@@ -529,7 +537,7 @@ export default function HomePage() {
               },
             ].map((item, i) => (
               <div key={i} className="rounded-2xl border border-dark-border bg-dark-card p-6 text-center transition-all duration-300 hover:-translate-y-1 hover:border-status-star/30">
-                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-status-star/10 border border-status-star/20">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-status-star/10 border border-status-star/20">
                   <item.icon className="h-7 w-7 text-status-star" />
                 </div>
                 <h3 className="mb-2 text-lg font-bold text-text-primary">{item.title}</h3>
@@ -540,31 +548,33 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="bg-dark-card border-t border-dark-border py-16">
-        <div className="container text-center">
-          <h2 className="mb-4 text-3xl font-bold text-text-primary">
-            {lang === 'ar'
-              ? 'عندك سيارة؟ حوّلها لمصدر دخل!'
-              : 'Have a Car? Turn it into Income!'}
-          </h2>
-          <p className="mb-8 text-lg text-text-secondary">
-            {lang === 'ar'
-              ? 'سجّل سيارتك على سكة كار وابدأ بكسب المال من سيارتك المتوقفة'
-              : 'List your car on Sikka Car and start earning from your parked car'}
-          </p>
-          <Link
-            href="/list"
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-solid px-8 py-4 text-lg font-bold text-text-primary shadow-2xl transition-all hover:-translate-y-0.5 hover:shadow-3xl hover:bg-brand-solid-hover"
-          >
-            {t('listYourCar')}
-            <Arrow className="h-5 w-5" />
-          </Link>
+      {/* CTA Section - Gold Gradient */}
+      <section className="py-16">
+        <div className="container">
+          <div className="rounded-3xl bg-gradient-to-br from-[#FFB800] to-[#FF9500] px-8 py-12 text-center shadow-xl shadow-status-star/20 md:px-16">
+            <h2 className="mb-4 text-3xl font-bold text-dark-bg">
+              {lang === 'ar'
+                ? 'عندك سيارة؟ حوّلها لمصدر دخل!'
+                : 'Have a Car? Turn it into Income!'}
+            </h2>
+            <p className="mb-8 text-lg text-dark-bg/80">
+              {lang === 'ar'
+                ? 'سجّل سيارتك على سكة كار وابدأ بكسب المال من سيارتك المتوقفة'
+                : 'List your car on Sikka Car and start earning from your parked car'}
+            </p>
+            <Link
+              href="/list"
+              className="inline-flex items-center gap-2 rounded-xl bg-dark-bg px-8 py-4 text-lg font-bold text-text-primary shadow-2xl transition-all hover:-translate-y-0.5 hover:bg-dark-card"
+            >
+              {t('listYourCar')}
+              <Arrow className="h-5 w-5" />
+            </Link>
+          </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="bg-dark-bg border-t border-dark-border py-16">
+      <footer className="bg-darker border-t border-dark-border py-16">
         <div className="container">
           <div className="mb-12 grid gap-12 md:grid-cols-3">
             {/* Left Column - Logo & Description */}
@@ -632,26 +642,32 @@ export default function HomePage() {
                 <a
                   href="https://instagram.com"
                   rel="noopener noreferrer"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-dark-surface"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-status-star/10"
                   aria-label="Instagram"
                 >
-                  <Instagram className="h-4 w-4 text-text-secondary hover:text-status-star" />
+                  <Instagram className="h-4 w-4 text-text-secondary" />
                 </a>
                 <a
                   href="https://twitter.com"
                   rel="noopener noreferrer"
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-dark-surface"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-status-star/10"
                   aria-label="Twitter"
                 >
-                  <Twitter className="h-4 w-4 text-text-secondary hover:text-status-star" />
+                  <Twitter className="h-4 w-4 text-text-secondary" />
                 </a>
               </div>
-              <p className="text-xs text-text-muted">
-                {lang === 'ar' ? 'البريد الإلكتروني:' : 'Email:'}{' '}
-                <a href="mailto:support@sikkacar.com" className="text-status-star hover:underline">
-                  support@sikkacar.com
-                </a>
-              </p>
+              <div className="space-y-2">
+                <p className="flex items-center gap-2 text-xs text-text-muted">
+                  <Phone className="h-3.5 w-3.5 text-status-star" />
+                  <a href="tel:+96500000000" className="hover:text-status-star transition-colors">+965 0000 0000</a>
+                </p>
+                <p className="flex items-center gap-2 text-xs text-text-muted">
+                  <Mail className="h-3.5 w-3.5 text-status-star" />
+                  <a href="mailto:support@sikkacar.com" className="hover:text-status-star transition-colors">
+                    support@sikkacar.com
+                  </a>
+                </p>
+              </div>
             </div>
           </div>
 
