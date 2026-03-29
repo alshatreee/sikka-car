@@ -155,7 +155,7 @@ const translations: Translations = {
   retry: { ar: 'حاول مرة أخرى', en: 'Try Again' },
 
   // Footer
-  copyright: { ar: '© 2025 سكة كار. جميع الحقوق محفوظة.', en: '© 2025 Sikka Car. All rights reserved.' },
+  copyright: { ar: '© 2026 سكة كار. جميع الحقوق محفوظة.', en: '© 2026 Sikka Car. All rights reserved.' },
   termsOfService: { ar: 'شروط الاستخدام', en: 'Terms of Service' },
   privacyPolicy: { ar: 'سياسة الخصوصية', en: 'Privacy Policy' },
   iUnderstand: { ar: 'فهمت', en: 'I Understand' },

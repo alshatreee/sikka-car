@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import Link from 'next/link'
 import { useLanguage } from '@/components/shared/LanguageProvider'
 import { LegalLinks } from '@/components/legal/LegalModal'
@@ -24,9 +24,56 @@ import {
   ChevronRight,
   Instagram,
   Twitter,
+  Quote,
+  Wallet,
+  Clock,
+  Heart,
 } from 'lucide-react'
 
 type CarType = Awaited<ReturnType<typeof getApprovedCars>>[number]
+
+function useScrollReveal() {
+  const ref = useRef<HTMLDivElement>(null)
+  const [isVisible, setIsVisible] = useState(false)
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) setIsVisible(true) },
+      { threshold: 0.15 }
+    )
+    if (ref.current) observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [])
+
+  return { ref, isVisible }
+}
+
+function CountUp({ target, suffix = '' }: { target: number; suffix?: string }) {
+  const [count, setCount] = useState(0)
+  const ref = useRef<HTMLSpanElement>(null)
+  const started = useRef(false)
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && !started.current) {
+        started.current = true
+        const duration = 1500
+        const steps = 40
+        const increment = target / steps
+        let current = 0
+        const timer = setInterval(() => {
+          current += increment
+          if (current >= target) { setCount(target); clearInterval(timer) }
+          else setCount(Math.floor(current))
+        }, duration / steps)
+      }
+    }, { threshold: 0.5 })
+    if (ref.current) observer.observe(ref.current)
+    return () => observer.disconnect()
+  }, [target])
+
+  return <span ref={ref}>{count}{suffix}</span>
+}
 
 export default function HomePage() {
   const { t, lang } = useLanguage()
@@ -34,6 +81,12 @@ export default function HomePage() {
   const [featuredCars, setFeaturedCars] = useState<CarType[]>([])
   const [loadingCars, setLoadingCars] = useState(true)
   const [heroCarIndex, setHeroCarIndex] = useState(0)
+
+  const section1 = useScrollReveal()
+  const section2 = useScrollReveal()
+  const section3 = useScrollReveal()
+  const section4 = useScrollReveal()
+  const section5 = useScrollReveal()
 
   useEffect(() => {
     getApprovedCars()
@@ -74,8 +127,8 @@ export default function HomePage() {
           </div>
 
           <div className="grid items-start gap-10 md:grid-cols-2">
-            {/* Text Content - appears first in DOM so it's on the right in RTL (Arabic) and left in LTR (English) */}
-            <div className="text-start">
+            {/* Text Content */}
+            <div className="text-start animate-hero-text">
               <h1 className="mb-6 text-3xl font-bold leading-relaxed text-text-primary md:text-4xl md:leading-relaxed lg:text-5xl lg:leading-relaxed">
                 {lang === 'ar'
                   ? 'حوّل سيارتك إلى دخل إضافي بثقة وسهولة'
@@ -105,8 +158,8 @@ export default function HomePage() {
               </div>
             </div>
 
-            {/* Car Showcase Card - appears second in DOM so it's on the left in RTL (Arabic) and right in LTR (English) */}
-            <div>
+            {/* Car Showcase Card */}
+            <div className="animate-hero-card">
               <div className="overflow-hidden rounded-2xl border border-dark-border-light bg-dark-card shadow-[0_0_30px_rgba(255,184,0,0.08)] shadow-2xl">
                 {/* Card Header */}
                 <div className="flex items-center justify-between border-b border-dark-border px-5 py-3">
@@ -236,17 +289,19 @@ export default function HomePage() {
           </div>
 
           {/* Stats Bar */}
-          <div className="mt-12 grid grid-cols-3 gap-4">
+          <div className="mt-12 grid grid-cols-3 gap-4 animate-hero-stats">
             {[
-              { value: '500+', label: lang === 'ar' ? 'سيارة معروضة' : 'Cars Listed', color: 'text-status-star' },
-              { value: '2K+', label: lang === 'ar' ? 'مستخدم' : 'Users', color: 'text-text-primary' },
-              { value: '4.9★', label: lang === 'ar' ? 'تقييم' : 'Rating', color: 'text-status-star' },
+              { target: 500, suffix: '+', label: lang === 'ar' ? 'سيارة معروضة' : 'Cars Listed', color: 'text-status-star' },
+              { target: 2000, suffix: '+', label: lang === 'ar' ? 'مستخدم' : 'Users', color: 'text-text-primary' },
+              { target: 4.9, suffix: '★', label: lang === 'ar' ? 'تقييم' : 'Rating', color: 'text-status-star', decimal: true },
             ].map((stat, i) => (
               <div
                 key={i}
-                className="rounded-xl border border-dark-border-light bg-dark-card/80 px-4 py-3 text-center"
+                className="rounded-xl border border-dark-border-light bg-dark-card/80 px-4 py-3 text-center transition-all duration-500 hover:border-status-star/30"
               >
-                <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
+                <div className={`text-2xl font-bold ${stat.color}`}>
+                  {stat.decimal ? <>{stat.target}{stat.suffix}</> : <CountUp target={stat.target} suffix={stat.suffix} />}
+                </div>
                 <div className="text-xs text-text-secondary">{stat.label}</div>
               </div>
             ))}
@@ -256,7 +311,7 @@ export default function HomePage() {
 
       {/* Featured Cars */}
       <section className="bg-dark-card border-t border-dark-border py-20">
-        <div className="container">
+        <div ref={section1.ref} className={`container transition-all duration-700 ${section1.isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
           <div className="mb-10 flex items-center justify-between">
             <h2 className="text-3xl font-bold text-text-primary">
               {lang === 'ar' ? 'سيارات مميزة' : 'Featured Cars'}
@@ -293,7 +348,7 @@ export default function HomePage() {
 
       {/* Why Choose Us */}
       <section className="py-20">
-        <div className="container">
+        <div ref={section2.ref} className={`container transition-all duration-700 ${section2.isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
           <h2 className="mb-12 text-center text-3xl font-bold text-text-primary">
             {t('whyChooseUs')}
           </h2>
@@ -337,7 +392,7 @@ export default function HomePage() {
 
       {/* How It Works */}
       <section className="bg-dark-bg py-20">
-        <div className="container">
+        <div ref={section3.ref} className={`container transition-all duration-700 ${section3.isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
           <h2 className="mb-12 text-center text-3xl font-bold text-text-primary">
             {lang === 'ar' ? 'كيف يعمل سكة كار؟' : 'How Sikka Car Works?'}
           </h2>
@@ -384,6 +439,100 @@ export default function HomePage() {
                 <h3 className="mb-2 text-lg font-bold text-text-primary">
                   {item.title}
                 </h3>
+                <p className="text-sm text-text-secondary">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Testimonials */}
+      <section className="bg-dark-card border-t border-dark-border py-20">
+        <div ref={section4.ref} className={`container transition-all duration-700 ${section4.isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+          <h2 className="mb-12 text-center text-3xl font-bold text-text-primary">
+            {lang === 'ar' ? 'آراء عملائنا' : 'What Our Users Say'}
+          </h2>
+          <div className="grid gap-6 md:grid-cols-3">
+            {[
+              {
+                name: lang === 'ar' ? 'عبدالله المطيري' : 'Abdullah Al-Mutairi',
+                role: lang === 'ar' ? 'مستأجر' : 'Renter',
+                text: lang === 'ar'
+                  ? 'تجربة ممتازة! حجزت سيارة بسهولة تامة والدفع كان آمن وسريع. أنصح فيها بقوة.'
+                  : 'Excellent experience! Booked a car effortlessly, payment was secure and fast. Highly recommended.',
+                rating: 5,
+              },
+              {
+                name: lang === 'ar' ? 'فاطمة الشمري' : 'Fatma Al-Shammari',
+                role: lang === 'ar' ? 'مالكة سيارة' : 'Car Owner',
+                text: lang === 'ar'
+                  ? 'سكة كار ساعدتني أحول سيارتي الثانية لمصدر دخل. المنصة سهلة والفريق متعاون.'
+                  : 'Sikka Car helped me turn my second car into income. The platform is easy and the team is helpful.',
+                rating: 5,
+              },
+              {
+                name: lang === 'ar' ? 'محمد العنزي' : 'Mohammed Al-Enezi',
+                role: lang === 'ar' ? 'مستأجر' : 'Renter',
+                text: lang === 'ar'
+                  ? 'أسعار معقولة وسيارات نظيفة. استأجرت أكثر من مرة ودايم التجربة تكون ممتازة.'
+                  : 'Reasonable prices and clean cars. Rented multiple times and the experience is always great.',
+                rating: 5,
+              },
+            ].map((review, i) => (
+              <div
+                key={i}
+                className="rounded-2xl border border-dark-border bg-dark-bg p-6 transition-all duration-300 hover:-translate-y-1 hover:border-status-star/20"
+                style={{ transitionDelay: `${i * 100}ms` }}
+              >
+                <Quote className="mb-4 h-6 w-6 text-status-star/40" />
+                <p className="mb-4 text-sm leading-relaxed text-text-secondary">{review.text}</p>
+                <div className="mb-3 flex gap-0.5">
+                  {Array.from({ length: review.rating }).map((_, j) => (
+                    <Star key={j} className="h-4 w-4 fill-status-star text-status-star" />
+                  ))}
+                </div>
+                <div className="border-t border-dark-border pt-3">
+                  <p className="text-sm font-bold text-text-primary">{review.name}</p>
+                  <p className="text-xs text-text-muted">{review.role}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* For Car Owners */}
+      <section className="py-20">
+        <div ref={section5.ref} className={`container transition-all duration-700 ${section5.isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
+          <h2 className="mb-4 text-center text-3xl font-bold text-text-primary">
+            {lang === 'ar' ? 'لملاك السيارات' : 'For Car Owners'}
+          </h2>
+          <p className="mb-10 text-center text-text-secondary">
+            {lang === 'ar' ? 'سيارتك المتوقفة ممكن تصير مصدر دخل' : 'Your parked car can become a source of income'}
+          </p>
+          <div className="grid gap-6 md:grid-cols-3">
+            {[
+              {
+                icon: Wallet,
+                title: lang === 'ar' ? 'دخل إضافي' : 'Extra Income',
+                desc: lang === 'ar' ? 'اكسب حتى 300 د.ك شهرياً من سيارتك المتوقفة' : 'Earn up to 300 KWD monthly from your parked car',
+              },
+              {
+                icon: Shield,
+                title: lang === 'ar' ? 'حماية كاملة' : 'Full Protection',
+                desc: lang === 'ar' ? 'تأمين شامل وعقد واضح يحمي حقوقك كمالك' : 'Comprehensive insurance and clear contract to protect your rights',
+              },
+              {
+                icon: Clock,
+                title: lang === 'ar' ? 'تحكم كامل' : 'Full Control',
+                desc: lang === 'ar' ? 'أنت تحدد السعر والتواريخ وشروط التأجير' : 'You set the price, dates, and rental terms',
+              },
+            ].map((item, i) => (
+              <div key={i} className="rounded-2xl border border-dark-border bg-dark-card p-6 text-center transition-all duration-300 hover:-translate-y-1 hover:border-status-star/30">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-status-star/10 border border-status-star/20">
+                  <item.icon className="h-7 w-7 text-status-star" />
+                </div>
+                <h3 className="mb-2 text-lg font-bold text-text-primary">{item.title}</h3>
                 <p className="text-sm text-text-secondary">{item.desc}</p>
               </div>
             ))}

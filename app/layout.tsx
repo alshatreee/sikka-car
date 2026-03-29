@@ -5,22 +5,44 @@ import './globals.css'
 import ClientLayout from './ClientLayout'
 
 export const metadata: Metadata = {
-  title: 'Sikka Car | سكة كار - تأجير سيارات في الكويت',
+  title: {
+    default: 'سكة كار | Sikka Car - تأجير سيارات بين الأفراد في الكويت',
+    template: '%s | سكة كار - Sikka Car',
+  },
   description:
-    'أكبر منصة لتأجير السيارات بين الأفراد في الكويت. استأجر سيارتك المثالية أو أضف سيارتك للإيجار.',
+    'أكبر منصة كويتية لتأجير السيارات بين الأفراد. استأجر سيارة بسعر مناسب أو أضف سيارتك واكسب دخل إضافي. دفع آمن عبر K-Net و Visa.',
   keywords: [
-    'تأجير سيارات',
-    'الكويت',
+    'تأجير سيارات الكويت',
     'سكة كار',
-    'car rental',
-    'Kuwait',
+    'تأجير سيارات بين الأفراد',
+    'إيجار سيارات',
+    'car rental Kuwait',
+    'peer to peer car rental',
     'Sikka Car',
+    'rent a car Kuwait',
+    'كراج سيارات',
+    'سيارات للإيجار',
   ],
   openGraph: {
-    title: 'Sikka Car | سكة كار',
-    description: 'أكبر منصة لتأجير السيارات بين الأفراد في الكويت',
+    title: 'سكة كار | Sikka Car',
+    description: 'أكبر منصة كويتية لتأجير السيارات بين الأفراد — سهل، آمن، وموثوق',
     type: 'website',
     locale: 'ar_KW',
+    alternateLocale: 'en_US',
+    siteName: 'Sikka Car - سكة كار',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'سكة كار | Sikka Car',
+    description: 'أكبر منصة كويتية لتأجير السيارات بين الأفراد',
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true },
+  },
+  alternates: {
+    canonical: 'https://sikka-car.vercel.app',
   },
 }
 
