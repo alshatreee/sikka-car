@@ -159,27 +159,30 @@ export default function BrowsePage() {
 
   return (
     <main className="container py-8 pb-24 md:pb-8">
-      <div className="mb-8 flex items-end justify-between gap-4">
-        <div>
-          <h1 className="mb-2 text-3xl font-bold text-text-primary">{t('browse')}</h1>
-          <p className="text-text-secondary">
-            {filteredCars.length === 0
-              ? t('noResults')
-              : `${lang === 'ar' ? 'عرض' : 'Showing'} ${startIndex + 1}-${Math.min(endIndex, filteredCars.length)} ${lang === 'ar' ? 'من' : 'of'} ${filteredCars.length} ${filteredCars.length === 1 ? t('oneCarAvailable') : t('carsAvailable')}`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <ArrowUpDown className="h-4 w-4 text-text-muted" />
-          <select
-            value={sortBy}
-            onChange={(e) => handleSort(e.target.value as 'newest' | 'priceLow' | 'priceHigh' | 'year')}
-            className="rounded-xl border border-dark-border bg-dark-card px-3 py-2 text-sm text-text-primary outline-none focus:border-dark-border-light"
-          >
-            <option value="newest">{t('sortNewest')}</option>
-            <option value="priceLow">{t('sortPriceLow')}</option>
-            <option value="priceHigh">{t('sortPriceHigh')}</option>
-            <option value="year">{t('sortYear')}</option>
-          </select>
+      {/* Page Header */}
+      <div className="mb-8 rounded-2xl border border-dark-border bg-dark-card p-6">
+        <div className="flex items-end justify-between gap-4">
+          <div>
+            <h1 className="mb-2 text-3xl font-bold text-text-primary">{t('browse')}</h1>
+            <p className="text-text-secondary">
+              {filteredCars.length === 0
+                ? t('noResults')
+                : `${lang === 'ar' ? 'عرض' : 'Showing'} ${startIndex + 1}-${Math.min(endIndex, filteredCars.length)} ${lang === 'ar' ? 'من' : 'of'} ${filteredCars.length} ${filteredCars.length === 1 ? t('oneCarAvailable') : t('carsAvailable')}`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <ArrowUpDown className="h-4 w-4 text-text-muted" />
+            <select
+              value={sortBy}
+              onChange={(e) => handleSort(e.target.value as 'newest' | 'priceLow' | 'priceHigh' | 'year')}
+              className="rounded-xl border border-dark-border bg-dark-surface px-3 py-2 text-sm text-text-primary outline-none focus:border-dark-border-light"
+            >
+              <option value="newest">{t('sortNewest')}</option>
+              <option value="priceLow">{t('sortPriceLow')}</option>
+              <option value="priceHigh">{t('sortPriceHigh')}</option>
+              <option value="year">{t('sortYear')}</option>
+            </select>
+          </div>
         </div>
       </div>
 

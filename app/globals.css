@@ -80,6 +80,18 @@
   .glass {
     @apply border border-white/20 bg-white/10 backdrop-blur-md;
   }
+
+  .bg-darker {
+    background-color: #0A0A0A;
+  }
+
+  .gold-glow {
+    box-shadow: 0 0 30px rgba(255, 184, 0, 0.15);
+  }
+
+  .gold-glow-hover:hover {
+    box-shadow: 0 0 30px rgba(255, 184, 0, 0.3);
+  }
 }
 
 /* Toast animation */
