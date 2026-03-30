@@ -465,17 +465,11 @@ export default function CarDetailClient({
                 customerEmail={currentUser.email}
               />
             ) : (
-              <div className="card text-center">
-                <Car className="mx-auto mb-3 h-12 w-12 text-text-secondary" />
-                <p className="mb-4 text-text-secondary">
-                  {lang === 'ar'
-                    ? 'سجّل دخولك لحجز هذه السيارة'
-                    : 'Sign in to book this car'}
-                </p>
-                <Link href="/sign-in" className="btn-primary inline-block">
-                  {t('signIn')}
-                </Link>
-              </div>
+              <BookingPanel
+                carId={car.id}
+                dailyPrice={Number(car.dailyPrice)}
+                isGuest
+              />
             )}
           </div>
         </div>
