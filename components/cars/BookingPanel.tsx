@@ -5,14 +5,16 @@ import { createBooking, getBookedDates } from '@/actions/bookingActions'
 import { initiatePayment } from '@/actions/paymentActions'
 import { useLanguage } from '@/components/shared/LanguageProvider'
 import { uploadToCloudinary } from '@/utils/uploadImage'
-import { Calendar, Clock, FileText, CreditCard, AlertTriangle, Shield, Upload, Camera, Loader2, Check } from 'lucide-react'
+import { Calendar, Clock, FileText, CreditCard, AlertTriangle, Shield, Upload, Camera, Loader2, Check, LogIn } from 'lucide-react'
 import Image from 'next/image'
+import Link from 'next/link'
 
 interface BookingPanelProps {
   carId: string
   dailyPrice: number
-  customerName: string
-  customerEmail: string
+  customerName?: string
+  customerEmail?: string
+  isGuest?: boolean
 }
 
 export function BookingPanel({
@@ -20,6 +22,7 @@ export function BookingPanel({
   dailyPrice,
   customerName,
   customerEmail,
+  isGuest = false,
 }: BookingPanelProps) {
   const { t, lang } = useLanguage()
   const [pending, startTransition] = useTransition()
@@ -75,6 +78,11 @@ export function BookingPanel({
 
   function handleBooking() {
     setError('')
+
+    if (isGuest) {
+      window.location.href = '/sign-in'
+      return
+    }
 
     if (!startDate || !endDate) {
       setError(lang === 'ar' ? 'يرجى تحديد تواريخ الحجز' : 'Please select booking dates')
@@ -496,14 +504,24 @@ export function BookingPanel({
         )}
 
         {!showConfirm && (
-          <button
-            onClick={handleBooking}
-            disabled={pending || totalDays <= 0 || dateConflict || !agreedToTerms}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-solid py-3.5 font-medium text-text-primary shadow-lg transition-all hover:bg-brand-solid-hover disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <CreditCard className="h-4 w-4" />
-            {t('completeBooking')}
-          </button>
+          isGuest ? (
+            <Link
+              href="/sign-in"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-status-star py-3.5 font-medium text-dark-bg shadow-lg transition-all hover:bg-status-star/90"
+            >
+              <LogIn className="h-4 w-4" />
+              {lang === 'ar' ? 'سجّل دخولك لإتمام الحجز' : 'Sign in to complete booking'}
+            </Link>
+          ) : (
+            <button
+              onClick={handleBooking}
+              disabled={pending || totalDays <= 0 || dateConflict || !agreedToTerms}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-solid py-3.5 font-medium text-text-primary shadow-lg transition-all hover:bg-brand-solid-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <CreditCard className="h-4 w-4" />
+              {t('completeBooking')}
+            </button>
+          )
         )}
       </div>
     </div>
