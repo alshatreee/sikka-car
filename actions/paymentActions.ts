@@ -106,8 +106,8 @@ export async function verifyPayment(bookingId: string, tapId: string) {
         return { success: false, error: 'حالة الحجز لا تسمح بالدفع' }
       }
 
-      await prisma.booking.updateMany({
-        where: { id: bookingId, status: 'AWAITING_PAYMENT' },
+      await prisma.booking.update({
+        where: { id: bookingId },
         data: {
           status: 'APPROVED',
           paymentReference: tapId,

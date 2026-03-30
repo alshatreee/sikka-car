@@ -3,7 +3,7 @@
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { useLanguage } from '@/components/shared/LanguageProvider'
-import { CheckCircle, Home, Calendar, AlertCircle, Loader } from 'lucide-react'
+import { CheckCircle, Home, Calendar, AlertCircle, Loader2 } from 'lucide-react'
 import { Suspense, useEffect, useState } from 'react'
 import { verifyPayment } from '@/actions/paymentActions'
 
@@ -75,7 +75,7 @@ function PaymentSuccessContent() {
       <main className="flex min-h-[80vh] items-center justify-center px-4">
         <div className="mx-auto max-w-md text-center">
           <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-brand-solid/10 border border-brand-solid/20">
-            <Loader className="h-12 w-12 text-brand-solid animate-spin" />
+            <Loader2 className="h-12 w-12 text-brand-solid animate-spin" />
           </div>
 
           <h1 className="mb-3 text-3xl font-bold text-text-primary">
@@ -130,7 +130,7 @@ function PaymentSuccessContent() {
             >
               {isRetrying ? (
                 <>
-                  <Loader className="h-4 w-4 animate-spin" />
+                  <Loader2 className="h-4 w-4 animate-spin" />
                   {lang === 'ar' ? 'جاري المحاولة...' : 'Retrying...'}
                 </>
               ) : (
