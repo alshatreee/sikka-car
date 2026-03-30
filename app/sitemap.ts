@@ -8,7 +8,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   })
 
   const carPages = cars.map((car) => ({
-    url: `https://sikka-car.vercel.app/cars/${car.id}`,
+    url: `https://sikkacar.com/cars/${car.id}`,
     lastModified: car.updatedAt,
     changeFrequency: 'weekly' as const,
     priority: 0.8,
@@ -16,19 +16,19 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   return [
     {
-      url: 'https://sikka-car.vercel.app',
+      url: 'https://sikkacar.com',
       lastModified: new Date(),
       changeFrequency: 'daily',
       priority: 1,
     },
     {
-      url: 'https://sikka-car.vercel.app/browse',
+      url: 'https://sikkacar.com/browse',
       lastModified: new Date(),
       changeFrequency: 'daily',
       priority: 0.9,
     },
     {
-      url: 'https://sikka-car.vercel.app/contact',
+      url: 'https://sikkacar.com/contact',
       lastModified: new Date(),
       changeFrequency: 'monthly',
       priority: 0.5,
