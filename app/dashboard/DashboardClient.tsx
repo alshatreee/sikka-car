@@ -3,7 +3,7 @@
 import { useLanguage } from '@/components/shared/LanguageProvider'
 import Link from 'next/link'
 import Image from 'next/image'
-import { useState, useTransition } from 'react'
+import { useState, useTransition, useMemo } from 'react'
 import { cancelBooking, submitReview } from '@/actions/bookingActions'
 import { deleteCar } from '@/actions/carActions'
 import { BookingPhotos } from '@/components/cars/BookingPhotos'
@@ -27,6 +27,7 @@ import {
   Wallet,
   FileText,
   Camera,
+  BarChart3,
 } from 'lucide-react'
 
 interface DashboardClientProps {
@@ -170,6 +171,30 @@ export default function DashboardClient({
     .filter((b) => b.status === 'AWAITING_PAYMENT' || b.status === 'APPROVED')
     .reduce((sum, b) => sum + parseFloat(String(b.totalAmount) || '0'), 0)
 
+  // Monthly earnings chart data
+  const monthlyEarnings = useMemo(() => {
+    const months: { month: string; amount: number }[] = []
+    const monthNames = lang === 'ar'
+      ? ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر']
+      : ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(currentYear, currentMonth - i, 1)
+      const m = d.getMonth()
+      const y = d.getFullYear()
+      const amount = allBookings
+        .filter((b) => {
+          const bd = new Date(b.startDate)
+          return (b.status === 'COMPLETED' || b.status === 'ACTIVE') && bd.getMonth() === m && bd.getFullYear() === y
+        })
+        .reduce((sum, b) => sum + parseFloat(String(b.totalAmount) || '0'), 0)
+      months.push({ month: monthNames[m], amount: Math.round(amount * 100) / 100 })
+    }
+    return months
+  }, [allBookings, currentMonth, currentYear, lang])
+
+  const maxEarning = Math.max(...monthlyEarnings.map((e) => e.amount), 1)
+
   function StatusBadge({ status }: { status: string }) {
     const config = statusConfig[status] || statusConfig.PENDING
     const Icon = config.icon
@@ -230,7 +255,12 @@ export default function DashboardClient({
   return (
     <main className="container py-8 pb-24 md:pb-8">
       <div className="mb-8 flex items-center justify-between">
-        <h1 className="text-3xl font-bold text-text-primary">{t('dashboard')}</h1>
+        <div>
+          <h1 className="text-3xl font-bold text-text-primary">{t('dashboard')}</h1>
+          <p className="mt-1 text-text-secondary">
+            {lang === 'ar' ? 'إليك ملخص أداء سياراتك' : 'Here\'s your car performance summary'}
+          </p>
+        </div>
         <Link href="/list" className="btn-primary flex items-center gap-2">
           <PlusCircle className="h-4 w-4" />
           {t('listCar')}
@@ -246,9 +276,9 @@ export default function DashboardClient({
           { label: t('rejected'), value: totalRejected, icon: XCircle },
           { label: lang === 'ar' ? 'حجوزات جديدة' : 'New Bookings', value: totalNewBookings, icon: Calendar },
         ].map((stat, i) => (
-          <div key={i} className="card flex items-center gap-4">
-            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-dark-surface border border-dark-border-light shadow-lg">
-              <stat.icon className="h-6 w-6 text-status-star" />
+          <div key={i} className="card flex items-center gap-4 hover:border-status-star/30 transition-all">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-status-star/10 border border-status-star/20">
+              <stat.icon className="h-5 w-5 text-status-star" />
             </div>
             <div>
               <div className="text-2xl font-bold text-text-primary">{stat.value}</div>
@@ -258,16 +288,16 @@ export default function DashboardClient({
         ))}
       </div>
 
-      {/* Earnings Summary */}
+      {/* Earnings Summary + Chart */}
       <section className="mb-10">
         <h2 className="mb-4 text-xl font-bold text-text-primary">
           {lang === 'ar' ? 'الأرباح' : 'Earnings'}
         </h2>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {/* Total Earnings */}
-          <div className="card flex items-center gap-4">
-            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-dark-surface border border-dark-border-light shadow-lg">
-              <TrendingUp className="h-6 w-6 text-status-star" />
+          <div className="card flex items-center gap-4 hover:border-status-star/30 transition-all">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-status-star/10 border border-status-star/20">
+              <TrendingUp className="h-5 w-5 text-status-star" />
             </div>
             <div>
               <div className="text-2xl font-bold text-status-star">{totalEarnings.toFixed(2)}</div>
@@ -278,9 +308,9 @@ export default function DashboardClient({
           </div>
 
           {/* This Month Earnings */}
-          <div className="card flex items-center gap-4">
-            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-dark-surface border border-dark-border-light shadow-lg">
-              <Wallet className="h-6 w-6 text-status-star" />
+          <div className="card flex items-center gap-4 hover:border-status-star/30 transition-all">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-status-star/10 border border-status-star/20">
+              <Wallet className="h-5 w-5 text-status-star" />
             </div>
             <div>
               <div className="text-2xl font-bold text-status-star">{thisMonthEarnings.toFixed(2)}</div>
@@ -291,9 +321,9 @@ export default function DashboardClient({
           </div>
 
           {/* Pending Earnings */}
-          <div className="card flex items-center gap-4">
-            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-dark-surface border border-dark-border-light shadow-lg">
-              <Clock className="h-6 w-6 text-status-star" />
+          <div className="card flex items-center gap-4 hover:border-status-star/30 transition-all">
+            <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-full bg-status-star/10 border border-status-star/20">
+              <Clock className="h-5 w-5 text-status-star" />
             </div>
             <div>
               <div className="text-2xl font-bold text-status-star">{pendingEarnings.toFixed(2)}</div>
@@ -301,6 +331,38 @@ export default function DashboardClient({
                 {lang === 'ar' ? 'قيد الانتظار' : 'Pending'}
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Monthly Earnings Chart */}
+        <div className="card mt-4">
+          <div className="mb-6 flex items-center justify-between">
+            <h3 className="text-lg font-bold text-text-primary">
+              {lang === 'ar' ? 'الأرباح الشهرية' : 'Monthly Earnings'}
+            </h3>
+            <div className="flex items-center gap-2 text-sm text-text-secondary">
+              <BarChart3 className="h-4 w-4" />
+              <span>{lang === 'ar' ? 'آخر 6 أشهر' : 'Last 6 months'}</span>
+            </div>
+          </div>
+          <div className="flex items-end gap-3 h-40">
+            {monthlyEarnings.map((item, index) => (
+              <div key={index} className="flex-1 flex flex-col items-center gap-2">
+                <span className="text-xs text-status-star font-medium">
+                  {item.amount > 0 ? item.amount : ''}
+                </span>
+                <div
+                  className="w-full rounded-t-lg bg-status-star/20 relative overflow-hidden transition-all hover:bg-status-star/30"
+                  style={{ height: `${Math.max((item.amount / maxEarning) * 100, 4)}%` }}
+                >
+                  <div
+                    className="absolute bottom-0 w-full bg-status-star rounded-t-lg"
+                    style={{ height: '100%' }}
+                  />
+                </div>
+                <span className="text-xs text-text-secondary">{item.month}</span>
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -322,7 +384,7 @@ export default function DashboardClient({
         ) : (
           <div className="space-y-4">
             {carList.map((car) => (
-              <div key={car.id} className="card overflow-hidden !p-0">
+              <div key={car.id} className="card overflow-hidden !p-0 hover:border-status-star/20 transition-all">
                 <div className="flex flex-col sm:flex-row">
                   {/* Image */}
                   <div className="relative h-48 w-full sm:h-auto sm:w-44 flex-shrink-0">
@@ -454,7 +516,7 @@ export default function DashboardClient({
         ) : (
           <div className="space-y-4">
             {bookings.map((booking) => (
-              <div key={booking.id} className="card">
+              <div key={booking.id} className="card hover:border-status-star/20 transition-all">
                 <div className="flex gap-4">
                   <div className="relative h-20 w-28 flex-shrink-0 overflow-hidden rounded-xl bg-dark-surface">
                     {booking.car.images?.[0] ? (
