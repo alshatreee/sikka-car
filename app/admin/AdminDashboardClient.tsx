@@ -11,6 +11,7 @@ import {
   XCircle,
   DollarSign,
   TrendingUp,
+  ArrowUpRight,
 } from 'lucide-react'
 
 interface Stats {
@@ -25,7 +26,7 @@ interface Stats {
 }
 
 export default function AdminDashboardClient({ stats }: { stats: Stats }) {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
 
   const cards = [
     {
@@ -33,7 +34,7 @@ export default function AdminDashboardClient({ stats }: { stats: Stats }) {
       value: stats.totalUsers,
       icon: Users,
       color: 'text-blue-400',
-      bg: 'bg-blue-400/10',
+      iconBg: 'bg-blue-400/10 border-blue-400/20',
       border: 'border-blue-400/20',
       href: '/admin/users',
     },
@@ -42,7 +43,7 @@ export default function AdminDashboardClient({ stats }: { stats: Stats }) {
       value: stats.totalCars,
       icon: Car,
       color: 'text-status-star',
-      bg: 'bg-status-star/10',
+      iconBg: 'bg-status-star/10 border-status-star/20',
       border: 'border-status-star/20',
       href: '/admin/cars',
     },
@@ -51,7 +52,7 @@ export default function AdminDashboardClient({ stats }: { stats: Stats }) {
       value: stats.pendingCars,
       icon: Clock,
       color: 'text-status-warning',
-      bg: 'bg-status-warning/10',
+      iconBg: 'bg-status-warning/10 border-status-warning/20',
       border: 'border-status-warning/20',
       href: '/admin/cars?status=PENDING',
     },
@@ -60,7 +61,7 @@ export default function AdminDashboardClient({ stats }: { stats: Stats }) {
       value: stats.approvedCars,
       icon: CheckCircle2,
       color: 'text-status-success',
-      bg: 'bg-status-success/10',
+      iconBg: 'bg-status-success/10 border-status-success/20',
       border: 'border-status-success/20',
       href: '/admin/cars?status=APPROVED',
     },
@@ -69,7 +70,7 @@ export default function AdminDashboardClient({ stats }: { stats: Stats }) {
       value: stats.rejectedCars,
       icon: XCircle,
       color: 'text-red-400',
-      bg: 'bg-red-400/10',
+      iconBg: 'bg-red-400/10 border-red-400/20',
       border: 'border-red-400/20',
       href: '/admin/cars?status=REJECTED',
     },
@@ -78,7 +79,7 @@ export default function AdminDashboardClient({ stats }: { stats: Stats }) {
       value: stats.totalBookings,
       icon: CalendarCheck,
       color: 'text-purple-400',
-      bg: 'bg-purple-400/10',
+      iconBg: 'bg-purple-400/10 border-purple-400/20',
       border: 'border-purple-400/20',
       href: '/admin/bookings',
     },
@@ -87,7 +88,7 @@ export default function AdminDashboardClient({ stats }: { stats: Stats }) {
       value: stats.activeBookings,
       icon: TrendingUp,
       color: 'text-emerald-400',
-      bg: 'bg-emerald-400/10',
+      iconBg: 'bg-emerald-400/10 border-emerald-400/20',
       border: 'border-emerald-400/20',
       href: '/admin/bookings',
     },
@@ -96,7 +97,7 @@ export default function AdminDashboardClient({ stats }: { stats: Stats }) {
       value: `${stats.totalRevenue.toFixed(1)} ${t('kwd')}`,
       icon: DollarSign,
       color: 'text-status-star',
-      bg: 'bg-status-star/10',
+      iconBg: 'bg-status-star/10 border-status-star/20',
       border: 'border-status-star/20',
       href: '/admin/bookings',
     },
@@ -104,26 +105,32 @@ export default function AdminDashboardClient({ stats }: { stats: Stats }) {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-bold text-text-primary">
-        {t('adminDashboard')}
-      </h1>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-text-primary">
+          {t('adminDashboard')}
+        </h1>
+        <p className="mt-1 text-text-secondary">
+          {lang === 'ar' ? 'إدارة شاملة لمنصة سكة كار' : 'Full platform management for Sikka Car'}
+        </p>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {cards.map((card) => (
           <Link
             key={card.label}
             href={card.href}
-            className={`rounded-2xl border ${card.border} ${card.bg} p-5 transition-all hover:-translate-y-0.5 hover:shadow-lg`}
+            className={`group rounded-2xl border ${card.border} bg-dark-card p-5 transition-all hover:-translate-y-0.5 hover:shadow-lg hover:border-status-star/30`}
           >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-text-secondary">{card.label}</p>
-                <p className={`mt-1 text-2xl font-bold ${card.color}`}>
-                  {card.value}
-                </p>
+            <div className="flex items-center justify-between mb-3">
+              <div className={`flex h-10 w-10 items-center justify-center rounded-full border ${card.iconBg}`}>
+                <card.icon className={`h-5 w-5 ${card.color}`} />
               </div>
-              <card.icon className={`h-8 w-8 ${card.color} opacity-60`} />
+              <ArrowUpRight className="h-4 w-4 text-text-muted opacity-0 transition-opacity group-hover:opacity-100" />
             </div>
+            <p className={`text-2xl font-bold ${card.color}`}>
+              {card.value}
+            </p>
+            <p className="mt-1 text-sm text-text-secondary">{card.label}</p>
           </Link>
         ))}
       </div>
