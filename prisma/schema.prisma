@@ -193,7 +193,7 @@ model AuditLog {
 model CarInspection {
   id        String   @id @default(cuid())
   bookingId String
-  booking   Booking  @relation(fields: [bookingId], references: [id])
+  booking   Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   type      String   // "PICKUP" or "RETURN"
   photos    String[] // Array of Cloudinary URLs
   notes     String?
