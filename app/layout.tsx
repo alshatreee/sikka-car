@@ -3,6 +3,7 @@ import { ClerkProvider } from '@clerk/nextjs'
 import { arSA } from '@clerk/localizations'
 import './globals.css'
 import ClientLayout from './ClientLayout'
+import GoogleAnalytics from '@/components/shared/GoogleAnalytics'
 
 export const metadata: Metadata = {
   title: {
@@ -42,7 +43,7 @@ export const metadata: Metadata = {
     googleBot: { index: true, follow: true },
   },
   alternates: {
-    canonical: 'https://sikka-car.vercel.app',
+    canonical: 'https://sikkacar.com',
   },
 }
 
@@ -67,8 +68,8 @@ export default function RootLayout({
                 "@type": "Organization",
                 "name": "Sikka Car",
                 "alternateName": "سكة كار",
-                "url": "https://sikka-car.vercel.app",
-                "logo": "https://sikka-car.vercel.app/icon.svg",
+                "url": "https://sikkacar.com",
+                "logo": "https://sikkacar.com/icon.svg",
                 "description": "منصة كويتية موثوقة لتأجير السيارات بين الأفراد",
                 "areaServed": {
                   "@type": "Country",
@@ -86,6 +87,7 @@ export default function RootLayout({
           />
         </head>
         <body className="font-arabic">
+          <GoogleAnalytics />
           <ClientLayout>{children}</ClientLayout>
         </body>
       </html>
