@@ -149,6 +149,19 @@ export async function getAdminUsers() {
 export async function updateUserRole(userId: string, role: 'USER' | 'ADMIN') {
   const currentUser = await requireAdmin()
 
+  // Prevent admin from demoting themselves
+  if (userId === currentUser.id && role === 'USER') {
+    throw new Error('لا يمكنك تغيير صلاحياتك بنفسك')
+  }
+
+  // Prevent removing the last admin
+  if (role === 'USER') {
+    const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } })
+    if (adminCount <= 1) {
+      throw new Error('لا يمكن إزالة آخر مشرف')
+    }
+  }
+
   const user = await prisma.user.update({
     where: { id: userId },
     data: { role },

@@ -76,6 +76,7 @@ export default function Footer() {
             <div className="mb-4 flex gap-3">
               <a
                 href="https://instagram.com"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-status-star/10"
                 aria-label="Instagram"
@@ -84,6 +85,7 @@ export default function Footer() {
               </a>
               <a
                 href="https://twitter.com"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-dark-card border border-dark-border transition-all hover:border-status-star/50 hover:bg-status-star/10"
                 aria-label="Twitter"

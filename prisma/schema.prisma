@@ -62,7 +62,7 @@ model User {
 model Car {
   id               String           @id @default(cuid())
   ownerId          String
-  owner            User             @relation(fields: [ownerId], references: [id])
+  owner            User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 
   title            String
   titleEn          String?
@@ -140,6 +140,7 @@ model Booking {
   @@index([carId])
   @@index([renterId])
   @@index([status])
+  @@index([startDate, endDate])
 }
 
 model BookingPhoto {

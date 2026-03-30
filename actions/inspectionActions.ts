@@ -40,6 +40,16 @@ export async function createInspection(
     return { success: false, error: 'يجب إضافة صور التفتيش' }
   }
 
+  if (photos.length > 20) {
+    return { success: false, error: 'الحد الأقصى 20 صورة' }
+  }
+
+  // Validate all URLs are from Cloudinary
+  const isValidUrl = (url: string) => url.startsWith('https://res.cloudinary.com/')
+  if (!photos.every(isValidUrl)) {
+    return { success: false, error: 'رابط صورة غير صالح' }
+  }
+
   try {
     const inspection = await prisma.carInspection.create({
       data: {

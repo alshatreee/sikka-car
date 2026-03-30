@@ -5,7 +5,7 @@ import { createBooking, getBookedDates } from '@/actions/bookingActions'
 import { initiatePayment } from '@/actions/paymentActions'
 import { useLanguage } from '@/components/shared/LanguageProvider'
 import { uploadToCloudinary } from '@/utils/uploadImage'
-import { Calendar, Clock, FileText, CreditCard, AlertTriangle, Shield, Upload, Camera, Loader2, Check, LogIn } from 'lucide-react'
+import { Calendar, Clock, FileText, CreditCard, AlertTriangle, Shield, Camera, Loader2, Check, LogIn, X } from 'lucide-react'
 import Image from 'next/image'
 import Link from 'next/link'
 
@@ -76,6 +76,33 @@ export function BookingPanel({
 
   const totalAmount = totalDays * dailyPrice
 
+  const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+
+  async function handleImageUpload(
+    file: File,
+    setUploading: (v: boolean) => void,
+    setUrl: (v: string) => void,
+    preset: string
+  ) {
+    if (file.size > MAX_FILE_SIZE) {
+      setError(lang === 'ar' ? 'حجم الصورة يجب أن يكون أقل من 10 ميجابايت' : 'Image must be less than 10MB')
+      return
+    }
+    if (!file.type.startsWith('image/')) {
+      setError(lang === 'ar' ? 'يرجى رفع صورة فقط' : 'Please upload an image file only')
+      return
+    }
+    setUploading(true)
+    try {
+      const url = await uploadToCloudinary(file, preset)
+      if (url) setUrl(url)
+      else setError(lang === 'ar' ? 'فشل رفع الصورة' : 'Failed to upload image')
+    } catch {
+      setError(lang === 'ar' ? 'فشل رفع الصورة' : 'Failed to upload image')
+    }
+    setUploading(false)
+  }
+
   function handleBooking() {
     setError('')
 
@@ -85,30 +112,35 @@ export function BookingPanel({
     }
 
     if (!startDate || !endDate) {
-      setError(lang === 'ar' ? 'ÙØ±Ø¬Ù ØªØ­Ø¯ÙØ¯ ØªÙØ§Ø±ÙØ® Ø§ÙØ­Ø¬Ø²' : 'Please select booking dates')
+      setError(lang === 'ar' ? 'يرجى تحديد تواريخ الحجز' : 'Please select booking dates')
       return
     }
 
     if (totalDays <= 0) {
-      setError(lang === 'ar' ? 'ØªØ§Ø±ÙØ® Ø§ÙÙÙØ§ÙØ© ÙØ¬Ø¨ Ø£Ù ÙÙÙÙ Ø¨Ø¹Ø¯ ØªØ§Ø±ÙØ® Ø§ÙØ¨Ø¯Ø§ÙØ©' : 'End date must be after start date')
+      setError(lang === 'ar' ? 'تاريخ النهاية يجب أن يكون بعد تاريخ البداية' : 'End date must be after start date')
+      return
+    }
+
+    if (totalDays > 365) {
+      setError(lang === 'ar' ? 'مدة الحجز لا تتجاوز 365 يوم' : 'Booking cannot exceed 365 days')
       return
     }
 
     if (!civilId && !civilIdImageFront) {
-      setError(lang === 'ar' ? 'ÙØ±Ø¬Ù Ø¥Ø¯Ø®Ø§Ù Ø§ÙØ±ÙÙ Ø§ÙÙØ¯ÙÙ Ø£Ù Ø±ÙØ¹ ØµÙØ±Ø© Ø§ÙØ¨Ø·Ø§ÙØ© Ø§ÙÙØ¯ÙÙØ©' : 'Please enter Civil ID or upload Civil ID image')
+      setError(lang === 'ar' ? 'يرجى إدخال الرقم المدني أو رفع صورة البطاقة المدنية' : 'Please enter Civil ID or upload Civil ID image')
       return
     }
     if (civilId && !/^\d{12}$/.test(civilId)) {
-      setError(lang === 'ar' ? 'Ø§ÙØ±ÙÙ Ø§ÙÙØ¯ÙÙ ÙØ¬Ø¨ Ø£Ù ÙÙÙÙ 12 Ø±ÙÙ' : 'Civil ID must be exactly 12 digits')
+      setError(lang === 'ar' ? 'الرقم المدني يجب أن يكون 12 رقم' : 'Civil ID must be exactly 12 digits')
       return
     }
     if (!licenseNumber && !licenseImageFront) {
-      setError(lang === 'ar' ? 'ÙØ±Ø¬Ù Ø¥Ø¯Ø®Ø§Ù Ø±ÙÙ Ø§ÙØ±Ø®ØµØ© Ø£Ù Ø±ÙØ¹ ØµÙØ±Ø© Ø§ÙØ±Ø®ØµØ©' : 'Please enter License Number or upload License image')
+      setError(lang === 'ar' ? 'يرجى إدخال رقم الرخصة أو رفع صورة الرخصة' : 'Please enter License Number or upload License image')
       return
     }
 
     if (!contractAccepted) {
-      setError(lang === 'ar' ? 'ÙØ¬Ø¨ ÙØ¨ÙÙ Ø´Ø±ÙØ· Ø¹ÙØ¯ Ø§ÙØªØ£Ø¬ÙØ±' : 'You must accept the rental agreement terms')
+      setError(lang === 'ar' ? 'يجب قبول شروط عقد التأجير' : 'You must accept the rental agreement terms')
       return
     }
 
@@ -135,7 +167,7 @@ export function BookingPanel({
 
       if (!bookingResult.success || !bookingResult.bookingId) {
         setError(
-          bookingResult.error || 'Ø­Ø¯Ø« Ø®Ø·Ø£ Ø£Ø«ÙØ§Ø¡ Ø¥ÙØ´Ø§Ø¡ Ø§ÙØ­Ø¬Ø²'
+          bookingResult.error || (lang === 'ar' ? 'حدث خطأ أثناء إنشاء الحجز' : 'An error occurred while creating the booking')
         )
         return
       }
@@ -150,7 +182,7 @@ export function BookingPanel({
       if (paymentResult.success && paymentResult.checkoutUrl) {
         window.location.href = paymentResult.checkoutUrl
       } else {
-        setError(paymentResult.error || 'ÙØ´Ù Ø¥ÙØ´Ø§Ø¡ Ø±Ø§Ø¨Ø· Ø§ÙØ¯ÙØ¹')
+        setError(paymentResult.error || (lang === 'ar' ? 'فشل إنشاء رابط الدفع' : 'Failed to create payment link'))
       }
     })
   }
@@ -222,11 +254,11 @@ export function BookingPanel({
         <div className="rounded-xl border border-dark-border bg-dark-surface/50 p-4 space-y-3">
           <label className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
             <Shield className="h-4 w-4 text-status-star" />
-            {lang === 'ar' ? 'Ø§ÙØ¨Ø·Ø§ÙØ© Ø§ÙÙØ¯ÙÙØ©' : 'Civil ID'}
+            {lang === 'ar' ? 'البطاقة المدنية' : 'Civil ID'}
           </label>
           <div>
             <label className="mb-1 block text-xs text-text-secondary">
-              {lang === 'ar' ? 'Ø§ÙØ±ÙÙ Ø§ÙÙØ¯ÙÙ' : 'Civil ID Number'}
+              {lang === 'ar' ? 'الرقم المدني' : 'Civil ID Number'}
             </label>
             <input
               type="text"
@@ -240,7 +272,7 @@ export function BookingPanel({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs text-text-secondary">
-                {lang === 'ar' ? 'Ø§ÙÙØ¬Ù Ø§ÙØ£ÙØ§ÙÙ' : 'Front Side'}
+                {lang === 'ar' ? 'الوجه الأمامي' : 'Front Side'}
               </label>
               {civilIdImageFront ? (
                 <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
@@ -248,26 +280,25 @@ export function BookingPanel({
                   <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                     <Check className="h-6 w-6 text-green-400" />
                   </div>
-                  <button type="button" onClick={() => setCivilIdImageFront('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">â</button>
+                  <button type="button" onClick={() => setCivilIdImageFront('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               ) : (
                 <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
                   {uploadingCivilFront ? <Loader2 className="h-6 w-6 animate-spin text-text-muted" /> : (
-                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'Ø§ÙÙØ¬Ù Ø§ÙØ£ÙØ§ÙÙ' : 'Front'}</span></>
+                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'الوجه الأمامي' : 'Front'}</span></>
                   )}
                   <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
                     const file = e.target.files?.[0]; if (!file) return
-                    setUploadingCivilFront(true)
-                    const url = await uploadToCloudinary(file, 'sikka_id_docs')
-                    if (url) setCivilIdImageFront(url)
-                    setUploadingCivilFront(false)
+                    handleImageUpload(file, setUploadingCivilFront, setCivilIdImageFront, 'sikka_id_docs')
                   }} />
                 </label>
               )}
             </div>
             <div>
               <label className="mb-1 block text-xs text-text-secondary">
-                {lang === 'ar' ? 'Ø§ÙÙØ¬Ù Ø§ÙØ®ÙÙÙ' : 'Back Side'}
+                {lang === 'ar' ? 'الوجه الخلفي' : 'Back Side'}
               </label>
               {civilIdImageBack ? (
                 <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
@@ -275,19 +306,18 @@ export function BookingPanel({
                   <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                     <Check className="h-6 w-6 text-green-400" />
                   </div>
-                  <button type="button" onClick={() => setCivilIdImageBack('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">â</button>
+                  <button type="button" onClick={() => setCivilIdImageBack('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               ) : (
                 <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
                   {uploadingCivilBack ? <Loader2 className="h-6 w-6 animate-spin text-text-muted" /> : (
-                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'Ø§ÙÙØ¬Ù Ø§ÙØ®ÙÙÙ' : 'Back'}</span></>
+                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'الوجه الخلفي' : 'Back'}</span></>
                   )}
                   <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
                     const file = e.target.files?.[0]; if (!file) return
-                    setUploadingCivilBack(true)
-                    const url = await uploadToCloudinary(file, 'sikka_id_docs')
-                    if (url) setCivilIdImageBack(url)
-                    setUploadingCivilBack(false)
+                    handleImageUpload(file, setUploadingCivilBack, setCivilIdImageBack, 'sikka_id_docs')
                   }} />
                 </label>
               )}
@@ -299,24 +329,24 @@ export function BookingPanel({
         <div className="rounded-xl border border-dark-border bg-dark-surface/50 p-4 space-y-3">
           <label className="flex items-center gap-1.5 text-sm font-medium text-text-primary">
             <CreditCard className="h-4 w-4 text-status-star" />
-            {lang === 'ar' ? 'Ø±Ø®ØµØ© Ø§ÙÙÙØ§Ø¯Ø©' : 'Driving License'}
+            {lang === 'ar' ? 'رخصة القيادة' : 'Driving License'}
           </label>
           <div>
             <label className="mb-1 block text-xs text-text-secondary">
-              {lang === 'ar' ? 'Ø±ÙÙ Ø§ÙØ±Ø®ØµØ©' : 'License Number'}
+              {lang === 'ar' ? 'رقم الرخصة' : 'License Number'}
             </label>
             <input
               type="text"
               value={licenseNumber}
               onChange={(e) => setLicenseNumber(e.target.value)}
-              placeholder={lang === 'ar' ? 'Ø±ÙÙ Ø§ÙØ±Ø®ØµØ©' : 'License number'}
+              placeholder={lang === 'ar' ? 'رقم الرخصة' : 'License number'}
               className="w-full rounded-xl border border-dark-border bg-dark-surface px-3 py-2.5 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-dark-border-light focus:ring-2 focus:ring-dark-border/50"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs text-text-secondary">
-                {lang === 'ar' ? 'Ø§ÙÙØ¬Ù Ø§ÙØ£ÙØ§ÙÙ' : 'Front Side'}
+                {lang === 'ar' ? 'الوجه الأمامي' : 'Front Side'}
               </label>
               {licenseImageFront ? (
                 <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
@@ -324,26 +354,25 @@ export function BookingPanel({
                   <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                     <Check className="h-6 w-6 text-green-400" />
                   </div>
-                  <button type="button" onClick={() => setLicenseImageFront('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">â</button>
+                  <button type="button" onClick={() => setLicenseImageFront('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               ) : (
                 <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
                   {uploadingLicenseFront ? <Loader2 className="h-6 w-6 animate-spin text-text-muted" /> : (
-                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'Ø§ÙÙØ¬Ù Ø§ÙØ£ÙØ§ÙÙ' : 'Front'}</span></>
+                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'الوجه الأمامي' : 'Front'}</span></>
                   )}
                   <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
                     const file = e.target.files?.[0]; if (!file) return
-                    setUploadingLicenseFront(true)
-                    const url = await uploadToCloudinary(file, 'sikka_id_docs')
-                    if (url) setLicenseImageFront(url)
-                    setUploadingLicenseFront(false)
+                    handleImageUpload(file, setUploadingLicenseFront, setLicenseImageFront, 'sikka_id_docs')
                   }} />
                 </label>
               )}
             </div>
             <div>
               <label className="mb-1 block text-xs text-text-secondary">
-                {lang === 'ar' ? 'Ø§ÙÙØ¬Ù Ø§ÙØ®ÙÙÙ' : 'Back Side'}
+                {lang === 'ar' ? 'الوجه الخلفي' : 'Back Side'}
               </label>
               {licenseImageBack ? (
                 <div className="relative h-24 w-full overflow-hidden rounded-xl border border-green-500/30">
@@ -351,19 +380,18 @@ export function BookingPanel({
                   <div className="absolute inset-0 flex items-center justify-center bg-black/30">
                     <Check className="h-6 w-6 text-green-400" />
                   </div>
-                  <button type="button" onClick={() => setLicenseImageBack('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">â</button>
+                  <button type="button" onClick={() => setLicenseImageBack('')} className="absolute top-1 end-1 rounded-full bg-dark-bg/80 p-1 text-text-muted hover:text-text-primary">
+                    <X className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               ) : (
                 <label className="flex h-24 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-dark-border transition-colors hover:border-status-star/50 hover:bg-dark-surface">
                   {uploadingLicenseBack ? <Loader2 className="h-6 w-6 animate-spin text-text-muted" /> : (
-                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'Ø§ÙÙØ¬Ù Ø§ÙØ®ÙÙÙ' : 'Back'}</span></>
+                    <><Camera className="mb-1 h-5 w-5 text-text-muted" /><span className="text-[10px] text-text-muted">{lang === 'ar' ? 'الوجه الخلفي' : 'Back'}</span></>
                   )}
                   <input type="file" accept="image/*" capture="environment" className="hidden" onChange={async (e) => {
                     const file = e.target.files?.[0]; if (!file) return
-                    setUploadingLicenseBack(true)
-                    const url = await uploadToCloudinary(file, 'sikka_id_docs')
-                    if (url) setLicenseImageBack(url)
-                    setUploadingLicenseBack(false)
+                    handleImageUpload(file, setUploadingLicenseBack, setLicenseImageBack, 'sikka_id_docs')
                   }} />
                 </label>
               )}
@@ -389,7 +417,7 @@ export function BookingPanel({
         {dateConflict && (
           <div className="flex items-center gap-2 rounded-xl bg-red-500/10 p-3 text-sm text-red-400 border border-red-500/20">
             <AlertTriangle className="h-4 w-4 shrink-0" />
-            {lang === 'ar' ? 'Ø§ÙØ³ÙØ§Ø±Ø© ÙØ­Ø¬ÙØ²Ø© ÙÙ ÙØ°Ù Ø§ÙÙØªØ±Ø©Ø Ø§Ø®ØªØ± ØªÙØ§Ø±ÙØ® Ø£Ø®Ø±Ù' : 'Car is booked during these dates, choose different dates'}
+            {lang === 'ar' ? 'السيارة محجوزة في هذه الفترة، اختر تواريخ أخرى' : 'Car is booked during these dates, choose different dates'}
           </div>
         )}
 
@@ -397,12 +425,12 @@ export function BookingPanel({
         {bookedRanges.length > 0 && (
           <div className="rounded-xl bg-dark-surface p-3 border border-dark-border">
             <p className="mb-2 text-xs font-medium text-text-secondary">
-              {lang === 'ar' ? 'Ø§ÙØªÙØ§Ø±ÙØ® Ø§ÙÙØ­Ø¬ÙØ²Ø©:' : 'Booked dates:'}
+              {lang === 'ar' ? 'التواريخ المحجوزة:' : 'Booked dates:'}
             </p>
             <div className="flex flex-wrap gap-1.5">
               {bookedRanges.map((range, i) => (
                 <span key={i} className="rounded-lg bg-red-500/10 px-2 py-1 text-xs text-red-400 border border-red-500/20">
-                  {range.start} â {range.end}
+                  {range.start} → {range.end}
                 </span>
               ))}
             </div>
@@ -421,13 +449,13 @@ export function BookingPanel({
               />
               <div className="flex-1">
                 <p className="text-sm text-text-primary">
-                  {lang === 'ar' ? 'Ø£ÙØ§ÙÙ Ø¹ÙÙ Ø´Ø±ÙØ· ÙØ£Ø­ÙØ§Ù Ø¹ÙØ¯ Ø§ÙØªØ£Ø¬ÙØ±' : 'I agree to the rental agreement terms'}
+                  {lang === 'ar' ? 'أوافق على شروط وأحكام عقد التأجير' : 'I agree to the rental agreement terms'}
                 </p>
                 <a
                   href="/terms"
                   className="text-xs text-status-star hover:underline"
                 >
-                  {lang === 'ar' ? 'Ø¹Ø±Ø¶ Ø§ÙØ´Ø±ÙØ·' : 'View terms'}
+                  {lang === 'ar' ? 'عرض الشروط' : 'View terms'}
                 </a>
               </div>
             </label>
@@ -439,11 +467,11 @@ export function BookingPanel({
           <div className="rounded-xl bg-dark-surface p-4 border border-dark-border">
             <div className="flex items-center justify-between text-sm text-text-secondary">
               <span>
-                {dailyPrice} {t('perDay')} Ã {totalDays}{' '}
-                {totalDays === 1 ? 'ÙÙÙ' : 'Ø£ÙØ§Ù'}
+                {dailyPrice} {t('perDay')} × {totalDays}{' '}
+                {lang === 'ar' ? (totalDays === 1 ? 'يوم' : 'أيام') : (totalDays === 1 ? 'day' : 'days')}
               </span>
               <span className="text-lg font-bold text-status-star">
-                {totalAmount.toFixed(2)} Ø¯.Ù
+                {totalAmount.toFixed(2)} {lang === 'ar' ? 'د.ك' : 'KWD'}
               </span>
             </div>
           </div>
@@ -459,7 +487,7 @@ export function BookingPanel({
           />
           <span className="text-xs text-text-secondary">
             {lang === 'ar' ? (
-              <>Ø£ÙØ§ÙÙ Ø¹ÙÙ <a href="/terms" className="text-status-star underline">Ø´Ø±ÙØ· Ø§ÙØ§Ø³ØªØ®Ø¯Ø§Ù</a> Ù<a href="/privacy" className="text-status-star underline">Ø³ÙØ§Ø³Ø© Ø§ÙØ®ØµÙØµÙØ©</a></>
+              <>أوافق على <a href="/terms" className="text-status-star underline">شروط الاستخدام</a> و<a href="/privacy" className="text-status-star underline">سياسة الخصوصية</a></>
             ) : (
               <>I agree to the <a href="/terms" className="text-status-star underline">Terms of Service</a> and <a href="/privacy" className="text-status-star underline">Privacy Policy</a></>
             )}
@@ -476,12 +504,12 @@ export function BookingPanel({
         {showConfirm && (
           <div className="rounded-xl border border-status-star/30 bg-status-star/5 p-4">
             <p className="mb-3 text-sm font-medium text-text-primary">
-              {lang === 'ar' ? 'ØªØ£ÙÙØ¯ Ø§ÙØ­Ø¬Ø²' : 'Confirm Booking'}
+              {lang === 'ar' ? 'تأكيد الحجز' : 'Confirm Booking'}
             </p>
             <div className="mb-3 space-y-1 text-xs text-text-secondary">
-              <p>{lang === 'ar' ? 'ÙÙ' : 'From'}: {startDate} â {endDate}</p>
-              <p>{lang === 'ar' ? 'Ø§ÙÙØ¯Ø©' : 'Duration'}: {totalDays} {lang === 'ar' ? (totalDays === 1 ? 'ÙÙÙ' : 'Ø£ÙØ§Ù') : (totalDays === 1 ? 'day' : 'days')}</p>
-              <p className="text-base font-bold text-status-star">{totalAmount.toFixed(2)} {lang === 'ar' ? 'Ø¯.Ù' : 'KWD'}</p>
+              <p>{lang === 'ar' ? 'من' : 'From'}: {startDate} → {endDate}</p>
+              <p>{lang === 'ar' ? 'المدة' : 'Duration'}: {totalDays} {lang === 'ar' ? (totalDays === 1 ? 'يوم' : 'أيام') : (totalDays === 1 ? 'day' : 'days')}</p>
+              <p className="text-base font-bold text-status-star">{totalAmount.toFixed(2)} {lang === 'ar' ? 'د.ك' : 'KWD'}</p>
             </div>
             <div className="flex gap-2">
               <button
@@ -490,14 +518,14 @@ export function BookingPanel({
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand-solid py-2.5 text-sm font-medium text-text-primary transition-all hover:bg-brand-solid-hover disabled:opacity-50"
               >
                 <CreditCard className="h-4 w-4" />
-                {pending ? t('processing') : (lang === 'ar' ? 'ØªØ£ÙÙØ¯ ÙØ§ÙØ¯ÙØ¹' : 'Confirm & Pay')}
+                {pending ? t('processing') : (lang === 'ar' ? 'تأكيد والدفع' : 'Confirm & Pay')}
               </button>
               <button
                 onClick={() => setShowConfirm(false)}
                 disabled={pending}
                 className="rounded-xl border border-dark-border bg-dark-surface px-4 py-2.5 text-sm text-text-secondary transition-all hover:bg-dark-border disabled:opacity-50"
               >
-                {lang === 'ar' ? 'Ø¥ÙØºØ§Ø¡' : 'Cancel'}
+                {lang === 'ar' ? 'إلغاء' : 'Cancel'}
               </button>
             </div>
           </div>
@@ -510,7 +538,7 @@ export function BookingPanel({
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-status-star py-3.5 font-medium text-dark-bg shadow-lg transition-all hover:bg-status-star/90"
             >
               <LogIn className="h-4 w-4" />
-              {lang === 'ar' ? 'Ø³Ø¬ÙÙ Ø¯Ø®ÙÙÙ ÙØ¥ØªÙØ§Ù Ø§ÙØ­Ø¬Ø²' : 'Sign in to complete booking'}
+              {lang === 'ar' ? 'سجّل دخولك لإتمام الحجز' : 'Sign in to complete booking'}
             </Link>
           ) : (
             <button
