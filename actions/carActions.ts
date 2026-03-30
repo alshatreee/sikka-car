@@ -91,6 +91,8 @@ export async function getApprovedCars(filters?: {
   if (filters?.search) {
     where.OR = [
       { title: { contains: filters.search, mode: 'insensitive' } },
+      { brand: { contains: filters.search, mode: 'insensitive' } },
+      { model: { contains: filters.search, mode: 'insensitive' } },
     ]
   }
 
