@@ -17,7 +17,7 @@ export interface KazimaResponse {
 
 export interface ExtractionResult {
   persons: string[]
-  places: string[]
+  locations: string[]
   tribes: string[]
   books: string[]
   dates: string[]

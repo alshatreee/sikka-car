@@ -262,11 +262,13 @@ model KazimaDocument {
 
 model KazimaGraphData {
   id            String   @id @default(cuid())
+  userId        String?
   analysisId    String?
   nodesJson     String   @db.Text // JSON array of nodes
   edgesJson     String   @db.Text // JSON array of edges
   sourceText    String?  @db.Text
   createdAt     DateTime @default(now())
 
+  @@index([userId])
   @@index([analysisId])
 }

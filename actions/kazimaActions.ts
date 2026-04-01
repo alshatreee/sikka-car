@@ -259,6 +259,7 @@ export async function saveKazimaGraph(data: {
   try {
     await prisma.kazimaGraphData.create({
       data: {
+        userId: clerkUserId,
         analysisId: data.analysisId || null,
         nodesJson: data.nodesJson,
         edgesJson: data.edgesJson,

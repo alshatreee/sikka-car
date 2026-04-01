@@ -183,7 +183,7 @@ export default function KazimaChatPage() {
             ))}
 
             {isLoading && (
-              <div className="flex justify-end">
+              <div className="flex justify-start">
                 <div className="rounded-2xl bg-dark-surface border border-dark-border px-4 py-3">
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin text-status-star" />
