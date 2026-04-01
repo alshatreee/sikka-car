@@ -272,3 +272,191 @@ model KazimaGraphData {
   @@index([userId])
   @@index([analysisId])
 }
+
+// ===== Kazima Archive - Digital Library =====
+
+enum ArchiveItemType {
+  ARTICLE
+  BOOK
+  MANUSCRIPT
+  DOCUMENT
+  IMAGE
+  AUDIO
+  VIDEO
+  PUBLICATION
+}
+
+enum ArchiveItemStatus {
+  DRAFT
+  REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+enum OcrStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model ArchiveItem {
+  id               String            @id @default(cuid())
+  userId           String?           // who created this entry
+  slug             String            @unique
+  titleAr          String
+  titleEn          String?
+  descriptionAr    String?           @db.Text
+  descriptionEn    String?           @db.Text
+  itemType         ArchiveItemType
+  status           ArchiveItemStatus @default(DRAFT)
+  language         String?           @default("ar") // ar, en, fa, etc.
+
+  // Dublin Core fields (direct columns, not EAV)
+  creator          String?           // المؤلف / الناسخ
+  contributor      String?           // المحقق / المراجع
+  publisher        String?           // الناشر
+  identifier       String?           // ISBN, catalog number, etc.
+  sourceReference  String?           // المصدر الأصلي
+  rightsStatement  String?           // حقوق النشر
+  publicationYear  Int?
+  coveragePlace    String?           // التغطية الجغرافية
+  coveragePeriod   String?           // التغطية الزمنية
+
+  // Kazima-specific fields
+  collectionName   String?           // اسم المجموعة
+  kuwaitPeriod     String?           // الفترة الكويتية
+  manuscriptNotes  String?           @db.Text
+  verificationStatus String?         // محقق / غير محقق / قيد التحقيق
+
+  // Display
+  coverImageUrl    String?
+  thumbnailUrl     String?
+
+  // Search
+  hasOcr           Boolean           @default(false)
+  searchText       String?           @db.Text // auto-built: title + description + creator + OCR
+
+  tags             String[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  // Relations
+  files            ArchiveFile[]
+  ocrPages         ArchiveOcrPage[]
+  itemPeople       ArchiveItemPerson[]
+  itemSubjects     ArchiveItemSubject[]
+
+  @@index([userId])
+  @@index([itemType])
+  @@index([status])
+  @@index([publicationYear])
+  @@index([createdAt])
+}
+
+model ArchiveFile {
+  id              String   @id @default(cuid())
+  itemId          String
+  item            ArchiveItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  fileKind        String   // original, pdf, thumbnail, audio, video, preview
+  storagePath     String   // Supabase Storage path or S3 key
+  publicUrl       String?  // CDN / public URL
+  mimeType        String?  // application/pdf, image/jpeg, audio/mp3, etc.
+  fileSize        Int?     // bytes
+  pageCount       Int?     // for PDFs
+  durationSeconds Int?     // for audio/video
+  checksum        String?  // SHA-256 for integrity
+  isPrimary       Boolean  @default(false)
+
+  createdAt       DateTime @default(now())
+
+  ocrPages        ArchiveOcrPage[]
+
+  @@index([itemId])
+  @@index([fileKind])
+}
+
+model ArchiveOcrPage {
+  id           String    @id @default(cuid())
+  itemId       String
+  item         ArchiveItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  fileId       String
+  file         ArchiveFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  pageNumber   Int
+  ocrText      String    @db.Text
+  confidence   Float?    // 0.0 to 1.0
+  ocrStatus    OcrStatus @default(PENDING)
+
+  createdAt    DateTime  @default(now())
+
+  @@unique([fileId, pageNumber])
+  @@index([itemId])
+}
+
+model ArchivePerson {
+  id           String   @id @default(cuid())
+  nameAr       String
+  nameEn       String?
+  bio          String?  @db.Text
+  birthYear    Int?
+  deathYear    Int?
+  slug         String   @unique
+  createdAt    DateTime @default(now())
+
+  items        ArchiveItemPerson[]
+
+  @@index([nameAr])
+}
+
+model ArchiveSubject {
+  id           String   @id @default(cuid())
+  nameAr       String
+  nameEn       String?
+  slug         String   @unique
+  parentId     String?  // self-reference for hierarchy
+  createdAt    DateTime @default(now())
+
+  items        ArchiveItemSubject[]
+
+  @@index([nameAr])
+  @@index([parentId])
+}
+
+model ArchiveCollection {
+  id           String   @id @default(cuid())
+  nameAr       String
+  nameEn       String?
+  descriptionAr String? @db.Text
+  slug         String   @unique
+  coverImage   String?
+  itemCount    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Junction tables (many-to-many)
+
+model ArchiveItemPerson {
+  id       String        @id @default(cuid())
+  itemId   String
+  item     ArchiveItem   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  personId String
+  person   ArchivePerson @relation(fields: [personId], references: [id], onDelete: Cascade)
+  role     String?       // مؤلف، محقق، ناسخ، مترجم
+
+  @@unique([itemId, personId, role])
+  @@index([personId])
+}
+
+model ArchiveItemSubject {
+  id        String         @id @default(cuid())
+  itemId    String
+  item      ArchiveItem    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  subjectId String
+  subject   ArchiveSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, subjectId])
+  @@index([subjectId])
+}
