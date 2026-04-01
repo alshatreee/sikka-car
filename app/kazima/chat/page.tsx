@@ -145,7 +145,7 @@ export default function KazimaChatPage() {
             {messages.map((msg, i) => (
               <div
                 key={i}
-                className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}
+                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
                   className={`max-w-[85%] rounded-2xl px-4 py-3 ${

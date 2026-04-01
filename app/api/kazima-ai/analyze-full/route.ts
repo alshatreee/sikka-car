@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
     const cleanedText = cleanForLLM(text)
 
     // Run all 4 extractions in parallel
+    // Each prompt is a system-level instruction, and the text is the user input
     const [entities, relations, timeline, classification] = await Promise.all([
       callLLMJson<EntitiesResult>({
         systemPrompt: ENTITIES_PROMPT,
@@ -76,32 +77,25 @@ function buildGraph(entities: EntitiesResult, relations: RelationsResult) {
   const seen = new Set<string>()
 
   function addNode(id: string, type: string) {
-    if (!seen.has(id)) {
-      seen.add(id)
-      nodes.push({ id, type, label: id })
-    }
+    if (!id || seen.has(id)) return
+    seen.add(id)
+    nodes.push({ id, type, label: id })
   }
 
-  for (const person of entities.persons || []) {
-    addNode(person, 'person')
-  }
-  for (const location of entities.locations || []) {
-    addNode(location, 'location')
-  }
-  for (const book of entities.books || []) {
-    addNode(book, 'book')
-  }
-  for (const tribe of entities.tribes || []) {
-    addNode(tribe, 'tribe')
-  }
+  // Safely iterate arrays with fallback
+  for (const person of entities?.persons || []) addNode(person, 'person')
+  for (const location of entities?.locations || []) addNode(location, 'location')
+  for (const book of entities?.books || []) addNode(book, 'book')
+  for (const tribe of entities?.tribes || []) addNode(tribe, 'tribe')
 
-  for (const rel of relations.relations || []) {
+  for (const rel of relations?.relations || []) {
+    if (!rel.from || !rel.to) continue
     addNode(rel.from, 'person')
     addNode(rel.to, 'person')
     edges.push({
       source: rel.from,
       target: rel.to,
-      type: rel.type,
+      type: rel.type || 'unknown',
       uncertain: rel.uncertain,
     })
   }

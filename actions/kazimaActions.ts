@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { auth } from '@clerk/nextjs/server'
 import type { KazimaMode } from '@/lib/kazima-ai'
 
-// Save an analysis result
+// Save an analysis result (requires authentication)
 export async function saveKazimaAnalysis(data: {
   mode: KazimaMode
   inputText: string
@@ -13,10 +13,13 @@ export async function saveKazimaAnalysis(data: {
   title?: string
 }) {
   const { userId: clerkUserId } = auth()
+  if (!clerkUserId) {
+    return { success: false, error: 'يجب تسجيل الدخول لحفظ التحليلات' }
+  }
 
   await prisma.kazimaAnalysis.create({
     data: {
-      userId: clerkUserId || null,
+      userId: clerkUserId,
       mode: data.mode,
       inputText: data.inputText,
       result: data.result,
@@ -81,7 +84,7 @@ export async function deleteKazimaAnalysis(analysisId: string) {
   return { success: true }
 }
 
-// Save a manuscript
+// Save a manuscript (requires authentication)
 export async function saveKazimaManuscript(data: {
   title: string
   author?: string
@@ -93,10 +96,13 @@ export async function saveKazimaManuscript(data: {
   tags?: string[]
 }) {
   const { userId: clerkUserId } = auth()
+  if (!clerkUserId) {
+    return { success: false, error: 'يجب تسجيل الدخول' }
+  }
 
   await prisma.kazimaManuscript.create({
     data: {
-      userId: clerkUserId || null,
+      userId: clerkUserId,
       title: data.title,
       author: data.author || null,
       period: data.period || null,
@@ -124,7 +130,7 @@ export async function getKazimaManuscripts() {
 
 // ===== Knowledge Base Documents =====
 
-// Add a document to the knowledge base
+// Add a document to the knowledge base (requires authentication)
 export async function addKazimaDocument(data: {
   title: string
   content: string
@@ -137,10 +143,13 @@ export async function addKazimaDocument(data: {
   metadata?: string
 }) {
   const { userId: clerkUserId } = auth()
+  if (!clerkUserId) {
+    return { success: false, error: 'يجب تسجيل الدخول' }
+  }
 
   await prisma.kazimaDocument.create({
     data: {
-      userId: clerkUserId || null,
+      userId: clerkUserId,
       title: data.title,
       content: data.content,
       source: data.source || null,

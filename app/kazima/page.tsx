@@ -59,14 +59,17 @@ export default function KazimaPage() {
     if (!response || !lastInput) return
     setIsSaving(true)
     try {
-      await saveKazimaAnalysis({
+      const result = await saveKazimaAnalysis({
         mode: lastInput.mode,
         inputText: lastInput.text,
         result: response.result,
         additionalContext: lastInput.context,
       })
+      if (!result.success) {
+        setError(result.error || (lang === 'ar' ? 'فشل الحفظ. سجّل دخولك أولاً.' : 'Save failed. Please sign in.'))
+      }
     } catch {
-      // Silently fail if not authenticated
+      setError(lang === 'ar' ? 'فشل حفظ التحليل' : 'Failed to save analysis')
     }
     setIsSaving(false)
   }

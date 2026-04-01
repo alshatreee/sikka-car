@@ -9,6 +9,10 @@ interface LLMCallOptions {
   jsonMode?: boolean
 }
 
+const DEFAULT_ANTHROPIC_MODEL = 'claude-sonnet-4-20250514'
+const DEFAULT_OPENAI_MODEL = 'gpt-4o'
+const MAX_TOKENS = 8192
+
 /**
  * Call the configured LLM (Anthropic or OpenAI-compatible)
  * Returns the raw text response
@@ -44,20 +48,27 @@ async function callAnthropic(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: modelId || 'claude-sonnet-4-20250514',
-      max_tokens: 8192,
+      model: modelId || DEFAULT_ANTHROPIC_MODEL,
+      max_tokens: MAX_TOKENS,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
     }),
   })
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(`Anthropic API error: ${response.status} - ${JSON.stringify(errorData)}`)
+    const status = response.status
+    // Don't expose API error details to client
+    throw new Error(`خطأ من خدمة Anthropic (${status})`)
   }
 
   const data = await response.json()
-  return data.content?.[0]?.text || ''
+  const text = data.content?.[0]?.text
+
+  if (!text) {
+    throw new Error('لم يُرجع النموذج أي نص')
+  }
+
+  return text
 }
 
 async function callOpenAI(
@@ -69,8 +80,8 @@ async function callOpenAI(
   jsonMode?: boolean
 ): Promise<string> {
   const body: Record<string, unknown> = {
-    model: modelId || 'gpt-4o',
-    max_tokens: 8192,
+    model: modelId || DEFAULT_OPENAI_MODEL,
+    max_tokens: MAX_TOKENS,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userPrompt },
@@ -91,32 +102,86 @@ async function callOpenAI(
   })
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(`OpenAI API error: ${response.status} - ${JSON.stringify(errorData)}`)
+    const status = response.status
+    throw new Error(`خطأ من خدمة OpenAI (${status})`)
   }
 
   const data = await response.json()
-  return data.choices?.[0]?.message?.content || ''
+  const text = data.choices?.[0]?.message?.content
+
+  if (!text) {
+    throw new Error('لم يُرجع النموذج أي نص')
+  }
+
+  return text
 }
 
 /**
- * Call LLM and parse JSON response
+ * Call LLM and parse JSON response.
+ * Handles: raw JSON, JSON inside markdown code blocks, JSON embedded in text.
  */
 export async function callLLMJson<T>(options: LLMCallOptions): Promise<T> {
   const text = await callLLM({ ...options, jsonMode: true })
 
-  // Extract JSON from response (handle markdown code blocks)
-  const jsonMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
-  const jsonStr = jsonMatch ? jsonMatch[1].trim() : text.trim()
-
+  // Strategy 1: Try parsing raw text directly
   try {
-    return JSON.parse(jsonStr) as T
+    return JSON.parse(text) as T
   } catch {
-    // Try to find JSON object in the text
-    const objectMatch = jsonStr.match(/\{[\s\S]*\}/)
-    if (objectMatch) {
-      return JSON.parse(objectMatch[0]) as T
-    }
-    throw new Error('فشل في تحليل الاستجابة كـ JSON')
+    // Continue to fallback strategies
   }
+
+  // Strategy 2: Extract from markdown code block ```json ... ```
+  const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  if (codeBlockMatch) {
+    try {
+      return JSON.parse(codeBlockMatch[1].trim()) as T
+    } catch {
+      // Continue
+    }
+  }
+
+  // Strategy 3: Find first complete JSON object { ... }
+  // Use balanced brace matching instead of greedy regex
+  const firstBrace = text.indexOf('{')
+  if (firstBrace !== -1) {
+    let depth = 0
+    let inString = false
+    let escape = false
+
+    for (let i = firstBrace; i < text.length; i++) {
+      const ch = text[i]
+
+      if (escape) {
+        escape = false
+        continue
+      }
+
+      if (ch === '\\' && inString) {
+        escape = true
+        continue
+      }
+
+      if (ch === '"') {
+        inString = !inString
+        continue
+      }
+
+      if (!inString) {
+        if (ch === '{') depth++
+        else if (ch === '}') {
+          depth--
+          if (depth === 0) {
+            const jsonCandidate = text.slice(firstBrace, i + 1)
+            try {
+              return JSON.parse(jsonCandidate) as T
+            } catch {
+              break
+            }
+          }
+        }
+      }
+    }
+  }
+
+  throw new Error('فشل في تحليل استجابة النموذج كـ JSON. تأكد أن البرومبت يطلب JSON صريحًا.')
 }

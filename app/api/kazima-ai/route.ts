@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { buildKazimaPrompt, validateKazimaRequest } from '@/lib/kazima-ai'
+import { KAZIMA_SYSTEM_PROMPT, buildKazimaPrompt, validateKazimaRequest } from '@/lib/kazima-ai'
 import { callLLM } from '@/lib/kazima-llm'
 import { cleanForLLM } from '@/lib/kazima-cleaner'
 
@@ -17,7 +17,10 @@ export async function POST(request: NextRequest) {
     const cleanedText = cleanForLLM(text)
     const userPrompt = buildKazimaPrompt(mode, cleanedText, additionalContext)
 
-    const result = await callLLM({ userPrompt })
+    const result = await callLLM({
+      systemPrompt: KAZIMA_SYSTEM_PROMPT,
+      userPrompt,
+    })
 
     return NextResponse.json({
       mode,

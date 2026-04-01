@@ -8,95 +8,113 @@ import { cleanForSearch } from '@/lib/kazima-cleaner'
 // RAG-style chat: search knowledge base → build context → answer
 export async function POST(request: NextRequest) {
   try {
-    const { query, conversationHistory } = await request.json()
+    const body = await request.json()
+    const query = typeof body?.query === 'string' ? body.query.trim() : ''
+    const conversationHistory = Array.isArray(body?.conversationHistory) ? body.conversationHistory : []
 
-    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+    if (!query) {
       return NextResponse.json({ error: 'السؤال مطلوب' }, { status: 400 })
     }
 
-    // Search knowledge base for relevant documents
-    const normalizedQuery = cleanForSearch(query)
-    const searchTerms = normalizedQuery.split(' ').filter((t: string) => t.length > 2)
-
-    // Search in KazimaDocument using text search
-    let documents: { title: string; content: string; source: string | null }[] = []
-
-    if (searchTerms.length > 0) {
-      // Search across documents using LIKE for each term
-      documents = await prisma.kazimaDocument.findMany({
-        where: {
-          OR: searchTerms.flatMap((term: string) => [
-            { content: { contains: term, mode: 'insensitive' as const } },
-            { title: { contains: term, mode: 'insensitive' as const } },
-            { tags: { has: term } },
-          ]),
-        },
-        select: {
-          title: true,
-          content: true,
-          source: true,
-        },
-        take: 5,
-        orderBy: { createdAt: 'desc' },
-      })
+    if (query.length > 5000) {
+      return NextResponse.json({ error: 'السؤال طويل جدًا' }, { status: 400 })
     }
 
-    // Also search in saved analyses
-    const analyses = await prisma.kazimaAnalysis.findMany({
-      where: {
-        OR: searchTerms.flatMap((term: string) => [
-          { inputText: { contains: term, mode: 'insensitive' as const } },
-          { result: { contains: term, mode: 'insensitive' as const } },
-        ]),
-      },
-      select: {
-        inputText: true,
-        result: true,
-        mode: true,
-      },
-      take: 3,
-      orderBy: { createdAt: 'desc' },
-    })
+    // Sanitize and extract search terms (min 2 chars, max 10 terms)
+    const normalizedQuery = cleanForSearch(query)
+    const searchTerms = normalizedQuery
+      .split(' ')
+      .filter((t: string) => t.length >= 2)
+      .slice(0, 10)
+
+    // Search knowledge base for relevant documents
+    let documents: { title: string; content: string; source: string | null }[] = []
+    let analyses: { inputText: string; result: string; mode: string }[] = []
+
+    if (searchTerms.length > 0) {
+      try {
+        documents = await prisma.kazimaDocument.findMany({
+          where: {
+            OR: searchTerms.flatMap((term: string) => [
+              { content: { contains: term, mode: 'insensitive' as const } },
+              { title: { contains: term, mode: 'insensitive' as const } },
+            ]),
+          },
+          select: { title: true, content: true, source: true },
+          take: 5,
+          orderBy: { createdAt: 'desc' },
+        })
+
+        analyses = await prisma.kazimaAnalysis.findMany({
+          where: {
+            OR: searchTerms.flatMap((term: string) => [
+              { inputText: { contains: term, mode: 'insensitive' as const } },
+              { result: { contains: term, mode: 'insensitive' as const } },
+            ]),
+          },
+          select: { inputText: true, result: true, mode: true },
+          take: 3,
+          orderBy: { createdAt: 'desc' },
+        })
+      } catch (dbError) {
+        // If DB search fails (e.g. tables not migrated yet), continue without context
+        console.error('Kazima Chat DB search error:', dbError)
+      }
+    }
 
     // Build context from results
-    let context = ''
+    const contextParts: string[] = []
 
     if (documents.length > 0) {
-      context += 'مصادر من قاعدة كاظمة المعرفية:\n\n'
+      contextParts.push('مصادر من قاعدة كاظمة المعرفية:\n')
       for (const doc of documents) {
-        context += `--- ${doc.title} ---\n`
-        if (doc.source) context += `المصدر: ${doc.source}\n`
-        context += `${doc.content.slice(0, 2000)}\n\n`
+        contextParts.push(`--- ${doc.title} ---`)
+        if (doc.source) contextParts.push(`المصدر: ${doc.source}`)
+        contextParts.push(doc.content.slice(0, 2000))
+        contextParts.push('')
       }
     }
 
     if (analyses.length > 0) {
-      context += 'تحليلات سابقة ذات صلة:\n\n'
+      contextParts.push('تحليلات سابقة ذات صلة:\n')
       for (const a of analyses) {
-        context += `[${a.mode}]\n${a.result.slice(0, 1000)}\n\n`
+        contextParts.push(`[${a.mode}] ${a.result.slice(0, 1000)}`)
+        contextParts.push('')
       }
     }
+
+    const hasContext = contextParts.length > 0
+    const context = contextParts.join('\n')
 
     // Build the prompt
     let userPrompt: string
 
-    if (context) {
+    if (hasContext) {
       userPrompt = `السياق:\n${context}\n\nالسؤال:\n${query}`
     } else {
-      userPrompt = `لا توجد مصادر في قاعدة البيانات حاليًا تتعلق بهذا السؤال.
-أجب بناءً على معرفتك العامة، مع التنبيه أن الإجابة ليست من مصادر كاظمة.
+      userPrompt = `ملاحظة: لا توجد مصادر في قاعدة البيانات حاليًا تتعلق بهذا السؤال.
+أجب بناءً على معرفتك العامة، مع التنبيه بوضوح أن الإجابة ليست من مصادر كاظمة المحققة.
 
 السؤال:
 ${query}`
     }
 
-    // Include conversation history if provided
-    if (conversationHistory && Array.isArray(conversationHistory) && conversationHistory.length > 0) {
-      const historyStr = conversationHistory
-        .slice(-4) // Last 4 exchanges max
-        .map((h: { role: string; content: string }) => `${h.role === 'user' ? 'السؤال' : 'الجواب'}: ${h.content}`)
-        .join('\n\n')
-      userPrompt = `المحادثة السابقة:\n${historyStr}\n\n${userPrompt}`
+    // Include recent conversation history (last 4 exchanges max)
+    if (conversationHistory.length > 0) {
+      const validHistory = conversationHistory
+        .filter((h: unknown): h is { role: string; content: string } =>
+          typeof h === 'object' && h !== null &&
+          typeof (h as Record<string, unknown>).role === 'string' &&
+          typeof (h as Record<string, unknown>).content === 'string'
+        )
+        .slice(-4)
+
+      if (validHistory.length > 0) {
+        const historyStr = validHistory
+          .map((h) => `${h.role === 'user' ? 'السؤال' : 'الجواب'}: ${h.content.slice(0, 500)}`)
+          .join('\n\n')
+        userPrompt = `المحادثة السابقة:\n${historyStr}\n\n${userPrompt}`
+      }
     }
 
     const answer = await callLLM({
@@ -107,7 +125,7 @@ ${query}`
     return NextResponse.json({
       answer,
       sources: documents.map((d) => ({ title: d.title, source: d.source })),
-      hasContext: documents.length > 0 || analyses.length > 0,
+      hasContext,
       timestamp: new Date().toISOString(),
     })
   } catch (error) {

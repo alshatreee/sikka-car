@@ -10,15 +10,17 @@ export function removeDiacritics(text: string): string {
 }
 
 /**
- * Normalize Arabic characters:
- * - إأآا → ا
- * - ة → ه
- * - ى → ي
+ * Normalize Arabic characters for search matching:
+ * - إأآا → ا (alef variants)
+ * - ى → ي (alef maqsura)
+ *
+ * NOTE: ة (ta marbuta) is NOT normalized to ه because
+ * they are semantically different. Converting ة→ه would
+ * break words like نهاية→نهايه which is incorrect.
  */
 export function normalizeArabic(text: string): string {
   let result = text
   result = result.replace(/[إأآا]/g, 'ا')
-  result = result.replace(/ة/g, 'ه')
   result = result.replace(/ى/g, 'ي')
   return result
 }

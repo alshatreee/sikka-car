@@ -185,7 +185,10 @@ export default function FullAnalysisPage() {
                 {lang === 'ar' ? 'كاظمة AI يحلل النص بالكامل...' : 'Kazima AI is analyzing the full text...'}
               </p>
               <div className="flex flex-wrap gap-2 justify-center">
-                {['الكيانات', 'العلاقات', 'الزمن', 'التصنيف'].map((step, i) => (
+                {(lang === 'ar'
+                  ? ['الكيانات', 'العلاقات', 'الزمن', 'التصنيف']
+                  : ['Entities', 'Relations', 'Timeline', 'Classification']
+                ).map((step, i) => (
                   <span key={i} className="rounded-lg bg-dark-surface px-2.5 py-1 text-[10px] text-text-muted animate-pulse">
                     {step}
                   </span>
