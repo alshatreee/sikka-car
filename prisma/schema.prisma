@@ -239,3 +239,34 @@ model KazimaManuscript {
 
   @@index([userId])
 }
+
+model KazimaDocument {
+  id          String   @id @default(cuid())
+  userId      String?
+  title       String
+  content     String   @db.Text
+  source      String?  // Book name, manuscript reference, etc.
+  author      String?
+  period      String?
+  region      String?
+  category    String?  // تاريخ سياسي، تاريخ ديني، تراجم، etc.
+  tags        String[]
+  metadata    String?  @db.Text // JSON string for extra structured data
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([category])
+  @@index([createdAt])
+}
+
+model KazimaGraphData {
+  id            String   @id @default(cuid())
+  analysisId    String?
+  nodesJson     String   @db.Text // JSON array of nodes
+  edgesJson     String   @db.Text // JSON array of edges
+  sourceText    String?  @db.Text
+  createdAt     DateTime @default(now())
+
+  @@index([analysisId])
+}

@@ -121,3 +121,99 @@ export async function getKazimaManuscripts() {
     orderBy: { createdAt: 'desc' },
   })
 }
+
+// ===== Knowledge Base Documents =====
+
+// Add a document to the knowledge base
+export async function addKazimaDocument(data: {
+  title: string
+  content: string
+  source?: string
+  author?: string
+  period?: string
+  region?: string
+  category?: string
+  tags?: string[]
+  metadata?: string
+}) {
+  const { userId: clerkUserId } = auth()
+
+  await prisma.kazimaDocument.create({
+    data: {
+      userId: clerkUserId || null,
+      title: data.title,
+      content: data.content,
+      source: data.source || null,
+      author: data.author || null,
+      period: data.period || null,
+      region: data.region || null,
+      category: data.category || null,
+      tags: data.tags || [],
+      metadata: data.metadata || null,
+    },
+  })
+
+  return { success: true }
+}
+
+// Get documents from knowledge base
+export async function getKazimaDocuments(page = 1, limit = 20) {
+  const { userId: clerkUserId } = auth()
+  if (!clerkUserId) return { documents: [], total: 0 }
+
+  const skip = (page - 1) * limit
+
+  const [documents, total] = await Promise.all([
+    prisma.kazimaDocument.findMany({
+      where: { userId: clerkUserId },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take: limit,
+      select: {
+        id: true,
+        title: true,
+        source: true,
+        author: true,
+        category: true,
+        tags: true,
+        createdAt: true,
+      },
+    }),
+    prisma.kazimaDocument.count({
+      where: { userId: clerkUserId },
+    }),
+  ])
+
+  return { documents, total }
+}
+
+// Delete a document
+export async function deleteKazimaDocument(documentId: string) {
+  const { userId: clerkUserId } = auth()
+  if (!clerkUserId) return { success: false }
+
+  await prisma.kazimaDocument.deleteMany({
+    where: { id: documentId, userId: clerkUserId },
+  })
+
+  return { success: true }
+}
+
+// Save graph data from full analysis
+export async function saveKazimaGraph(data: {
+  analysisId?: string
+  nodesJson: string
+  edgesJson: string
+  sourceText?: string
+}) {
+  await prisma.kazimaGraphData.create({
+    data: {
+      analysisId: data.analysisId || null,
+      nodesJson: data.nodesJson,
+      edgesJson: data.edgesJson,
+      sourceText: data.sourceText || null,
+    },
+  })
+
+  return { success: true }
+}

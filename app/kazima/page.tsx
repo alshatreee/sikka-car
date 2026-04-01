@@ -2,7 +2,15 @@
 
 import { useState } from 'react'
 import { useLanguage } from '@/components/shared/LanguageProvider'
-import { BookOpen, History, Sparkles } from 'lucide-react'
+import Link from 'next/link'
+import {
+  BookOpen,
+  History,
+  Sparkles,
+  MessageCircle,
+  GitBranch,
+  Search,
+} from 'lucide-react'
 import KazimaInput from '@/components/kazima/KazimaInput'
 import KazimaResult from '@/components/kazima/KazimaResult'
 import KazimaHistory from '@/components/kazima/KazimaHistory'
@@ -69,6 +77,25 @@ export default function KazimaPage() {
     setError(null)
   }
 
+  const tools = [
+    {
+      href: '/kazima/analyze',
+      icon: GitBranch,
+      title: lang === 'ar' ? 'التحليل الشامل' : 'Full Analysis',
+      desc: lang === 'ar' ? 'كيانات + علاقات + زمن + تصنيف + شبكة معرفية' : 'Entities + Relations + Timeline + Classification + Graph',
+      color: 'text-purple-400',
+      bg: 'bg-purple-500/10 border-purple-500/20',
+    },
+    {
+      href: '/kazima/chat',
+      icon: MessageCircle,
+      title: lang === 'ar' ? 'محادثة كاظمة' : 'Kazima Chat',
+      desc: lang === 'ar' ? 'اسأل عن المخطوطات والتاريخ الخليجي' : 'Ask about manuscripts & Gulf history',
+      color: 'text-green-400',
+      bg: 'bg-green-500/10 border-green-500/20',
+    },
+  ]
+
   return (
     <main className="container py-8 pb-24 md:pb-8">
       <div className="mx-auto max-w-4xl">
@@ -88,6 +115,27 @@ export default function KazimaPage() {
           </p>
         </div>
 
+        {/* Quick Tools */}
+        <div className="mb-6 grid gap-3 sm:grid-cols-2">
+          {tools.map((tool) => (
+            <Link
+              key={tool.href}
+              href={tool.href}
+              className="group flex items-start gap-3 rounded-2xl border border-dark-border bg-dark-card p-4 transition-all hover:border-dark-border-light"
+            >
+              <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border ${tool.bg}`}>
+                <tool.icon className={`h-5 w-5 ${tool.color}`} />
+              </div>
+              <div>
+                <h3 className="text-sm font-medium text-text-primary group-hover:text-status-star transition-colors">
+                  {tool.title}
+                </h3>
+                <p className="text-xs text-text-muted mt-0.5">{tool.desc}</p>
+              </div>
+            </Link>
+          ))}
+        </div>
+
         {/* Tabs */}
         <div className="mb-6 flex items-center gap-2 rounded-xl border border-dark-border bg-dark-card p-1">
           <button
@@ -99,7 +147,7 @@ export default function KazimaPage() {
             }`}
           >
             <Sparkles className="h-4 w-4" />
-            {lang === 'ar' ? 'تحليل جديد' : 'New Analysis'}
+            {lang === 'ar' ? 'تحليل بسيط' : 'Quick Analysis'}
           </button>
           <button
             onClick={() => setTab('history')}
