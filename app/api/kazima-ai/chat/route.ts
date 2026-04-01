@@ -10,7 +10,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const query = typeof body?.query === 'string' ? body.query.trim() : ''
-    const conversationHistory = Array.isArray(body?.conversationHistory) ? body.conversationHistory : []
+    const conversationHistory = Array.isArray(body?.conversationHistory) ? body.conversationHistory.slice(-10) : []
 
     if (!query) {
       return NextResponse.json({ error: 'السؤال مطلوب' }, { status: 400 })
