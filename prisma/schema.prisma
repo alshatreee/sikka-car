@@ -203,3 +203,39 @@ model CarInspection {
   createdBy String   // userId who submitted
   createdAt DateTime @default(now())
 }
+
+// ===== Kazima AI - Scholarly Research System =====
+
+model KazimaAnalysis {
+  id               String   @id @default(cuid())
+  userId           String?
+  mode             String   // analysis, extraction, annotation, publication, media, etc.
+  inputText        String   @db.Text
+  result           String   @db.Text
+  additionalContext String? @db.Text
+  title            String?
+  isFavorite       Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId])
+  @@index([mode])
+  @@index([createdAt])
+}
+
+model KazimaManuscript {
+  id          String   @id @default(cuid())
+  userId      String?
+  title       String
+  author      String?
+  period      String?
+  tradition   String?
+  rawText     String   @db.Text
+  notes       String?  @db.Text
+  imageUrls   String[]
+  tags        String[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+}

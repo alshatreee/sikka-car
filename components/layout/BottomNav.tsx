@@ -3,13 +3,13 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useLanguage } from '@/components/shared/LanguageProvider'
-import { Home, Search, PlusCircle, LayoutDashboard, User, MessageCircle } from 'lucide-react'
+import { Home, Search, PlusCircle, LayoutDashboard, User, MessageCircle, BookOpen } from 'lucide-react'
 import { useAuth } from '@clerk/nextjs'
 import { useState, useEffect } from 'react'
 
 export default function BottomNav() {
   const pathname = usePathname()
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
   const { isSignedIn } = useAuth()
   const [unreadCount, setUnreadCount] = useState(0)
 
@@ -35,11 +35,11 @@ export default function BottomNav() {
   const links = [
     { href: '/', icon: Home, label: t('home') },
     { href: '/browse', icon: Search, label: t('browse') },
+    { href: '/kazima', icon: BookOpen, label: lang === 'ar' ? 'كاظمة' : 'Kazima' },
     ...(isSignedIn
       ? [
           { href: '/list', icon: PlusCircle, label: t('listCar') },
           { href: '/dashboard', icon: LayoutDashboard, label: t('dashboard') },
-          { href: '/messages', icon: MessageCircle, label: t('messages'), badge: unreadCount },
         ]
       : [{ href: '/sign-in', icon: User, label: t('signIn') }]),
   ]

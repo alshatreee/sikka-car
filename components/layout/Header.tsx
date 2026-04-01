@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useLanguage } from '@/components/shared/LanguageProvider'
 import { SignedIn, SignedOut, UserButton } from '@clerk/nextjs'
-import { Car, Globe, Menu, X, Shield, MessageCircle } from 'lucide-react'
+import { Car, Globe, Menu, X, Shield, MessageCircle, BookOpen } from 'lucide-react'
 import { useState, useEffect } from 'react'
 
 export default function Header() {
@@ -85,6 +85,13 @@ export default function Header() {
                   {unreadCount > 9 ? '9+' : unreadCount}
                 </span>
               )}
+            </Link>
+            <Link
+              href="/kazima"
+              className="flex items-center gap-1 text-sm text-text-secondary transition-colors hover:text-status-star"
+            >
+              <BookOpen className="h-4 w-4" />
+              {lang === 'ar' ? 'كاظمة AI' : 'Kazima AI'}
             </Link>
             {isAdminUser && (
               <Link
@@ -183,6 +190,14 @@ export default function Header() {
                     {unreadCount > 9 ? '9+' : unreadCount}
                   </span>
                 )}
+              </Link>
+              <Link
+                href="/kazima"
+                onClick={() => setMenuOpen(false)}
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-text-secondary transition-colors hover:bg-dark-surface hover:text-status-star"
+              >
+                <BookOpen className="h-4 w-4" />
+                {lang === 'ar' ? 'كاظمة AI' : 'Kazima AI'}
               </Link>
               {isAdminUser && (
                 <Link
