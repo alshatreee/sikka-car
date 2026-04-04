@@ -10,9 +10,13 @@ from typing import Optional
 
 from ..config import HedgeFundConfig, TradingMode
 from ..models.market import (
-    ClosedTrade, Direction, MarketData, Position, SignalData, TradeResult,
+    ClosedTrade, Direction, MarketData, OrderStatus, Position, SignalData,
+    TradeProposal, TradeResult,
 )
+from .api_market import PolymarketMarketAPI
+from .api_trading import PolymarketPortfolioAPI, PolymarketTradingAPI
 from .execution import ExecutionEngine
+from .mcp_client import MCPClient, MCPConfig
 from .performance import PerformanceTracker
 from .quant_model import QuantModel
 from .risk_engine import RiskEngine
@@ -30,7 +34,11 @@ class HedgeFundOrchestrator:
     ③ Propose up to 2 trades
     """
 
-    def __init__(self, config: Optional[HedgeFundConfig] = None):
+    def __init__(
+        self,
+        config: Optional[HedgeFundConfig] = None,
+        mcp_config: Optional[MCPConfig] = None,
+    ):
         self.config = config or HedgeFundConfig()
         self.risk = RiskEngine(self.config)
         self.quant = QuantModel(self.config)
@@ -38,10 +46,44 @@ class HedgeFundOrchestrator:
         self.scanner = MarketScanner(self.config)
         self.performance = PerformanceTracker()
         self.positions: list[Position] = []
+        self._pending_proposals: dict[str, TradeProposal] = {}
+
+        # MCP API layer (optional — works offline without it)
+        self.mcp: Optional[MCPClient] = None
+        self.market_api: Optional[PolymarketMarketAPI] = None
+        self.trading_api: Optional[PolymarketTradingAPI] = None
+        self.portfolio_api: Optional[PolymarketPortfolioAPI] = None
+        self._mcp_config = mcp_config
+
+    async def connect(self) -> str:
+        """Connect to Polymarket MCP Server."""
+        if not self._mcp_config:
+            return "⚠️  لا يوجد إعدادات MCP — يعمل في وضع المحاكاة"
+
+        self.mcp = MCPClient(self._mcp_config)
+        await self.mcp.connect()
+
+        self.market_api = PolymarketMarketAPI(self.mcp)
+        self.trading_api = PolymarketTradingAPI(self.mcp)
+        self.portfolio_api = PolymarketPortfolioAPI(self.mcp)
+
+        # Wire trading API into execution engine
+        self.execution = ExecutionEngine(self.config, api=self.trading_api)
+
+        return "✅ متصل بـ Polymarket MCP Server"
+
+    async def disconnect(self) -> None:
+        """Disconnect from MCP Server."""
+        if self.mcp:
+            await self.mcp.disconnect()
+
+    @property
+    def is_connected(self) -> bool:
+        return self.mcp is not None and self.mcp.is_connected
 
     # ── Session Start ──
 
-    def start_session(self) -> str:
+    async def start_session(self) -> str:
         """
         Mandatory session start sequence.
         Returns formatted status string.
@@ -50,11 +92,23 @@ class HedgeFundOrchestrator:
             "══════════════════════════════════════",
             "   🏦 POLYMARKET HEDGE FUND — Session",
             "══════════════════════════════════════",
-            "",
-            self._format_portfolio_status(),
-            "",
-            self._format_risk_status(),
         ]
+
+        # If connected, fetch live portfolio data
+        if self.is_connected and self.portfolio_api:
+            try:
+                wallet_summary = await self.portfolio_api.get_wallet_summary()
+                lines.append("")
+                lines.append(wallet_summary)
+            except Exception as e:
+                lines.append(f"\n⚠️  خطأ في جلب بيانات المحفظة: {e}")
+                lines.append(self._format_portfolio_status())
+        else:
+            lines.append("")
+            lines.append(self._format_portfolio_status())
+
+        lines.append("")
+        lines.append(self._format_risk_status())
 
         # Performance summary if trades exist
         metrics = self.performance.get_metrics()
@@ -62,7 +116,6 @@ class HedgeFundOrchestrator:
             lines.append("")
             lines.append(metrics.to_display())
 
-            # Improvement suggestions
             suggestions = self.performance.get_improvement_suggestions()
             if suggestions:
                 lines.append("\n📈 توصيات التحسين:")
@@ -73,9 +126,41 @@ class HedgeFundOrchestrator:
 
     # ── Market Analysis ──
 
+    async def scan_live_markets(
+        self,
+        query: Optional[str] = None,
+        category: Optional[str] = None,
+        top_n: int = 5,
+    ) -> str:
+        """
+        Step ②: Fetch live markets from Polymarket and rank them.
+        Uses MCP API if connected, otherwise requires manual market data.
+        """
+        if self.risk.is_halted:
+            return f"⛔ الجلسة متوقفة: {self.risk.halt_reason}"
+
+        if not self.is_connected or not self.market_api:
+            return "⚠️  غير متصل بـ MCP — استخدم analyze_markets() مع بيانات يدوية"
+
+        markets = []
+        if query:
+            markets = await self.market_api.search_markets(query, limit=30)
+        elif category:
+            markets = await self.market_api.get_markets_by_category(category, limit=30)
+        else:
+            markets = await self.market_api.get_trending_markets(
+                timeframe="24h", limit=30
+            )
+
+        if not markets:
+            return "❌ لم يتم العثور على أسواق"
+
+        top = self.scanner.get_top_markets(markets, top_n=top_n)
+        return self.scanner.format_scan_results(top)
+
     def analyze_markets(self, markets: list[MarketData]) -> str:
         """
-        Step ②: Scan and rank top 5 markets.
+        Step ②: Scan and rank top 5 markets (offline mode).
         """
         if self.risk.is_halted:
             return f"⛔ الجلسة متوقفة: {self.risk.halt_reason}"
@@ -84,6 +169,32 @@ class HedgeFundOrchestrator:
         return self.scanner.format_scan_results(top)
 
     # ── Trade Proposal ──
+
+    async def propose_live_trade(
+        self,
+        market_id: str,
+        direction: Direction,
+        p_historical: float,
+        rationale: str,
+        news_score: float = 0.5,
+    ) -> str:
+        """
+        Full pipeline: fetch live data → build signal → quant analysis →
+        risk check → format proposal.
+        """
+        if not self.is_connected or not self.market_api:
+            return "⚠️  غير متصل بـ MCP"
+
+        # Fetch live market data
+        market = await self.market_api.get_market_detail(market_id)
+        if not market:
+            return f"❌ لم يتم العثور على السوق: {market_id}"
+
+        # Build signal from live data
+        signal = await self.market_api.build_signal(market)
+        signal.news_score = news_score  # Must be provided externally
+
+        return self.propose_trade(market, signal, p_historical, direction, rationale)
 
     def propose_trade(
         self,
@@ -123,10 +234,15 @@ class HedgeFundOrchestrator:
         ]
 
         if risk_result.approved:
+            self._pending_proposals[proposal.id] = proposal
             if self.config.trading_mode == TradingMode.MANUAL:
-                lines.append("\n💡 الوضع: يدوي — اكتب 'نفّذ' لتأكيد الصفقة")
+                lines.append(
+                    f"\n💡 الوضع: يدوي — نفّذ بالأمر: execute('{proposal.id}')"
+                )
             elif risk_result.requires_confirmation:
-                lines.append("\n🔒 الصفقة تحتاج تأكيد يدوي (فوق الحد)")
+                lines.append(
+                    f"\n🔒 تحتاج تأكيد — نفّذ بالأمر: execute('{proposal.id}')"
+                )
         else:
             lines.append("\n❌ الصفقة مرفوضة — لا يمكن التنفيذ")
 
@@ -134,11 +250,89 @@ class HedgeFundOrchestrator:
 
     # ── Execution ──
 
-    def execute_trade(self, proposal_id: str) -> str:
-        """Execute an approved trade (Phase 1)."""
-        # In a real system, look up the proposal by ID
-        # For now, this is called after manual confirmation
-        return "⚠️  التنفيذ يحتاج ربط API — استخدم MCP Server"
+    async def execute(self, proposal_id: str) -> str:
+        """
+        Execute an approved trade (Phase 1) via MCP API or simulation.
+        """
+        from datetime import datetime, timedelta
+
+        proposal = self._pending_proposals.get(proposal_id)
+        if not proposal:
+            return f"❌ لم يتم العثور على الاقتراح: {proposal_id}"
+
+        # Re-validate with risk engine
+        dummy_market = MarketData(
+            market_id=proposal.market_id,
+            question=proposal.market_question,
+            yes_price=proposal.limit_price,
+            no_price=1 - proposal.limit_price,
+            liquidity_usd=self.config.entry.min_liquidity_usd,
+            volume_24h=0,
+            spread=0,
+            expiry=datetime.utcnow() + timedelta(days=7),
+        )
+        risk_result = self.risk.check_trade(proposal, dummy_market, self.positions)
+        if not risk_result.approved:
+            return f"❌ فشل فحص المخاطر:\n{risk_result}"
+
+        # Live execution via MCP
+        if self.is_connected and self.trading_api:
+            try:
+                suggested = await self.trading_api.suggest_price(
+                    market_id=proposal.market_id,
+                    side="BUY" if proposal.direction == Direction.YES else "SELL",
+                    size=proposal.phase1_size_usd,
+                    strategy="mid",
+                )
+                exec_price = proposal.limit_price
+                if isinstance(suggested, dict) and "price" in suggested:
+                    exec_price = float(suggested["price"])
+
+                await self.trading_api.place_limit_order(
+                    market_id=proposal.market_id,
+                    direction=proposal.direction.value,
+                    size_usd=proposal.phase1_size_usd,
+                    limit_price=exec_price,
+                )
+
+                position = Position(
+                    trade_id=proposal.id,
+                    market_id=proposal.market_id,
+                    market_question=proposal.market_question,
+                    direction=proposal.direction,
+                    entry_price=exec_price,
+                    current_price=exec_price,
+                    size_usd=proposal.phase1_size_usd,
+                    phase=1,
+                    status=OrderStatus.PHASE1_FILLED,
+                    edge_at_entry=proposal.edge,
+                    stop_loss_price=proposal.stop_loss_price,
+                    take_profit_price=proposal.take_profit_price,
+                )
+                self.positions.append(position)
+                self.risk.record_trade_opened()
+                del self._pending_proposals[proposal_id]
+
+                return (
+                    f"✅ Phase 1 نُفِّذت: ${proposal.phase1_size_usd:.2f} "
+                    f"@ {exec_price:.4f}\n"
+                    f"   Phase 2 (${proposal.phase2_size_usd:.2f}) "
+                    f"خلال {self.config.execution.phase2_wait_minutes} دقيقة"
+                )
+            except Exception as e:
+                return f"❌ خطأ في التنفيذ: {e}"
+
+        # Simulation mode
+        position = self.execution.execute_phase1(proposal)
+        if position:
+            self.positions.append(position)
+            self.risk.record_trade_opened()
+            del self._pending_proposals[proposal_id]
+            return (
+                f"📋 [محاكاة] Phase 1: ${proposal.phase1_size_usd:.2f} "
+                f"@ {proposal.limit_price:.4f}"
+            )
+        return "❌ فشل التنفيذ"
 
     # ── Position Management ──
 
