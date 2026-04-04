@@ -20,6 +20,9 @@ from .mcp_client import MCPClient, MCPConfig
 from .performance import PerformanceTracker
 from .quant_model import QuantModel
 from .risk_engine import RiskEngine
+from .safety import (
+    EnhancedKillSwitch, KillSwitchConfig, PreLaunchChecklist, SecureConfig,
+)
 from .scanner import MarketScanner
 
 logger = logging.getLogger(__name__)
@@ -47,6 +50,7 @@ class HedgeFundOrchestrator:
         self.performance = PerformanceTracker()
         self.positions: list[Position] = []
         self._pending_proposals: dict[str, TradeProposal] = {}
+        self.kill_switch = EnhancedKillSwitch(KillSwitchConfig(), self.config)
 
         # MCP API layer (optional — works offline without it)
         self.mcp: Optional[MCPClient] = None
@@ -76,6 +80,25 @@ class HedgeFundOrchestrator:
         """Disconnect from MCP Server."""
         if self.mcp:
             await self.mcp.disconnect()
+
+    def run_safety_checklist(
+        self,
+        secure_config: Optional[SecureConfig] = None,
+        backtest_result: Optional[object] = None,
+        trading_days: int = 0,
+    ) -> str:
+        """
+        Run pre-launch safety checklist.
+        Must pass ALL critical items before real trading.
+        """
+        checklist = PreLaunchChecklist(self.config)
+        checklist.run(
+            secure_config=secure_config,
+            mcp_connected=self.is_connected,
+            backtest_result=backtest_result,
+            trading_days_completed=trading_days,
+        )
+        return checklist.format_report()
 
     @property
     def is_connected(self) -> bool:
@@ -259,6 +282,10 @@ class HedgeFundOrchestrator:
         proposal = self._pending_proposals.get(proposal_id)
         if not proposal:
             return f"❌ لم يتم العثور على الاقتراح: {proposal_id}"
+
+        # Kill switch check
+        if self.kill_switch.is_halted:
+            return f"⛔ Kill switch مُفعَّل:\n" + "\n".join(self.kill_switch.halt_reasons)
 
         # Re-validate with risk engine
         dummy_market = MarketData(

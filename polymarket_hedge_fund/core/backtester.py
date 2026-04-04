@@ -52,6 +52,10 @@ class BacktestConfig:
     # Price movement parameters
     volatility: float = 0.03      # Daily price volatility
     mean_reversion: float = 0.1   # How strongly prices revert to fair value
+    # Realistic cost parameters
+    taker_fee_pct: float = 0.02   # 2% taker fee (Polymarket charges fees on some markets)
+    spread_cost_pct: float = 0.01 # Additional spread cost on each trade
+    gas_cost_per_trade: float = 0.05  # Approx MATIC gas cost in USD per trade
 
 
 @dataclass
@@ -68,9 +72,12 @@ class BacktestResult:
     trades_proposed: int
     trades_rejected: int
     daily_pnl: list[tuple[str, float]]
+    total_fees_usd: float = 0.0
+    brier_score: float = 0.0  # Lower is better (0 = perfect calibration)
 
     def summary(self) -> str:
         m = self.metrics
+        net_pnl = m.total_pnl_usd
         return f"""
 ══════════════════════════════════════════════
          📊 نتائج الاختبار التاريخي
@@ -84,17 +91,24 @@ class BacktestResult:
   صفقات مرفوضة  : {self.trades_rejected}
   صفقات منفذة   : {m.total_trades}
 
-  ── الأداء ──
+  ── الأداء (بعد الرسوم) ──
   نسبة الفوز    : {m.win_rate:.1%}
-  إجمالي P&L    : ${m.total_pnl_usd:+,.2f}
+  إجمالي P&L    : ${net_pnl:+,.2f}
+  الرسوم المدفوعة: ${self.total_fees_usd:,.2f}
   متوسط العائد  : ${m.avg_pnl_usd:+,.2f}
   أقصى تراجع    : ${m.max_drawdown_usd:,.2f}
   معامل الربح   : {m.profit_factor:.2f}
+  Brier Score    : {self.brier_score:.4f} (أقل = أفضل)
   دقة Edge      : {m.edge_accuracy:.1%}
+
+  ── التكاليف ──
+  Taker Fee      : {self.config.taker_fee_pct:.1%}
+  Spread Cost    : {self.config.spread_cost_pct:.1%}
+  Gas/Trade      : ${self.config.gas_cost_per_trade:.2f}
 
   ── العائد ──
   رأس المال     : ${self.config.initial_capital:,.2f}
-  القيمة النهائية: ${self.config.initial_capital + m.total_pnl_usd:,.2f}
+  القيمة النهائية: ${self.config.initial_capital + net_pnl:,.2f}
   العائد الكلي  : {m.total_pnl_usd / self.config.initial_capital:.1%}
 ══════════════════════════════════════��═══════"""
 
@@ -256,6 +270,9 @@ class Backtester:
         trades_proposed = 0
         trades_rejected = 0
         active_days = 0
+        total_fees = 0.0
+        # Brier score tracking: (estimated_prob, actual_outcome)
+        brier_samples: list[tuple[float, float]] = []
 
         current = self.bt_config.start_date
         step_delta = timedelta(hours=self.bt_config.step_hours)
@@ -289,6 +306,25 @@ class Backtester:
                 if exit_reason:
                     pnl_pct = pos.pnl_pct
                     pnl_usd = pos.pnl_usd
+
+                    # Deduct exit fees (taker fee + spread + gas)
+                    exit_fee = (
+                        pos.size_usd * self.bt_config.taker_fee_pct
+                        + pos.size_usd * self.bt_config.spread_cost_pct
+                        + self.bt_config.gas_cost_per_trade
+                    )
+                    pnl_usd -= exit_fee
+                    total_fees += exit_fee
+
+                    # Brier score: track estimated prob vs actual outcome
+                    if outcome is not None:
+                        est_prob = pos.edge_at_entry + pos.entry_price
+                        actual = 1.0 if outcome else 0.0
+                        if pos.direction == Direction.NO:
+                            est_prob = 1 - est_prob
+                            actual = 1 - actual
+                        est_prob = max(0, min(1, est_prob))
+                        brier_samples.append((est_prob, actual))
 
                     result = TradeResult.WIN if pnl_usd > 0 else (
                         TradeResult.LOSS if pnl_usd < 0 else TradeResult.BREAKEVEN
@@ -400,9 +436,16 @@ class Backtester:
                     trades_rejected += 1
                     continue
 
-                # Execute
+                # Execute (deduct entry fees: taker + spread + gas)
                 position = execution.execute_phase1(proposal)
                 if position:
+                    entry_fee = (
+                        position.size_usd * self.bt_config.taker_fee_pct
+                        + position.size_usd * self.bt_config.spread_cost_pct
+                        + self.bt_config.gas_cost_per_trade
+                    )
+                    total_fees += entry_fee
+                    equity -= entry_fee
                     position.opened_at = current
                     positions.append(position)
                     risk.record_trade_opened()
@@ -442,6 +485,11 @@ class Backtester:
 
         total_days = (self.bt_config.end_date - self.bt_config.start_date).days
 
+        # Calculate Brier score: mean squared error of probability estimates
+        brier = 0.0
+        if brier_samples:
+            brier = sum((p - a) ** 2 for p, a in brier_samples) / len(brier_samples)
+
         return BacktestResult(
             config=self.bt_config,
             fund_config=self.fund_config,
@@ -454,6 +502,8 @@ class Backtester:
             trades_proposed=trades_proposed,
             trades_rejected=trades_rejected,
             daily_pnl=daily_pnl,
+            total_fees_usd=total_fees,
+            brier_score=brier,
         )
 
 
