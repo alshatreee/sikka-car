@@ -229,8 +229,15 @@ class HedgeFundOrchestrator:
     ) -> str:
         """
         Analyze a market and build a trade proposal.
-        Runs through Quant → Risk → format for display.
+        Runs through KillSwitch → Quant → Risk → format for display.
         """
+        # Kill switch pre-check
+        ks_ok, ks_issues = self.kill_switch.check_pre_trade(
+            market, self.positions, self.is_connected,
+        )
+        if not ks_ok:
+            return "⛔ Kill Switch:\n" + "\n".join(ks_issues)
+
         # Quant analysis
         estimate = self.quant.estimate(market, signal, p_historical)
 
@@ -366,16 +373,24 @@ class HedgeFundOrchestrator:
     def check_positions(self, current_prices: dict[str, float]) -> list[str]:
         """
         Check all open positions for exit conditions.
+        Auto-closes positions that hit SL/TP.
         Returns list of actions taken.
         """
         actions = []
+        positions_to_close = []
+
         for pos in self.positions:
             if pos.market_id in current_prices:
                 pos.current_price = current_prices[pos.market_id]
 
             exit_reason = self.risk.check_exit_conditions(pos)
             if exit_reason:
-                actions.append(f"🚨 {pos.market_question[:30]}: {exit_reason}")
+                positions_to_close.append((pos, exit_reason))
+
+        # Close outside the loop to avoid mutating self.positions during iteration
+        for pos, reason in positions_to_close:
+            result = self.close_position(pos, pos.current_price, reason)
+            actions.append(f"🚨 {result}")
 
         return actions
 

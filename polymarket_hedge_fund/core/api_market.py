@@ -150,13 +150,18 @@ class PolymarketMarketAPI:
         """
         signal = SignalData(market_id=market.market_id)
 
+        # Polymarket uses market_id for some tools and token_id for others.
+        # For orderbook/price tools, token_id = market_id (the condition token).
+        # The MCP server handles the mapping internally.
+        token_id = market.market_id
+
         try:
             # Price history → sentiment score
-            history = await self.get_price_history(market.market_id, hours_back=48)
+            history = await self.get_price_history(token_id, hours_back=48)
             signal.sentiment_score = self._calc_sentiment_from_history(history)
 
             # Orderbook → market data score
-            orderbook = await self.get_orderbook(market.market_id)
+            orderbook = await self.get_orderbook(token_id)
             signal.market_data_score = self._calc_orderbook_score(orderbook)
 
             # Volume → part of market data
@@ -222,11 +227,18 @@ class PolymarketMarketAPI:
         return result
 
     def _parse_expiry(self, date_str: str) -> datetime:
-        """Parse expiry date from various formats."""
+        """Parse expiry date from various formats. Returns naive UTC datetime."""
         if not date_str:
             return datetime.utcnow() + timedelta(days=30)
         try:
-            return datetime.fromisoformat(date_str.replace("Z", "+00:00").replace("+00:00", ""))
+            # Normalize timezone to parse, then strip tz for naive UTC
+            normalized = date_str.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(normalized)
+            # Convert to naive UTC for consistency with the rest of the codebase
+            if dt.tzinfo is not None:
+                from datetime import timezone
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
         except ValueError:
             return datetime.utcnow() + timedelta(days=30)
 

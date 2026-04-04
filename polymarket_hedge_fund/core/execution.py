@@ -76,8 +76,14 @@ class ExecutionEngine:
             entry_price = market.no_price
 
         # Calculate SL/TP based on position value, not capital
-        sl_price = entry_price * (1 - self.config.risk.stop_loss_pct)
-        tp_price = entry_price * (1 + self.config.risk.take_profit_pct)
+        # YES: profit when price goes UP, loss when DOWN
+        # NO:  profit when price goes DOWN, loss when UP
+        if direction == Direction.YES:
+            sl_price = entry_price * (1 - self.config.risk.stop_loss_pct)
+            tp_price = entry_price * (1 + self.config.risk.take_profit_pct)
+        else:
+            sl_price = entry_price * (1 + self.config.risk.stop_loss_pct)
+            tp_price = entry_price * (1 - self.config.risk.take_profit_pct)
 
         return TradeProposal(
             market_id=market.market_id,
@@ -110,7 +116,8 @@ class ExecutionEngine:
             return self._create_simulated_position(proposal, phase=1)
 
         # Enforce LIMIT only
-        assert self.config.execution.order_type == "LIMIT", "MARKET orders are forbidden"
+        if self.config.execution.order_type != "LIMIT":
+            raise ValueError("⛔ MARKET orders are FORBIDDEN — LIMIT only")
 
         result = self.api.place_limit_order(
             market_id=proposal.market_id,
@@ -149,10 +156,12 @@ class ExecutionEngine:
             return False
 
         # Price must hold or improve
+        # YES: price should not have risen too much (still cheap to add)
+        # NO: price should not have dropped too much (still cheap to add)
         if position.direction == Direction.YES:
             return current_market.yes_price <= position.entry_price * 1.02
         else:
-            return current_market.no_price <= position.entry_price * 1.02
+            return current_market.no_price >= position.entry_price * 0.98
 
     def _create_simulated_position(
         self, proposal: TradeProposal, phase: int

@@ -267,7 +267,8 @@ class EnhancedKillSwitch:
                 f"{self.config.max_api_errors_per_session}"
             )
 
-        if issues:
+        # Only permanently halt on API error threshold — other issues are transient
+        if self._api_error_count >= self.config.max_api_errors_per_session:
             self._halted = True
             self._halt_reasons = issues
 

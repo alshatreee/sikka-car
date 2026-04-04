@@ -73,9 +73,19 @@ class PerformanceTracker:
                 self._peak_equity = max(self._peak_equity, self._current_equity)
 
     def _save(self) -> None:
-        """Persist trade history to disk."""
-        with open(self.trades_file, "w") as f:
-            json.dump(self.trades, f, indent=2, default=str)
+        """Persist trade history to disk atomically."""
+        import tempfile
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            dir=str(self.data_dir), suffix=".tmp"
+        )
+        try:
+            with os.fdopen(tmp_fd, "w") as f:
+                json.dump(self.trades, f, indent=2, default=str)
+            os.replace(tmp_path, self.trades_file)
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            raise
 
     def record(self, trade: ClosedTrade) -> None:
         """Record a closed trade."""
@@ -141,8 +151,9 @@ class PerformanceTracker:
 
     def _calc_edge_accuracy(self) -> float:
         """
-        Calculate how often our P(est) was closer to the actual outcome
-        than the market price. Only for resolved markets.
+        Calculate how often our estimated probability was closer to the
+        actual outcome than the market price at entry.
+        Uses edge_at_entry + entry_price as our P(est).
         """
         resolved = [t for t in self.trades if t["result"] in ("win", "loss")]
         if not resolved:
@@ -150,8 +161,18 @@ class PerformanceTracker:
 
         accurate = 0
         for t in resolved:
-            # If we predicted YES and won, or NO and won, our edge was correct
-            if t["result"] == "win":
+            # Our estimate: entry_price + edge_at_entry
+            p_est = t.get("entry_price", 0.5) + t.get("edge_at_entry", 0)
+            p_market = t.get("entry_price", 0.5)
+            # Actual outcome: 1.0 if we won on YES or lost on NO, else 0.0
+            if t["direction"] == "YES":
+                actual = 1.0 if t["result"] == "win" else 0.0
+            else:
+                actual = 0.0 if t["result"] == "win" else 1.0
+
+            est_error = abs(p_est - actual)
+            market_error = abs(p_market - actual)
+            if est_error < market_error:
                 accurate += 1
         return accurate / len(resolved)
 

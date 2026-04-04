@@ -249,7 +249,9 @@ class Backtester:
         self.bt_config = backtest_config or BacktestConfig(
             initial_capital=self.fund_config.capital_usd
         )
-        self.fund_config = HedgeFundConfig(capital_usd=self.bt_config.initial_capital)
+        # Sync capital from backtest config without overwriting risk/entry settings
+        if self.fund_config.capital_usd != self.bt_config.initial_capital:
+            self.fund_config.capital_usd = self.bt_config.initial_capital
 
     def run(self) -> BacktestResult:
         """Execute the backtest. Returns BacktestResult."""
@@ -258,7 +260,9 @@ class Backtester:
         quant = QuantModel(self.fund_config)
         scanner = MarketScanner(self.fund_config)
         execution = ExecutionEngine(self.fund_config)
-        tracker = PerformanceTracker(data_dir="/tmp/backtest_data")
+        import tempfile
+        _bt_tmpdir = tempfile.mkdtemp(prefix="bt_")
+        tracker = PerformanceTracker(data_dir=_bt_tmpdir)
         generator = SyntheticMarketGenerator(self.bt_config)
         rng = random.Random(self.bt_config.seed)
 
@@ -458,9 +462,15 @@ class Backtester:
             daily_pnl.append((date_str, day_pnl))
             current += step_delta
 
-        # Close remaining positions at current price
+        # Close remaining positions at current price (with exit fees)
         for pos in list(positions):
-            pnl_usd = pos.pnl_usd
+            exit_fee = (
+                pos.size_usd * self.bt_config.taker_fee_pct
+                + pos.size_usd * self.bt_config.spread_cost_pct
+                + self.bt_config.gas_cost_per_trade
+            )
+            total_fees += exit_fee
+            pnl_usd = pos.pnl_usd - exit_fee
             result = TradeResult.WIN if pnl_usd > 0 else (
                 TradeResult.LOSS if pnl_usd < 0 else TradeResult.BREAKEVEN
             )

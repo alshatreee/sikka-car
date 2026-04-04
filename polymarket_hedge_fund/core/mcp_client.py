@@ -61,10 +61,14 @@ class MCPClient:
         if errors:
             raise ValueError(f"Invalid MCP config: {'; '.join(errors)}")
 
-        env = {
+        # Minimal env — only pass what the MCP server needs, not the entire parent env
+        import os as _os
+        minimal_env = {
+            "PATH": _os.environ.get("PATH", "") + _os.pathsep + str(Path(self.config.python_path).parent),
+            "HOME": _os.environ.get("HOME", ""),
             "POLYGON_PRIVATE_KEY": self.config.polygon_private_key,
             "POLYGON_ADDRESS": self.config.polygon_address,
-            "PATH": str(Path(self.config.python_path).parent),
+            "PYTHONPATH": self.config.server_cwd,
         }
 
         self._process = subprocess.Popen(
@@ -73,7 +77,7 @@ class MCPClient:
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env={**dict(__import__("os").environ), **env},
+            env=minimal_env,
         )
 
         # Send initialize request
@@ -164,9 +168,9 @@ class MCPClient:
         if not self._process or not self._process.stdin:
             raise ConnectionError("MCP process not running")
 
-        content = json.dumps(message)
-        header = f"Content-Length: {len(content)}\r\n\r\n"
-        data = (header + content).encode()
+        content_bytes = json.dumps(message).encode("utf-8")
+        header = f"Content-Length: {len(content_bytes)}\r\n\r\n"
+        data = header.encode("ascii") + content_bytes
 
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._process.stdin.write, data)
