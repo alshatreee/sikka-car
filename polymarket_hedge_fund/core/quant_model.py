@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ..config import HedgeFundConfig, QuantWeights, SignalWeights
-from ..models.market import MarketData, QuantEstimate, SignalData
+from ..models.market import Direction, MarketData, QuantEstimate, SignalData
 
 
 class QuantModel:
@@ -30,6 +30,7 @@ class QuantModel:
         market: MarketData,
         signal: SignalData,
         p_historical: float,
+        direction: Direction = None,
     ) -> QuantEstimate:
         """
         Calculate estimated probability and edge for a market.
@@ -57,9 +58,15 @@ class QuantModel:
             + p_time * self.weights.time_decay
         )
 
-        # Edge = estimated probability - market price
-        market_price = market.yes_price
-        edge = p_est - market_price
+        # Edge = estimated probability - market price (direction-aware)
+        # YES: edge = P(est) - yes_price (profit when event happens)
+        # NO:  edge = (1 - P(est)) - no_price (profit when event doesn't happen)
+        if direction == Direction.NO:
+            market_price = market.no_price
+            edge = (1 - p_est) - market_price
+        else:
+            market_price = market.yes_price
+            edge = p_est - market_price
 
         # Composite score (0-100)
         composite_score = self._calc_composite_score(

@@ -45,8 +45,11 @@ class PolymarketTradingAPI:
         Place a LIMIT order via MCP.
         direction: "YES" or "NO" → mapped to side: "BUY" on appropriate token
         """
-        # Map YES/NO to the correct side
-        side = "BUY" if direction in ("YES", "BUY") else "SELL"
+        # Both YES and NO are BUY orders — they buy different tokens
+        # YES = buy YES token, NO = buy NO token
+        # The MCP server handles token selection based on the direction
+        side = "BUY"
+        token_side = direction  # "YES" or "NO" — passed to MCP for token selection
 
         logger.info(
             f"📤 Placing LIMIT order: {direction} ${size_usd:.2f} @ {limit_price:.4f} "
@@ -56,6 +59,7 @@ class PolymarketTradingAPI:
         result = await self.mcp.call_tool("create_limit_order", {
             "market_id": market_id,
             "side": side,
+            "token_side": token_side,
             "price": limit_price,
             "size": size_usd,
             "order_type": order_type,

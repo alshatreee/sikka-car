@@ -54,6 +54,7 @@ class MCPClient:
         self._process: Optional[subprocess.Popen] = None
         self._request_id: int = 0
         self._connected: bool = False
+        self._lock: asyncio.Lock = asyncio.Lock()
 
     async def connect(self) -> None:
         """Start the MCP server process and establish connection."""
@@ -159,9 +160,10 @@ class MCPClient:
         await self._write_message(message)
 
     async def _send_message(self, message: dict) -> Optional[dict]:
-        """Write a message and read the response."""
-        await self._write_message(message)
-        return await self._read_response()
+        """Write a message and read the response (serialized with lock)."""
+        async with self._lock:
+            await self._write_message(message)
+            return await self._read_response()
 
     async def _write_message(self, message: dict) -> None:
         """Write a JSON-RPC message to the server's stdin."""

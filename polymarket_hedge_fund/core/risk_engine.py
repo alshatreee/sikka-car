@@ -48,9 +48,18 @@ class RiskEngine:
         self._consecutive_losses: int = 0
         self._session_halted: bool = False
         self._halt_reason: str = ""
+        self._halt_date: str = ""  # Date when halt was triggered
 
     @property
     def is_halted(self) -> bool:
+        # Auto-reset halt on a new day (daily limits are per-day)
+        if self._session_halted and self._halt_date:
+            today = date.today().isoformat()
+            if today != self._halt_date:
+                self._session_halted = False
+                self._halt_reason = ""
+                self._halt_date = ""
+                return False
         return self._session_halted
 
     @property
@@ -60,6 +69,7 @@ class RiskEngine:
     def halt_session(self, reason: str) -> None:
         self._session_halted = True
         self._halt_reason = reason
+        self._halt_date = date.today().isoformat()
 
     def resume_session(self) -> None:
         """Only call after manual review."""
@@ -173,11 +183,11 @@ class RiskEngine:
                 f"تحتاج تأكيد يدوي"
             )
 
-        # ── Duplicate market check ──
+        # ── Duplicate market check — BLOCK, not just warn ──
         for pos in open_positions:
             if pos.market_id == proposal.market_id:
-                warnings.append(
-                    f"يوجد مركز مفتوح بالفعل في هذا السوق (#{pos.trade_id})"
+                reasons.append(
+                    f"يوجد مركز مفتوح بالفعل في هذا السوق (#{pos.trade_id}) — ممنوع التكديس"
                 )
 
         approved = len(reasons) == 0

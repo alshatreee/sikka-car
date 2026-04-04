@@ -118,19 +118,22 @@ class Position:
 
     @property
     def pnl_usd(self) -> float:
-        if self.direction == Direction.YES:
-            return self.size_usd * (self.current_price - self.entry_price) / self.entry_price
-        else:
-            return self.size_usd * (self.entry_price - self.current_price) / self.entry_price
+        """
+        P&L calculation — same formula for both YES and NO.
+        entry_price and current_price are always for the SAME token:
+        - YES position: entry=yes_price, current=current_yes_price
+        - NO position:  entry=no_price,  current=current_no_price
+        Profit when your token price goes UP.
+        """
+        if self.entry_price == 0:
+            return 0.0
+        return self.size_usd * (self.current_price - self.entry_price) / self.entry_price
 
     @property
     def pnl_pct(self) -> float:
         if self.entry_price == 0:
             return 0.0
-        if self.direction == Direction.YES:
-            return (self.current_price - self.entry_price) / self.entry_price
-        else:
-            return (self.entry_price - self.current_price) / self.entry_price
+        return (self.current_price - self.entry_price) / self.entry_price
 
 
 @dataclass

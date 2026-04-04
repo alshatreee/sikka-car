@@ -238,8 +238,8 @@ class HedgeFundOrchestrator:
         if not ks_ok:
             return "⛔ Kill Switch:\n" + "\n".join(ks_issues)
 
-        # Quant analysis
-        estimate = self.quant.estimate(market, signal, p_historical)
+        # Quant analysis (direction-aware edge calculation)
+        estimate = self.quant.estimate(market, signal, p_historical, direction=direction)
 
         # Build proposal
         proposal = self.execution.build_proposal(
@@ -294,27 +294,55 @@ class HedgeFundOrchestrator:
         if self.kill_switch.is_halted:
             return f"⛔ Kill switch مُفعَّل:\n" + "\n".join(self.kill_switch.halt_reasons)
 
-        # Re-validate with risk engine
-        dummy_market = MarketData(
-            market_id=proposal.market_id,
-            question=proposal.market_question,
-            yes_price=proposal.limit_price,
-            no_price=1 - proposal.limit_price,
-            liquidity_usd=self.config.entry.min_liquidity_usd,
-            volume_24h=0,
-            spread=0,
-            expiry=datetime.utcnow() + timedelta(days=7),
-        )
-        risk_result = self.risk.check_trade(proposal, dummy_market, self.positions)
+        # Re-validate with risk engine using live data if available
+        if self.is_connected and self.market_api:
+            try:
+                live_market = await self.market_api.get_market_detail(proposal.market_id)
+                if live_market:
+                    risk_market = live_market
+                else:
+                    logger.warning("⚠️ تعذر جلب بيانات حية — استخدام بيانات الاقتراح")
+                    risk_market = MarketData(
+                        market_id=proposal.market_id,
+                        question=proposal.market_question,
+                        yes_price=proposal.limit_price,
+                        no_price=1 - proposal.limit_price,
+                        liquidity_usd=self.config.entry.min_liquidity_usd,
+                        volume_24h=0, spread=0,
+                        expiry=datetime.utcnow() + timedelta(days=7),
+                    )
+            except Exception as e:
+                logger.warning(f"⚠️ خطأ في جلب بيانات حية: {e}")
+                risk_market = MarketData(
+                    market_id=proposal.market_id,
+                    question=proposal.market_question,
+                    yes_price=proposal.limit_price,
+                    no_price=1 - proposal.limit_price,
+                    liquidity_usd=self.config.entry.min_liquidity_usd,
+                    volume_24h=0, spread=0,
+                    expiry=datetime.utcnow() + timedelta(days=7),
+                )
+        else:
+            risk_market = MarketData(
+                market_id=proposal.market_id,
+                question=proposal.market_question,
+                yes_price=proposal.limit_price,
+                no_price=1 - proposal.limit_price,
+                liquidity_usd=self.config.entry.min_liquidity_usd,
+                volume_24h=0, spread=0,
+                expiry=datetime.utcnow() + timedelta(days=7),
+            )
+        risk_result = self.risk.check_trade(proposal, risk_market, self.positions)
         if not risk_result.approved:
             return f"❌ فشل فحص المخاطر:\n{risk_result}"
 
         # Live execution via MCP
         if self.is_connected and self.trading_api:
             try:
+                # Both YES and NO are BUY orders on their respective tokens
                 suggested = await self.trading_api.suggest_price(
                     market_id=proposal.market_id,
-                    side="BUY" if proposal.direction == Direction.YES else "SELL",
+                    side="BUY",
                     size=proposal.phase1_size_usd,
                     strategy="mid",
                 )
@@ -322,12 +350,23 @@ class HedgeFundOrchestrator:
                 if isinstance(suggested, dict) and "price" in suggested:
                     exec_price = float(suggested["price"])
 
-                await self.trading_api.place_limit_order(
+                order_result = await self.trading_api.place_limit_order(
                     market_id=proposal.market_id,
                     direction=proposal.direction.value,
                     size_usd=proposal.phase1_size_usd,
                     limit_price=exec_price,
                 )
+
+                # Verify order was accepted
+                if isinstance(order_result, dict):
+                    if order_result.get("error") or not order_result.get("success", True):
+                        error_msg = order_result.get("error", order_result.get("errorMsg", "Unknown"))
+                        return f"❌ الأمر مرفوض: {error_msg}"
+
+                # Order placed — status is PENDING (not filled yet for LIMIT orders)
+                order_id = ""
+                if isinstance(order_result, dict):
+                    order_id = order_result.get("orderID", order_result.get("order_id", ""))
 
                 position = Position(
                     trade_id=proposal.id,
@@ -349,7 +388,7 @@ class HedgeFundOrchestrator:
 
                 return (
                     f"✅ Phase 1 نُفِّذت: ${proposal.phase1_size_usd:.2f} "
-                    f"@ {exec_price:.4f}\n"
+                    f"@ {exec_price:.4f} (Order: {order_id[:16]}...)\n"
                     f"   Phase 2 (${proposal.phase2_size_usd:.2f}) "
                     f"خلال {self.config.execution.phase2_wait_minutes} دقيقة"
                 )
@@ -374,6 +413,8 @@ class HedgeFundOrchestrator:
         """
         Check all open positions for exit conditions.
         Auto-closes positions that hit SL/TP.
+        current_prices: dict of market_id -> YES token price.
+        For NO positions, we derive the NO token price as (1 - yes_price).
         Returns list of actions taken.
         """
         actions = []
@@ -381,7 +422,12 @@ class HedgeFundOrchestrator:
 
         for pos in self.positions:
             if pos.market_id in current_prices:
-                pos.current_price = current_prices[pos.market_id]
+                yes_price = current_prices[pos.market_id]
+                # Set direction-specific token price
+                if pos.direction == Direction.NO:
+                    pos.current_price = 1.0 - yes_price
+                else:
+                    pos.current_price = yes_price
 
             exit_reason = self.risk.check_exit_conditions(pos)
             if exit_reason:
@@ -401,10 +447,12 @@ class HedgeFundOrchestrator:
         reason: str,
     ) -> str:
         """Close a position and record it."""
-        # Determine result
-        pnl_pct = (exit_price - position.entry_price) / position.entry_price
-        if position.direction == Direction.NO:
-            pnl_pct = -pnl_pct
+        # Determine result — same formula for YES and NO
+        # exit_price and entry_price are always for the same token (direction-specific)
+        if position.entry_price == 0:
+            pnl_pct = 0.0
+        else:
+            pnl_pct = (exit_price - position.entry_price) / position.entry_price
         pnl_usd = position.size_usd * pnl_pct
 
         if pnl_usd > 0:

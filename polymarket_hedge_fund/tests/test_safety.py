@@ -54,8 +54,9 @@ def test_secure_config_masks_key():
         polygon_address="0x1234567890abcdef1234567890abcdef12345678",
     )
     masked = config.masked_key()
-    assert "a1b2" in masked
-    assert "i9j0" in masked
+    assert masked.startswith("***")  # First chars hidden for security
+    assert "i9j0" in masked  # Only last 4 shown
+    assert "a1b2" not in masked  # First chars must NOT be exposed
     assert "e5f6" not in masked  # Middle should be hidden
     print("✅ test_secure_config_masks_key")
 

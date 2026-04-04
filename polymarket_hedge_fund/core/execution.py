@@ -126,6 +126,13 @@ class ExecutionEngine:
             limit_price=proposal.limit_price,
         )
 
+        # Verify order was accepted
+        if isinstance(result, dict):
+            if result.get("error") or not result.get("success", True):
+                error_msg = result.get("error", result.get("errorMsg", "Unknown"))
+                logger.error(f"❌ Order rejected: {error_msg}")
+                return None
+
         logger.info(f"✅ Phase 1 executed: ${proposal.phase1_size_usd:.2f}")
         return Position(
             trade_id=proposal.id,

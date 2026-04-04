@@ -79,8 +79,8 @@ class SecureConfig:
 
     def masked_key(self) -> str:
         """Return masked key for logging (never log full key)."""
-        if len(self.polygon_private_key) > 8:
-            return self.polygon_private_key[:4] + "..." + self.polygon_private_key[-4:]
+        if len(self.polygon_private_key) > 4:
+            return "***..." + self.polygon_private_key[-4:]
         return "***"
 
     def masked_address(self) -> str:
@@ -469,8 +469,19 @@ class PreLaunchChecklist:
 
     @staticmethod
     def _is_gitignored(path: str) -> bool:
-        """Check if a file is in .gitignore."""
+        """Check if a file is in .gitignore (supports exact match and glob patterns)."""
         gitignore = Path(".gitignore")
         if gitignore.exists():
-            return path in gitignore.read_text()
+            content = gitignore.read_text()
+            for line in content.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Exact match
+                if line == path:
+                    return True
+                # Glob pattern match (e.g., *.env matches .env)
+                if line.startswith("*") and path.endswith(line[1:]):
+                    return True
+            return False
         return False
