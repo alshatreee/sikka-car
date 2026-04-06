@@ -1,0 +1,10 @@
+# .env3 — third wallet (Sports Consensus Bot)
+# Copy to /root/bots/.env3 on the VPS and fill in real values.
+
+# Polymarket proxy wallet credentials
+PK=0xYOUR_PRIVATE_KEY_HERE
+FUNDER=0xYOUR_PROXY_WALLET_HERE
+
+# Telegram notifications (same bot, same chat is fine)
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
