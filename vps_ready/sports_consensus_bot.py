@@ -51,8 +51,8 @@ ENV_FILE = BASE_DIR / ".env3"
 load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
 
 # ---------- config ----------
-CONSENSUS_MIN = 3
-CONSENSUS_WINDOW_MIN = 15
+CONSENSUS_MIN = 2
+CONSENSUS_WINDOW_MIN = 30
 TRADE_SIZE_USD = 3.0
 MAX_DAILY_TRADES = 15
 MAX_DAILY_LOSS_USD = 10.0

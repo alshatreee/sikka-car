@@ -69,7 +69,7 @@ CHAINLINK_FEEDS = {
 }
 
 POLL_INTERVAL_SEC = 15           # كل كم ثانية نقرأ السعر من العقد
-MIN_EDGE_PCT = 3.0               # الحد الأدنى للانحراف لاعتباره فرصة (%)
+MIN_EDGE_PCT = 0.5               # الحد الأدنى للانحراف لاعتباره فرصة (%)
 TRADE_SIZE_USD = 4.0
 MAX_DAILY_TRADES = 20
 MAX_DAILY_LOSS_USD = 10.0
@@ -219,20 +219,48 @@ def fetch_polymarket_crypto_markets(asset: str) -> list[dict[str, Any]]:
 
 
 def parse_target_price(question: str) -> float | None:
-    """يستخرج السعر المستهدف من سؤال السوق (مثال: 'Will BTC reach $70,000 by ...')."""
+    """يستخرج السعر المستهدف من سؤال السوق.
+    أمثلة مدعومة:
+      'Will BTC reach $70,000 by ...'
+      'Bitcoin above 73,400 on April 10'
+      'ETH to hit $2.5K this week'
+      'BTC above 100k'
+    """
     import re
-    m = re.search(r"\$?([\d,]{4,})", question)
-    if not m:
-        return None
-    try:
-        return float(m.group(1).replace(",", ""))
-    except ValueError:
-        return None
+    q = question or ""
+    # 1) Try full number (with comma): $70,000  or  73,400
+    m = re.search(r"\$?\s*([\d]{1,3}(?:,\d{3})+(?:\.\d+)?)", q)
+    if m:
+        try:
+            return float(m.group(1).replace(",", ""))
+        except ValueError:
+            pass
+    # 2) Try "X.Yk" / "Xk" (kilo)
+    m = re.search(r"\$?\s*(\d+(?:\.\d+)?)\s*[kK]\b", q)
+    if m:
+        try:
+            return float(m.group(1)) * 1000
+        except ValueError:
+            pass
+    # 3) Try plain integer >= 4 digits
+    m = re.search(r"\$?\s*(\d{4,}(?:\.\d+)?)", q)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+    return None
 
 
 def compute_edge(oracle_price: float, market: dict[str, Any]) -> tuple[float, str] | None:
     """يحسب الفجوة بين سعر oracle وسعر السوق على Polymarket.
-    يرجع (edge_pct, side) أو None."""
+    يرجع (edge_pct, side) أو None.
+
+    منطق محسّن:
+      - إذا oracle > target: YES المفروض تكون قريبة من 1.0
+      - إذا oracle < target: YES المفروض تكون قريبة من 0.0
+      - الفرق بين السعر "العادل" والسعر الحالي = edge
+    """
     target = parse_target_price(market.get("question", ""))
     if not target:
         return None
@@ -247,15 +275,20 @@ def compute_edge(oracle_price: float, market: dict[str, Any]) -> tuple[float, st
         if name == "YES":
             yes_price = float(t.get("price", 0) or 0)
             break
-    if yes_price is None or yes_price <= 0 or yes_price >= 1:
+    if yes_price is None or yes_price <= 0.02 or yes_price >= 0.98:
         return None
 
-    # حقيقة بسيطة: إذا oracle أعلى من target بكثير، YES مقوّمة بأقل من قيمتها
     diff_pct = (oracle_price - target) / target * 100
-    if diff_pct > MIN_EDGE_PCT and yes_price < 0.85:
-        return (diff_pct, "YES")
-    if diff_pct < -MIN_EDGE_PCT and yes_price > 0.15:
-        return (-diff_pct, "NO")
+
+    # BTC/ETH فوق السعر المستهدف → YES المفروض تكون عالية
+    if diff_pct > MIN_EDGE_PCT and yes_price < 0.80:
+        # كل ما YES أرخص، كل ما الـ edge أكبر
+        edge = (0.90 - yes_price) * 100 + diff_pct
+        return (edge, "YES")
+    # BTC/ETH تحت السعر المستهدف → YES المفروض تكون منخفضة
+    if diff_pct < -MIN_EDGE_PCT and yes_price > 0.20:
+        edge = (yes_price - 0.10) * 100 + (-diff_pct)
+        return (edge, "NO")
     return None
 
 
