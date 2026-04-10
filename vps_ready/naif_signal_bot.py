@@ -287,6 +287,11 @@ def get_exchange():
     else:
         exchange = ccxt.binanceusdm(config)
 
+    # Use residential proxy to bypass Binance geo-restrictions on datacenter IPs
+    proxy = os.getenv("HTTPS_PROXY", "") or os.getenv("HTTP_PROXY", "")
+    if proxy:
+        exchange.proxies = {"http": proxy, "https": proxy}
+
     return exchange
 
 
@@ -421,12 +426,15 @@ def check_positions(state: State) -> None:
         return
 
     import requests
+    proxy = os.getenv("HTTPS_PROXY", "") or os.getenv("HTTP_PROXY", "")
+    proxies = {"http": proxy, "https": proxy} if proxy else {}
     closed = []
     for symbol, pos in state.open_positions.items():
         try:
-            # Get current price from Binance public API
+            # Get current price from Binance public API (via proxy to bypass geo-block)
             r = requests.get(
                 f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}",
+                proxies=proxies,
                 timeout=10,
             )
             current = float(r.json()["price"])
