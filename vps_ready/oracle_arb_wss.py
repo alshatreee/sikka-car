@@ -50,9 +50,16 @@ LOG_FILE = BASE_DIR / "oracle_arb.log"
 
 load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
 
+# ---------- proxy ----------
+_PROXY_URL = os.getenv("HTTPS_PROXY", "") or os.getenv("HTTP_PROXY", "")
+if _PROXY_URL:
+    os.environ["HTTP_PROXY"] = _PROXY_URL
+    os.environ["HTTPS_PROXY"] = _PROXY_URL
+PROXIES = {"http": _PROXY_URL, "https": _PROXY_URL} if _PROXY_URL else {}
+
 # ---------- config ----------
 WSS_URL = os.getenv("POLYGON_WSS_URL", "")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # عناوين Chainlink الصحيحة على Polygon Mainnet (تحقق منها على polygonscan.com)
@@ -112,6 +119,7 @@ def tg(msg: str) -> None:
         requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             json={"chat_id": TELEGRAM_CHAT, "text": msg},
+            proxies=PROXIES,
             timeout=10,
         )
     except Exception as e:
@@ -197,6 +205,7 @@ def fetch_polymarket_crypto_markets(asset: str) -> list[dict[str, Any]]:
         r = requests.get(
             f"{GAMMA_API}/markets",
             params={"active": "true", "closed": "false", "limit": 100},
+            proxies=PROXIES,
             timeout=15,
         )
         r.raise_for_status()
@@ -250,6 +259,46 @@ def compute_edge(oracle_price: float, market: dict[str, Any]) -> tuple[float, st
     return None
 
 
+# ---------- CLOB client (cached) ----------
+_clob_client = None
+
+
+def get_clob_client():
+    global _clob_client
+    if _clob_client is not None:
+        return _clob_client
+    from py_clob_client.client import ClobClient
+    from py_clob_client.clob_types import ApiCreds
+
+    pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+    pk_clean = pk[2:] if pk.startswith("0x") else pk
+    funder = os.getenv("FUNDER_ADDRESS", "")
+
+    api_key = os.getenv("CLOB_API_KEY", "")
+    api_secret = os.getenv("CLOB_API_SECRET", "")
+    api_pass = os.getenv("CLOB_API_PASSPHRASE", "")
+
+    client = ClobClient(
+        host="https://clob.polymarket.com",
+        key=pk_clean,
+        chain_id=137,
+        signature_type=0,
+        funder=funder,
+    )
+
+    if api_key and api_secret and api_pass:
+        client.set_api_creds(ApiCreds(
+            api_key=api_key,
+            api_secret=api_secret,
+            api_passphrase=api_pass,
+        ))
+    else:
+        client.set_api_creds(client.create_or_derive_api_creds())
+
+    _clob_client = client
+    return client
+
+
 # ---------- trade execution ----------
 async def execute_trade(asset: str, oracle_price: float, market: dict[str, Any],
                         side: str, edge: float, live: bool) -> bool:
@@ -261,13 +310,10 @@ async def execute_trade(asset: str, oracle_price: float, market: dict[str, Any],
         return True
 
     try:
-        from py_clob_client.client import ClobClient
-        from py_clob_client.clob_types import OrderArgs, OrderType
-        host = "https://clob.polymarket.com"
-        key = os.getenv("PK") or os.getenv("PRIVATE_KEY")
-        funder = os.getenv("FUNDER")
-        client = ClobClient(host, key=key, chain_id=137, signature_type=1, funder=funder)
-        client.set_api_creds(client.create_or_derive_api_creds())
+        from py_clob_client.clob_types import OrderArgs
+        from py_clob_client.order_builder.constants import BUY
+
+        client = get_clob_client()
 
         tokens = market.get("tokens") or market.get("outcomes") or []
         token_id = None
@@ -281,14 +327,19 @@ async def execute_trade(asset: str, oracle_price: float, market: dict[str, Any],
             log("token resolution failed")
             return False
 
-        args = OrderArgs(price=price, size=TRADE_SIZE_USD / price, side="BUY", token_id=str(token_id))
-        signed = client.create_order(args)
-        resp = client.post_order(signed, OrderType.GTC)
-        if resp and resp.get("success"):
-            log(f"[LIVE] BUY {side} ok | {resp.get('orderID','?')[:12]}")
-            tg(f"✅ LIVE BUY\n{msg}")
+        size = TRADE_SIZE_USD / price
+        order = client.create_and_post_order(OrderArgs(
+            token_id=str(token_id),
+            side=BUY,
+            size=size,
+            price=price,
+        ))
+        if order and (order.get("success") or order.get("orderID")):
+            oid = order.get("orderID", "?")[:12]
+            log(f"[LIVE] BUY {side} ok | {oid}")
+            tg(f"✅ LIVE BUY\n{msg}\norder: {oid}")
             return True
-        log(f"order failed: {resp}")
+        log(f"order failed: {order}")
         return False
     except Exception as e:
         log(f"execute_trade error: {e}")
