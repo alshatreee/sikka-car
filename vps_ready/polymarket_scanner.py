@@ -181,8 +181,8 @@ def rollover_day(s: State) -> None:
 
 
 # ---------- market data ----------
-def fetch_markets(limit: int = 200) -> list[dict]:
-    """جلب الأسواق النشطة من Gamma API."""
+def fetch_markets(limit: int = 1000) -> list[dict]:
+    """جلب كافة الأسواق النشطة (حتى 1000 سوق) لتغطية شاملة."""
     markets = []
     offset = 0
     while offset < limit:
@@ -192,7 +192,7 @@ def fetch_markets(limit: int = 200) -> list[dict]:
                 params={
                     "active": "true",
                     "closed": "false",
-                    "limit": min(100, limit - offset),
+                    "limit": 100,
                     "offset": offset,
                 },
                 proxies=PROXIES,
@@ -209,6 +209,7 @@ def fetch_markets(limit: int = 200) -> list[dict]:
         except Exception as e:
             log(f"fetch_markets error: {e}")
             break
+    log(f"✅ تم مسح {len(markets)} سوق نشط حالياً.")
     return markets
 
 
@@ -658,7 +659,7 @@ def main() -> int:
 
             # 2) scan
             log("scanning...")
-            markets = fetch_markets(200)
+            markets = fetch_markets()
             if not markets:
                 log("no markets fetched")
                 time.sleep(SCAN_INTERVAL_SEC)
