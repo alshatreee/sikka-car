@@ -1,8 +1,8 @@
 """
-naif_signal_bot.py — Binance Futures Auto-Trader from Naif Alert Telegram Channel
-==================================================================================
+naif_signal_bot.py — Bybit Futures Auto-Trader from Naif Alert Telegram Channel
+================================================================================
 
-يراقب قناة Naif Alert على تيلجرام ويفتح صفقات تلقائياً على Binance Futures
+يراقب قناة Naif Alert على تيلجرام ويفتح صفقات تلقائياً على Bybit Futures
 بناءً على التوصيات.
 
 الفلاتر:
@@ -57,10 +57,10 @@ TG_API_HASH = os.getenv("TG_API_HASH", "")
 TG_CHANNEL = os.getenv("TG_CHANNEL", "Naif_Alert")
 TG_SESSION = str(BASE_DIR / "naif_session")
 
-# Binance
-BINANCE_KEY = os.getenv("BINANCE_API_KEY", "")
-BINANCE_SECRET = os.getenv("BINANCE_API_SECRET", "")
-BINANCE_TESTNET = os.getenv("BINANCE_TESTNET", "false").lower() == "true"
+# Bybit
+BYBIT_KEY = os.getenv("BYBIT_API_KEY", "")
+BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
+BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 
 # Notifications
 NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
@@ -266,28 +266,25 @@ def should_trade(signal: Signal, state: State) -> tuple[bool, str]:
     return True, "OK"
 
 
-# ---------- Binance execution ----------
+# ---------- Bybit execution ----------
 def get_exchange():
-    """Create ccxt Binance Futures client."""
+    """Create ccxt Bybit Futures client."""
     import ccxt
 
     config = {
-        "apiKey": BINANCE_KEY,
-        "secret": BINANCE_SECRET,
+        "apiKey": BYBIT_KEY,
+        "secret": BYBIT_SECRET,
         "enableRateLimit": True,
         "options": {
-            "defaultType": "future",
-            "adjustForTimeDifference": True,
+            "defaultType": "linear",
         },
     }
 
-    if BINANCE_TESTNET:
-        exchange = ccxt.binanceusdm(config)
-        exchange.set_sandbox_mode(True)
-    else:
-        exchange = ccxt.binanceusdm(config)
+    exchange = ccxt.bybit(config)
 
-    # Use residential proxy to bypass Binance geo-restrictions on datacenter IPs
+    if BYBIT_TESTNET:
+        exchange.set_sandbox_mode(True)
+
     proxy = os.getenv("HTTPS_PROXY", "") or os.getenv("HTTP_PROXY", "")
     if proxy:
         exchange.proxies = {"http": proxy, "https": proxy}
@@ -431,13 +428,13 @@ def check_positions(state: State) -> None:
     closed = []
     for symbol, pos in state.open_positions.items():
         try:
-            # Get current price from Binance public API (via proxy to bypass geo-block)
             r = requests.get(
-                f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol}",
+                f"https://api.bybit.com/v5/market/tickers?category=linear&symbol={symbol}",
                 proxies=proxies,
                 timeout=10,
             )
-            current = float(r.json()["price"])
+            data = r.json()
+            current = float(data["result"]["list"][0]["lastPrice"])
 
             if pos["direction"] == "BUY":
                 pnl_pct = (current - pos["entry_price"]) / pos["entry_price"] * 100
@@ -568,7 +565,7 @@ def cmd_check():
     """Quick status check."""
     state = load_state()
     print(f"TG_API_ID set: {bool(TG_API_ID)}")
-    print(f"BINANCE_KEY set: {bool(BINANCE_KEY)}")
+    print(f"BYBIT_KEY set: {bool(BYBIT_KEY)}")
     print(f"Channel: {TG_CHANNEL}")
     print(f"Mode: {'LIVE' if not PAPER_MODE else 'PAPER'}")
     print(f"Day: {state.day} | Trades: {state.daily_trades} | PnL: ${state.daily_pnl:+.2f}")
