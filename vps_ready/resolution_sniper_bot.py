@@ -10,90 +10,58 @@ resolution_sniper_bot.py — Resolution Sniper Bot
 from __future__ import annotations
 import argparse, json, logging, os, sys, time, urllib.request
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-# ── المسارات ──
 if os.name == "nt":
     BASE_DIR = Path(r"C:\Users\xman9\Desktop")
 else:
     BASE_DIR = Path("/root/bots")
     BASE_DIR.mkdir(parents=True, exist_ok=True)
 
-ENV_FILE = BASE_DIR / ".env3"
-STATE_FILE = BASE_DIR / "sniper_state.json"
-LOG_FILE = BASE_DIR / "sniper.log"
-GAMMA_API = "https://gamma-api.polymarket.com"
-CLOB_API = "https://clob.polymarket.com"
+ENV_FILE, STATE_FILE, LOG_FILE = BASE_DIR/".env3", BASE_DIR/"sniper_state.json", BASE_DIR/"sniper.log"
+GAMMA_API, CLOB_API = "https://gamma-api.polymarket.com", "https://clob.polymarket.com"
 
-# ── تحميل .env3 ──
 def load_env() -> dict:
     env = {}
     if ENV_FILE.exists():
         for line in open(ENV_FILE):
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
+                k, v = line.split("=", 1); env[k.strip()] = v.strip()
     return env
 
 ENV = load_env()
 PK = ENV.get("PK", "").strip()
-if PK.startswith("0x"):
-    PK = PK[2:]
+if PK.startswith("0x"): PK = PK[2:]
 FUNDER = ENV.get("FUNDER", "")
-TG_TOKEN = ENV.get("TELEGRAM_BOT_TOKEN", "")
-TG_CHAT = ENV.get("TELEGRAM_CHAT_ID", "")
+TG_TOKEN, TG_CHAT = ENV.get("TELEGRAM_BOT_TOKEN", ""), ENV.get("TELEGRAM_CHAT_ID", "")
 PROXY = ENV.get("HTTPS_PROXY", "")
-if PROXY:
-    os.environ["HTTPS_PROXY"] = PROXY
-    os.environ["HTTP_PROXY"] = PROXY
+if PROXY: os.environ["HTTPS_PROXY"] = PROXY; os.environ["HTTP_PROXY"] = PROXY
 
-# ── إعداد اللوق ──
-logger = logging.getLogger("sniper")
-logger.setLevel(logging.INFO)
+logger = logging.getLogger("sniper"); logger.setLevel(logging.INFO)
 _fmt = logging.Formatter("[%(asctime)s] %(levelname)s %(message)s", "%H:%M:%S")
 _sh = logging.StreamHandler(); _sh.setFormatter(_fmt); logger.addHandler(_sh)
-try:
-    _fh = logging.FileHandler(LOG_FILE, encoding="utf-8"); _fh.setFormatter(_fmt); logger.addHandler(_fh)
-except Exception:
-    pass
+try: _fh = logging.FileHandler(LOG_FILE, encoding="utf-8"); _fh.setFormatter(_fmt); logger.addHandler(_fh)
+except Exception: pass
 
-# ── ثوابت الاستراتيجية ──
-MIN_YES_PRICE = 0.95
-MAX_YES_PRICE = 0.99
-MIN_TIME_MINUTES = 5
-MAX_TIME_HOURS = 6
-MIN_VOLUME = 1000
-TRADE_SIZE_USD = 3.0
-MIN_NET_PROFIT = 0.02          # أقل ربح مقبول بعد الرسوم
-FEE_RATE = 0.02                # رسوم Polymarket 2%
-MAX_TRADES_DAY = 30
-MAX_OPEN = 12
-DAILY_LOSS_HALT = 5.0
-SCAN_INTERVAL = 90
+MIN_P, MAX_P = 0.95, 0.99          # نطاق YES
+MIN_MIN, MAX_HR = 5, 6             # 5 دقائق - 6 ساعات
+MIN_VOL = 1000; TRADE_USD = 3.0
+MIN_NET_PROFIT = 0.02; FEE_RATE = 0.02
+MAX_TRADES_DAY, MAX_OPEN = 30, 12
+DAILY_LOSS_HALT, SCAN_SEC = 5.0, 90
 
-# ── حالة البوت ──
 @dataclass
 class Position:
-    market_id: str
-    token_id: str
-    question: str
-    entry_price: float
-    size_usd: float
-    expected_profit: float
-    entry_time: str
-    hours_left: float
+    market_id: str; token_id: str; question: str; entry_price: float
+    size_usd: float; expected_profit: float; entry_time: str; hours_left: float
 
 @dataclass
 class BotState:
-    positions: list = field(default_factory=list)
-    trades_today: int = 0
-    daily_pnl: float = 0.0
-    day: str = ""
-    halted: bool = False
-    total_trades: int = 0
-    total_pnl: float = 0.0
+    positions: list = field(default_factory=list); trades_today: int = 0
+    daily_pnl: float = 0.0; day: str = ""; halted: bool = False
+    total_trades: int = 0; total_pnl: float = 0.0
 
 def load_state() -> BotState:
     if STATE_FILE.exists():
@@ -104,37 +72,26 @@ def load_state() -> BotState:
 def save_state(s: BotState):
     STATE_FILE.write_text(json.dumps(asdict(s), indent=2, default=str))
 
-# ── أدوات مساعدة ──
 def http_get(url: str, timeout: int = 15):
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "sniper-bot/1.0"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode())
+        with urllib.request.urlopen(req, timeout=timeout) as r: return json.loads(r.read().decode())
     except Exception as e:
-        logger.warning(f"HTTP خطأ: {url[:60]} — {e}")
-        return None
+        logger.warning(f"HTTP خطأ: {url[:60]} — {e}"); return None
 
 def tg(msg: str):
-    if not TG_TOKEN or not TG_CHAT:
-        return
+    if not TG_TOKEN or not TG_CHAT: return
     try:
         data = json.dumps({"chat_id": TG_CHAT, "text": msg}).encode()
-        req = urllib.request.Request(
-            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+        req = urllib.request.Request(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
             data=data, headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    except Exception: pass
 
-def calc_fee(price: float) -> float:
-    """رسوم Polymarket: 2% * 2 * min(p, 1-p)."""
-    return 2 * min(price, 1 - price) * FEE_RATE
-
-def calc_net_profit(entry_price: float, size_usd: float) -> float:
-    """الربح الصافي المتوقع عند الحل = $1.00."""
-    contracts = size_usd / entry_price
-    gross = contracts * (1.0 - entry_price)
-    fee = contracts * calc_fee(entry_price)
+def calc_net_profit(price: float, size: float) -> float:
+    contracts = size / price
+    gross = contracts * (1.0 - price)
+    fee = contracts * 2 * min(price, 1 - price) * FEE_RATE
     return round(gross - fee, 4)
 
 def _match_token(tokens, side: str) -> str:
@@ -142,306 +99,155 @@ def _match_token(tokens, side: str) -> str:
         try: tokens = json.loads(tokens)
         except Exception: return ""
     for t in (tokens or []):
-        outcome = str(t.get("outcome", "")).upper()
+        o = str(t.get("outcome", "")).upper()
         tid = t.get("token_id") or t.get("tokenId") or ""
-        if side == "YES" and outcome in ("YES", "1"): return str(tid)
-        if side == "NO" and outcome in ("NO", "0"): return str(tid)
+        if side == "YES" and o in ("YES", "1"): return str(tid)
+        if side == "NO" and o in ("NO", "0"): return str(tid)
     return ""
 
 def get_token_id(market: dict, side: str) -> str:
-    result = _match_token(market.get("tokens") or [], side)
-    if result: return result
+    r = _match_token(market.get("tokens") or [], side)
+    if r: return r
     cid = market.get("conditionId") or market.get("condition_id") or market.get("id", "")
     if cid:
         clob = http_get(f"{CLOB_API}/markets/{cid}")
-        if clob:
-            result = _match_token(clob.get("tokens") or [], side)
-    return result or ""
+        if clob: r = _match_token(clob.get("tokens") or [], side)
+    return r or ""
 
-# ── البحث عن أسواق شبه محسومة ──
 def fetch_sniper_targets() -> list[dict]:
-    """يجلب أسواق بسعر YES مرتفع (0.95-0.99) وتنتهي قريباً."""
     data = http_get(f"{GAMMA_API}/markets?active=true&closed=false&limit=200&order=endDate&ascending=true")
     if not data: return []
     markets = data if isinstance(data, list) else data.get("markets", [])
-    targets = []
-    now = datetime.utcnow()
-
+    out, now = [], datetime.utcnow()
     for m in markets:
-        # فلتر: وقت الانتهاء
         end_str = m.get("endDateIso") or m.get("endDate") or ""
-        if not end_str:
-            continue
+        if not end_str: continue
         try:
             end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00")).replace(tzinfo=None)
-            time_left = end_dt - now
-            minutes_left = time_left.total_seconds() / 60
-            hours_left = minutes_left / 60
-        except Exception:
-            continue
-        if minutes_left < MIN_TIME_MINUTES or hours_left > MAX_TIME_HOURS:
-            continue
-
-        # فلتر: حجم التداول
-        volume = float(m.get("volumeNum") or m.get("volume") or m.get("volume24hr") or 0)
-        if volume < MIN_VOLUME:
-            continue
-
-        # فلتر: السعر
-        outcomes = m.get("outcomePrices") or []
-        if isinstance(outcomes, str):
-            try: outcomes = json.loads(outcomes)
+            mins = (end_dt - now).total_seconds() / 60; hrs = mins / 60
+        except Exception: continue
+        if mins < MIN_MIN or hrs > MAX_HR: continue
+        vol = float(m.get("volumeNum") or m.get("volume") or m.get("volume24hr") or 0)
+        if vol < MIN_VOL: continue
+        o = m.get("outcomePrices") or []
+        if isinstance(o, str):
+            try: o = json.loads(o)
             except Exception: continue
-        if len(outcomes) < 2:
-            continue
-        yes_p = float(outcomes[0])
-        no_p = float(outcomes[1])
+        if len(o) < 2: continue
+        yp = float(o[0])
+        if not (MIN_P <= yp <= MAX_P): continue
+        net = calc_net_profit(yp, TRADE_USD)
+        if net < MIN_NET_PROFIT: continue
+        out.append({"market": m, "market_id": m.get("conditionId") or m.get("id", ""),
+            "question": m.get("question", ""), "yes_price": yp, "no_price": float(o[1]),
+            "volume": vol, "hours_left": round(hrs, 2), "minutes_left": round(mins, 1),
+            "net_profit": net})
+    out.sort(key=lambda t: t["net_profit"], reverse=True)
+    return out
 
-        if not (MIN_YES_PRICE <= yes_p <= MAX_YES_PRICE):
-            continue
-
-        # حساب الربح المتوقع
-        net_profit = calc_net_profit(yes_p, TRADE_SIZE_USD)
-        if net_profit < MIN_NET_PROFIT:
-            continue
-
-        targets.append({
-            "market": m,
-            "market_id": m.get("conditionId") or m.get("id", ""),
-            "question": m.get("question", ""),
-            "yes_price": yes_p,
-            "no_price": no_p,
-            "volume": volume,
-            "hours_left": round(hours_left, 2),
-            "minutes_left": round(minutes_left, 1),
-            "net_profit": net_profit,
-        })
-    # رتب بأعلى ربح متوقع
-    targets.sort(key=lambda t: t["net_profit"], reverse=True)
-    return targets
-
-# ── CLOB client ──
 def get_clob_client():
     try:
-        from py_clob_client.client import ClobClient
-        from py_clob_client.constants import POLYGON
-        client = ClobClient(host=CLOB_API, key=PK, chain_id=POLYGON,
-                            funder=FUNDER, signature_type=1)
-        creds = client.create_or_derive_api_creds()
-        client.set_api_creds(creds)
-        return client
-    except Exception as e:
-        logger.error(f"فشل الاتصال بـ CLOB: {e}")
-        return None
+        from py_clob_client.client import ClobClient; from py_clob_client.constants import POLYGON
+        c = ClobClient(host=CLOB_API, key=PK, chain_id=POLYGON, funder=FUNDER, signature_type=1)
+        c.set_api_creds(c.create_or_derive_api_creds()); return c
+    except Exception as e: logger.error(f"فشل CLOB: {e}"); return None
 
-# ── تنفيذ الصفقة ──
-def execute_snipe(target: dict, state: BotState, client, live: bool) -> bool:
-    # تحقق من الحدود
-    for p in state.positions:
-        if p["market_id"] == target["market_id"]:
-            return False
-    if len(state.positions) >= MAX_OPEN:
-        return False
-    if state.trades_today >= MAX_TRADES_DAY:
-        return False
-    if state.halted:
-        return False
-
-    market = target["market"]
-    token_id = get_token_id(market, "YES")
-    if not token_id:
-        logger.warning(f"لم يُعثر على token_id: {target['question'][:50]}")
-        return False
-
-    price = round(target["yes_price"], 2)
-    contracts = round(TRADE_SIZE_USD / price, 1)
-
-    pos = Position(
-        market_id=target["market_id"],
-        token_id=token_id,
-        question=target["question"][:80],
-        entry_price=price,
-        size_usd=TRADE_SIZE_USD,
-        expected_profit=target["net_profit"],
-        entry_time=datetime.utcnow().isoformat(),
-        hours_left=target["hours_left"],
-    )
-
+def execute_snipe(tgt: dict, st: BotState, client, live: bool) -> bool:
+    if any(p["market_id"] == tgt["market_id"] for p in st.positions): return False
+    if len(st.positions) >= MAX_OPEN or st.trades_today >= MAX_TRADES_DAY or st.halted: return False
+    tid = get_token_id(tgt["market"], "YES")
+    if not tid: logger.warning(f"لم يُعثر على token: {tgt['question'][:50]}"); return False
+    price = round(tgt["yes_price"], 2)
+    pos = Position(market_id=tgt["market_id"], token_id=tid, question=tgt["question"][:80],
+        entry_price=price, size_usd=TRADE_USD, expected_profit=tgt["net_profit"],
+        entry_time=datetime.utcnow().isoformat(), hours_left=tgt["hours_left"])
     if live and client:
         try:
             from py_clob_client.clob_types import OrderArgs
             from py_clob_client.order_builder.constants import BUY
-            order = client.create_order(OrderArgs(
-                token_id=token_id, price=price, size=contracts, side=BUY))
-            resp = client.post_order(order)
-            logger.info(f"أمر منفذ: {resp}")
+            resp = client.post_order(client.create_order(OrderArgs(
+                token_id=tid, price=price, size=round(TRADE_USD/price, 1), side=BUY)))
+            logger.info(f"أمر: {resp}")
         except Exception as e:
-            logger.error(f"فشل التنفيذ: {e}")
-            tg(f"❌ فشل snipe: {target['question'][:50]}\n{e}")
-            return False
+            logger.error(f"فشل: {e}"); tg(f"❌ فشل snipe: {tgt['question'][:50]}\n{e}"); return False
+    st.positions.append(asdict(pos)); st.trades_today += 1; st.total_trades += 1
+    lbl = "LIVE" if live else "PAPER"
+    msg = (f"{'🎯' if live else '📋'} [{lbl}] Snipe!\n{tgt['question'][:70]}\n"
+           f"YES@{price} ربح:${tgt['net_profit']:.4f} ينتهي:{tgt['minutes_left']:.0f}min")
+    logger.info(msg.replace("\n", " | ")); tg(msg); return True
 
-    state.positions.append(asdict(pos))
-    state.trades_today += 1
-    state.total_trades += 1
-
-    mode_label = "LIVE" if live else "PAPER"
-    msg = (f"{'🎯' if live else '📋'} [{mode_label}] Snipe!\n"
-           f"{target['question'][:70]}\n"
-           f"YES @ {price} | ربح متوقع: ${target['net_profit']:.4f}\n"
-           f"ينتهي خلال: {target['minutes_left']:.0f} دقيقة")
-    logger.info(msg.replace("\n", " | "))
-    tg(msg)
-    return True
-
-# ── إدارة المراكز ──
-def manage_positions(state: BotState, live: bool, client):
-    if not state.positions:
-        return
+def manage_positions(st: BotState, live: bool, client):
+    if not st.positions: return
     keep = []
-    for p in state.positions:
+    for p in st.positions:
         mdata = http_get(f"{GAMMA_API}/markets/{p['market_id']}")
-        resolved = False
-        pnl = 0.0
-
-        if mdata:
-            closed = mdata.get("closed", False)
-            if closed:
-                resolved = True
-                # تحقق من النتيجة: هل YES فاز؟
-                outcomes = mdata.get("outcomePrices") or []
-                if isinstance(outcomes, str):
-                    try: outcomes = json.loads(outcomes)
-                    except Exception: outcomes = []
-                if len(outcomes) >= 2:
-                    final_yes = float(outcomes[0])
-                    if final_yes >= 0.99:
-                        # YES فاز — ربح
-                        pnl = p["expected_profit"]
-                    else:
-                        # YES خسر — خسارة كاملة
-                        pnl = -p["size_usd"]
-
-        if resolved:
-            state.daily_pnl += pnl
-            state.total_pnl += pnl
+        if mdata and mdata.get("closed"):
+            o = mdata.get("outcomePrices") or []
+            if isinstance(o, str):
+                try: o = json.loads(o)
+                except Exception: o = []
+            final_yes = float(o[0]) if len(o) >= 2 else 0
+            pnl = p["expected_profit"] if final_yes >= 0.99 else -p["size_usd"]
+            st.daily_pnl += pnl; st.total_pnl += pnl
             icon = "💰" if pnl >= 0 else "🔻"
-            msg = f"{icon} Snipe انتهى — P&L:${pnl:+.4f}\n{p['question'][:60]}"
-            logger.info(msg.replace("\n", " | "))
-            tg(msg)
-            continue
-
+            logger.info(f"{icon} Snipe انتهى P&L:${pnl:+.4f} | {p['question'][:60]}")
+            tg(f"{icon} Snipe انتهى P&L:${pnl:+.4f}\n{p['question'][:60]}"); continue
         keep.append(p)
+    st.positions = keep
+    if st.daily_pnl <= -DAILY_LOSS_HALT:
+        st.halted = True; logger.warning(f"🛑 إيقاف — خسارة ${st.daily_pnl:.2f}")
+        tg(f"🛑 إيقاف طوارئ — خسارة ${st.daily_pnl:.2f}")
 
-    state.positions = keep
-    if state.daily_pnl <= -DAILY_LOSS_HALT:
-        state.halted = True
-        msg = f"🛑 إيقاف طوارئ — خسارة يومية ${state.daily_pnl:.2f}"
-        logger.warning(msg)
-        tg(msg)
-
-# ── الأوامر ──
 def cmd_check():
     logger.info("🔍 فحص أسواق شبه محسومة...")
-    targets = fetch_sniper_targets()
-    logger.info(f"وُجد {len(targets)} هدف مؤهل")
-    for t in targets[:10]:
-        logger.info(f"  {t['question'][:60]}")
-        logger.info(f"    YES:{t['yes_price']:.3f} | ربح:${t['net_profit']:.4f}"
-                     f" | {t['minutes_left']:.0f}min | vol:${t['volume']:,.0f}")
-    state = load_state()
-    print(f"\n{'='*45}")
-    print(f"  حالة Resolution Sniper Bot")
-    print(f"{'='*45}")
-    print(f"  اليوم           : {state.day}")
-    print(f"  صفقات اليوم     : {state.trades_today}/{MAX_TRADES_DAY}")
-    print(f"  مراكز مفتوحة    : {len(state.positions)}/{MAX_OPEN}")
-    print(f"  P&L اليوم       : ${state.daily_pnl:+.4f}")
-    print(f"  P&L إجمالي      : ${state.total_pnl:+.4f}")
-    print(f"  إجمالي صفقات    : {state.total_trades}")
-    print(f"  متوقف           : {state.halted}")
-    print(f"{'='*45}")
+    tgts = fetch_sniper_targets()
+    logger.info(f"وُجد {len(tgts)} هدف")
+    for t in tgts[:10]:
+        logger.info(f"  {t['question'][:55]} YES:{t['yes_price']:.3f}"
+                     f" ربح:${t['net_profit']:.4f} {t['minutes_left']:.0f}min vol:${t['volume']:,.0f}")
+    st = load_state()
+    print(f"\n{'='*42}\n  حالة Resolution Sniper Bot\n{'='*42}")
+    print(f"  اليوم: {st.day} | صفقات: {st.trades_today}/{MAX_TRADES_DAY} | مفتوحة: {len(st.positions)}/{MAX_OPEN}")
+    print(f"  P&L يوم: ${st.daily_pnl:+.4f} | إجمالي: ${st.total_pnl:+.4f} | متوقف: {st.halted}\n{'='*42}")
 
-# ── الدورة الرئيسية ──
-def run_cycle(state: BotState, live: bool, client):
+def run_cycle(st: BotState, live: bool, client):
     today = datetime.utcnow().strftime("%Y-%m-%d")
-    if state.day != today:
-        state.day = today
-        state.trades_today = 0
-        state.daily_pnl = 0.0
-        state.halted = False
-    if state.halted:
-        logger.warning("النظام متوقف — تجاوز حد الخسارة")
-        return
-
-    manage_positions(state, live, client)
-
-    if len(state.positions) >= MAX_OPEN:
-        return
-    if state.trades_today >= MAX_TRADES_DAY:
-        return
-
-    targets = fetch_sniper_targets()
-    if not targets:
-        return
-
+    if st.day != today: st.day = today; st.trades_today = 0; st.daily_pnl = 0.0; st.halted = False
+    if st.halted: logger.warning("النظام متوقف"); return
+    manage_positions(st, live, client)
+    if len(st.positions) >= MAX_OPEN or st.trades_today >= MAX_TRADES_DAY: return
+    tgts = fetch_sniper_targets()
     executed = 0
-    for t in targets:
-        if len(state.positions) >= MAX_OPEN:
-            break
-        if state.trades_today >= MAX_TRADES_DAY:
-            break
-        if execute_snipe(t, state, client, live):
-            executed += 1
-    if executed:
-        logger.info(f"تم تنفيذ {executed} صفقات snipe")
-    save_state(state)
+    for t in tgts:
+        if len(st.positions) >= MAX_OPEN or st.trades_today >= MAX_TRADES_DAY: break
+        if execute_snipe(t, st, client, live): executed += 1
+    if executed: logger.info(f"تم تنفيذ {executed} صفقات snipe")
+    save_state(st)
 
 def main():
     ap = argparse.ArgumentParser(description="Polymarket Resolution Sniper Bot")
-    ap.add_argument("--live", action="store_true", help="تداول حقيقي")
-    ap.add_argument("--check", action="store_true", help="فحص الأسواق والحالة")
+    ap.add_argument("--live", action="store_true"); ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
-
-    if args.check:
-        cmd_check()
-        return
-
-    live = args.live
-    mode = "LIVE" if live else "PAPER"
-    print(f"""
-╔══════════════════════════════════════════╗
-║   🎯 Resolution Sniper Bot               ║
-║   الوضع: {mode:6}                         ║
-║   نطاق السعر: {MIN_YES_PRICE}-{MAX_YES_PRICE} YES           ║
-║   حجم الصفقة: ${TRADE_SIZE_USD:.0f}                       ║
-╚══════════════════════════════════════════╝
-""")
-
+    if args.check: cmd_check(); return
+    live, mode = args.live, "LIVE" if args.live else "PAPER"
+    print(f"\n╔══════════════════════════════════════════╗\n"
+          f"║  🎯 Resolution Sniper Bot — {mode:6}       ║\n"
+          f"║  نطاق: {MIN_P}-{MAX_P} YES | صفقة: ${TRADE_USD:.0f}       ║\n"
+          f"╚══════════════════════════════════════════╝\n")
     client = None
     if live:
-        if not PK:
-            logger.error("PK غير موجود في .env3")
-            return
+        if not PK: logger.error("PK غير موجود في .env3"); return
         client = get_clob_client()
-        if not client:
-            logger.error("فشل الاتصال — تحويل لوضع Paper")
-            live = False
-    else:
-        logger.info("وضع المحاكاة — لا تنفيذ حقيقي")
-
-    tg(f"🎯 بدء resolution_sniper_bot ({mode})\nنطاق: {MIN_YES_PRICE}-{MAX_YES_PRICE}")
-    state = load_state()
-    cycle = 0
+        if not client: logger.error("فشل CLOB — تحويل لـ Paper"); live = False
+    else: logger.info("وضع المحاكاة — لا تنفيذ حقيقي")
+    tg(f"🎯 بدء sniper_bot ({mode})"); st = load_state(); cycle = 0
     try:
         while True:
             cycle += 1
-            logger.info(f"── دورة #{cycle} | مراكز:{len(state.positions)} P&L:${state.daily_pnl:+.4f} ──")
-            run_cycle(state, live, client)
-            time.sleep(SCAN_INTERVAL)
+            logger.info(f"── دورة #{cycle} | مراكز:{len(st.positions)} P&L:${st.daily_pnl:+.4f} ──")
+            run_cycle(st, live, client); time.sleep(SCAN_SEC)
     except KeyboardInterrupt:
-        save_state(state)
-        logger.info("تم الإيقاف")
-        tg(f"🛑 إيقاف resolution_sniper_bot\nP&L: ${state.total_pnl:+.4f}")
+        save_state(st); logger.info("تم الإيقاف"); tg(f"🛑 إيقاف sniper_bot P&L:${st.total_pnl:+.4f}")
 
 if __name__ == "__main__":
     main()
