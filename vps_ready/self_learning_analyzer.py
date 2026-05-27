@@ -31,7 +31,7 @@ OUTPUT_FILE = os.path.join(BOTS_DIR, "learning_params.json")
 
 def find_env_value(key: str) -> str | None:
     """Search available .env files for a key."""
-    env_files = [".env3", ".env2", ".env_naif", ".env", ".env_monthly"]
+    env_files = [".env3", ".env2", ".env_naif", ".env", ".env_monthly", ".env_finance"]
     for fname in env_files:
         fpath = os.path.join(BOTS_DIR, fname)
         if os.path.isfile(fpath):

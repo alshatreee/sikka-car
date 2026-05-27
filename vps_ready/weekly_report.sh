@@ -33,6 +33,7 @@ SERVICES=(
     nautilus-rsi-bot
     nautilus-bb-bot
     markov-bot
+    equity-long-short-bot
 )
 
 MSG="📊 *Weekly Report* ($WEEK_AGO → $DATE)%0A%0A"

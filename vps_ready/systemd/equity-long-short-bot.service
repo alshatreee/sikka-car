@@ -1,0 +1,16 @@
+[Unit]
+Description=Equity Long/Short Bot - S&P 500 Momentum + Hedge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bots
+ExecStart=/usr/bin/python3 /root/bots/equity_long_short_bot.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/root/bots/equity.log
+StandardError=append:/root/bots/equity.log
+
+[Install]
+WantedBy=multi-user.target
