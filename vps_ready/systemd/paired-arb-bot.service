@@ -1,0 +1,16 @@
+[Unit]
+Description=Paired Arbitrage Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bots
+ExecStart=/usr/bin/python3 /root/bots/paired_arb_bot.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/root/bots/paired_arb_bot.log
+StandardError=append:/root/bots/paired_arb_bot.log
+
+[Install]
+WantedBy=multi-user.target

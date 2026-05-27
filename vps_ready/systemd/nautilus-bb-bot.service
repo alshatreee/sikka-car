@@ -1,0 +1,16 @@
+[Unit]
+Description=Nautilus Bollinger Bands Strategy Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bots
+ExecStart=/usr/bin/python3 /root/bots/nautilus_bb_bot.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/root/bots/nautilus_bb_bot.log
+StandardError=append:/root/bots/nautilus_bb_bot.log
+
+[Install]
+WantedBy=multi-user.target
