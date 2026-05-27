@@ -74,9 +74,9 @@ MAX_DAILY_LOSS_USD = float(os.getenv("NAIF_MAX_LOSS", "20"))
 MAX_OPEN_POSITIONS = int(os.getenv("NAIF_MAX_POSITIONS", "5"))
 
 # Filters
-MIN_TREND_STRENGTH = int(os.getenv("NAIF_MIN_TREND", "80"))  # % minimum
-MIN_VOLUME_STRENGTH = float(os.getenv("NAIF_MIN_VOLUME", "100"))  # % minimum
-ALLOWED_FRAMES = os.getenv("NAIF_FRAMES", "4h,1d").lower().split(",")
+MIN_TREND_STRENGTH = int(os.getenv("NAIF_MIN_TREND", "70"))  # % minimum
+MIN_VOLUME_STRENGTH = float(os.getenv("NAIF_MIN_VOLUME", "70"))  # % minimum
+ALLOWED_FRAMES = os.getenv("NAIF_FRAMES", "1h,4h,1d").lower().split(",")
 
 # Risk management
 SL_PCT = float(os.getenv("NAIF_SL_PCT", "2.0"))   # stop loss %
