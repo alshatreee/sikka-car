@@ -1,0 +1,16 @@
+[Unit]
+Description=Grid Trading Bot - Bybit Spot ETH/USDT
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bots
+ExecStart=/usr/bin/python3 /root/bots/grid_trading_bot.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/root/bots/grid.log
+StandardError=append:/root/bots/grid.log
+
+[Install]
+WantedBy=multi-user.target

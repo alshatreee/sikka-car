@@ -34,6 +34,9 @@ SERVICES=(
     nautilus-bb-bot
     markov-bot
     equity-long-short-bot
+    funding-carry-bot
+    negrisk-arb-bot
+    grid-trading-bot
 )
 
 MSG="📊 *Weekly Report* ($WEEK_AGO → $DATE)%0A%0A"
