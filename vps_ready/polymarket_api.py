@@ -231,8 +231,8 @@ def find_arb_opportunities() -> list[dict]:
 
 
 def get_whale_activity(min_size: float = 500, limit: int = 50) -> list[dict]:
-    """Fetch large trades from the data API."""
-    data = _get(f"{DATA_API}/activity", params={"limit": limit})
+    """Fetch large trades via /trades (no user required)."""
+    data = _get(f"{DATA_API}/trades", params={"limit": limit})
     if not isinstance(data, list):
         return []
     whales: list[dict] = []

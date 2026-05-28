@@ -160,7 +160,7 @@ def get_token_id(market: dict, side: str) -> str:
 # ═══════════ Strategy 1: Whale Detection ═══════════
 def strategy_whale(markets_map: dict) -> list[Signal]:
     signals = []
-    activity = http_get(f"{DATA_API}/activity?limit=50")
+    activity = http_get(f"{DATA_API}/trades?limit=50")
     if not activity: return signals
     items = activity if isinstance(activity, list) else activity.get("data", [])
     for item in items:

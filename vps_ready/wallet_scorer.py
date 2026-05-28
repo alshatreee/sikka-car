@@ -52,28 +52,36 @@ def _parse_ts(ts_raw) -> datetime | None:
 
 # ── 1. جلب تاريخ المحفظة ──
 def fetch_wallet_history(address: str, limit: int = 100) -> list[dict]:
-    """GET /activity — جلب آخر الصفقات."""
-    url = f"{DATA_API}/activity?address={address}&limit={limit}"
-    try:
-        r = SESSION.get(url, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        _log(f"خطأ في جلب بيانات {address[:10]}...: {e}")
-        return []
+    """GET /activity?user= or /trades?user= — جلب آخر الصفقات."""
     trades = []
-    for item in data:
-        if item.get("type") != "TRADE":
+    for endpoint in ("activity", "trades"):
+        url = f"{DATA_API}/{endpoint}"
+        try:
+            r = SESSION.get(url, params={"user": address, "limit": limit}, timeout=20)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            _log(f"{endpoint} فشل لـ {address[:10]}...: {e}")
             continue
-        ts = _parse_ts(item.get("timestamp", 0))
-        if not ts:
+        if not isinstance(data, list) or not data:
             continue
-        trades.append({
-            "market": item.get("title", item.get("market", "")),
-            "side": item.get("side", ""), "price": float(item.get("price", 0)),
-            "size": float(item.get("size", 0)), "timestamp": ts.isoformat(),
-            "outcome": item.get("outcome", ""),
-        })
+        for item in data:
+            if endpoint == "activity" and item.get("type") != "TRADE":
+                continue
+            ts = _parse_ts(item.get("timestamp", item.get("createdAt", 0)))
+            if not ts:
+                continue
+            trades.append({
+                "market": item.get("title", item.get("market", "")),
+                "side": item.get("side", ""), "price": float(item.get("price", 0)),
+                "size": float(item.get("size", item.get("amount", 0))),
+                "timestamp": ts.isoformat(),
+                "outcome": item.get("outcome", ""),
+            })
+        if trades:
+            break
+    if not trades:
+        _log(f"لم يتم جلب بيانات لـ {address[:10]}...")
     return trades
 
 

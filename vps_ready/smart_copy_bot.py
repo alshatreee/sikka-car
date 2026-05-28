@@ -128,7 +128,7 @@ def reset_daily(state):
 # ── بيانات السوق ──
 def fetch_wallet_activity(address):
     try:
-        url = f"{DATA_API}/activity?address={address}&limit=20"
+        url = f"{DATA_API}/activity?user={address}&limit=20"
         r = SESSION.get(url, timeout=15)
         r.raise_for_status()
         return r.json()
