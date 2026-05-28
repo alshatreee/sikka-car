@@ -23,6 +23,7 @@ from .quant_model import QuantModel
 from .risk_engine import RiskEngine
 from .scanner import MarketScanner
 from .execution import ExecutionEngine
+from .quant_model import get_category_fee
 
 
 @dataclass
@@ -442,6 +443,7 @@ class Backtester:
         trades_rejected = 0
         active_days = 0
         total_fees = 0.0
+        position_fee_rates: dict[str, float] = {}  # trade_id -> category fee rate
         # Brier score tracking: (estimated_prob, actual_outcome)
         brier_samples: list[tuple[float, float]] = []
 
@@ -478,9 +480,11 @@ class Backtester:
                     pnl_pct = pos.pnl_pct
                     pnl_usd = pos.pnl_usd
 
-                    # Deduct exit fees (taker fee + spread + gas)
+                    # Deduct exit fees (category-aware taker fee + spread + gas)
+                    cat_fee = position_fee_rates.get(
+                        pos.trade_id, self.bt_config.taker_fee_pct)
                     exit_fee = (
-                        pos.size_usd * self.bt_config.taker_fee_pct
+                        pos.size_usd * cat_fee
                         + pos.size_usd * self.bt_config.spread_cost_pct
                         + self.bt_config.gas_cost_per_trade
                     )
@@ -607,11 +611,13 @@ class Backtester:
                     trades_rejected += 1
                     continue
 
-                # Execute (deduct entry fees: taker + spread + gas)
+                # Execute (deduct entry fees: category-aware taker + spread + gas)
                 position = execution.execute_phase1(proposal)
                 if position:
+                    cat_fee = get_category_fee(market)
+                    position_fee_rates[position.trade_id] = cat_fee
                     entry_fee = (
-                        position.size_usd * self.bt_config.taker_fee_pct
+                        position.size_usd * cat_fee
                         + position.size_usd * self.bt_config.spread_cost_pct
                         + self.bt_config.gas_cost_per_trade
                     )
@@ -629,10 +635,12 @@ class Backtester:
             daily_pnl.append((date_str, day_pnl))
             current += step_delta
 
-        # Close remaining positions at current price (with exit fees)
+        # Close remaining positions at current price (with category-aware fees)
         for pos in list(positions):
+            cat_fee = position_fee_rates.get(
+                pos.trade_id, self.bt_config.taker_fee_pct)
             exit_fee = (
-                pos.size_usd * self.bt_config.taker_fee_pct
+                pos.size_usd * cat_fee
                 + pos.size_usd * self.bt_config.spread_cost_pct
                 + self.bt_config.gas_cost_per_trade
             )
