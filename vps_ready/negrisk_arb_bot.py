@@ -129,6 +129,8 @@ def get_yes_token(market: dict) -> str:
         try: tokens = json.loads(tokens)
         except Exception: return ""
     for t in (tokens or []):
+        if isinstance(t, str):
+            continue
         o = str(t.get("outcome", "")).upper()
         tid = t.get("token_id") or t.get("tokenId") or ""
         if o in ("YES", "1"): return str(tid)
@@ -138,6 +140,8 @@ def get_yes_token(market: dict) -> str:
         clob = http_get(f"{CLOB_API}/markets/{cid}")
         if clob:
             for t in (clob.get("tokens") or []):
+                if isinstance(t, str):
+                    continue
                 o = str(t.get("outcome", "")).upper()
                 if o in ("YES", "1"): return str(t.get("token_id") or t.get("tokenId") or "")
     return ""
