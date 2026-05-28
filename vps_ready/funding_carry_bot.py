@@ -1,8 +1,6 @@
 """
 funding_carry_bot.py — Funding Rate Carry Bot (Bybit)
-=====================================================
-استراتيجية: شراء Spot + بيع Futures (perpetual) على نفس الأصل
-تحصيل مدفوعات Funding Rate كل 8 ساعات — دلتا محايدة = لا مخاطر اتجاهية
+شراء Spot + بيع Futures (perpetual) — تحصيل Funding كل 8h — دلتا محايدة
 
 الاستخدام:
     python funding_carry_bot.py              # محاكاة (افتراضي)
@@ -143,10 +141,7 @@ def open_carry(symbol: str, rate: float, st: BotState, live: bool) -> bool:
 
     spot_price = fetch_price(symbol)
     if spot_price <= 0: return False
-
-    qty = POSITION_SIZE / spot_price
-    lbl = "LIVE" if live else "PAPER"
-
+    qty = POSITION_SIZE / spot_price; lbl = "LIVE" if live else "PAPER"
     if live:
         try:
             spot_ex = get_spot_exchange()
@@ -182,14 +177,10 @@ def close_carry(pos: dict, reason: str, st: BotState, live: bool) -> float:
     symbol = pos["symbol"]
     spot_now = fetch_price(symbol)
     if spot_now <= 0: spot_now = pos["spot_entry"]
-
-    # حساب PnL
     spot_pnl = (spot_now - pos["spot_entry"]) / pos["spot_entry"] * pos["size_usd"]
     fut_pnl = (pos["futures_entry"] - spot_now) / pos["futures_entry"] * pos["size_usd"]
-    price_pnl = spot_pnl + fut_pnl  # يجب أن يقترب من صفر
-    total_pnl = pos["funding_collected"] + price_pnl
-    lbl = "LIVE" if live else "PAPER"
-
+    price_pnl = spot_pnl + fut_pnl
+    total_pnl = pos["funding_collected"] + price_pnl; lbl = "LIVE" if live else "PAPER"
     if live:
         try:
             spot_ex = get_spot_exchange()
