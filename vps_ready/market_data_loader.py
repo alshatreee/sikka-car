@@ -33,12 +33,12 @@ logger = logging.getLogger("market_data_loader")
 
 # ── HTTP helper ──────────────────────────────────────────────────
 def _http_get(url: str, timeout: int = 15):
-    """GET JSON with proxy support.  Returns parsed dict/list or None."""
+    """GET JSON with proxy support. Returns parsed dict/list or None."""
     try:
         proxy = os.environ.get("HTTPS_PROXY", "")
         if proxy:
-            handler = urllib.request.ProxyHandler({"https": proxy, "http": proxy})
-            opener = urllib.request.build_opener(handler)
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({"https": proxy, "http": proxy}))
         else:
             opener = urllib.request.build_opener()
         req = urllib.request.Request(url, headers={"User-Agent": "market-data-loader/1.0"})
@@ -48,15 +48,10 @@ def _http_get(url: str, timeout: int = 15):
         logger.debug("HTTP error %s — %s", url[:80], e)
         return None
 
-
 # ── 1. Parquet loader ────────────────────────────────────────────
 def load_parquet_history(market_id: str, data_dir: str = None) -> list[dict]:
-    """Load OHLCV bars from local Parquet files for a given market_id.
-
-    Searches ``{data_dir}/polymarket/`` for files whose name contains the
-    market_id.  Returns a sorted list of dicts with keys:
-        timestamp, open, high, low, close, volume
-    Returns [] if no data found or libraries unavailable.
+    """Load OHLCV bars from Parquet files in {data_dir}/polymarket/ matching market_id.
+    Returns sorted list of dicts: [{timestamp, open, high, low, close, volume}, ...]
     """
     data_dir = data_dir or MARKET_DATA_DIR
     parquet_dir = Path(data_dir) / "polymarket"
@@ -92,40 +87,22 @@ def load_parquet_history(market_id: str, data_dir: str = None) -> list[dict]:
     rows.sort(key=lambda r: r["timestamp"])
     return rows
 
-
 def _row_to_ohlcv(row) -> dict:
     """Normalise a raw row (dict-like) into a standard OHLCV dict."""
     def _f(val, default=0.0):
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            return default
-
-    # handle various column-name conventions in the dataset
+        try: return float(val)
+        except (TypeError, ValueError): return default
     get = row.get if isinstance(row, dict) else lambda k, d=None: getattr(row, k, d)
     price = _f(get("price", get("p", 0)))
-    return {
-        "timestamp": str(get("timestamp", get("t", ""))),
-        "open":   _f(get("open",  price)),
-        "high":   _f(get("high",  price)),
-        "low":    _f(get("low",   price)),
-        "close":  _f(get("close", price)),
-        "volume": _f(get("volume", get("size", 0))),
-    }
-
+    return {"timestamp": str(get("timestamp", get("t", ""))),
+            "open": _f(get("open", price)), "high": _f(get("high", price)),
+            "low": _f(get("low", price)), "close": _f(get("close", price)),
+            "volume": _f(get("volume", get("size", 0)))}
 
 # ── 2. Unified price-history getter ─────────────────────────────
 def get_market_history(market_id: str, token_id: str,
                        days: int = 60, data_dir: str = None) -> list[float]:
-    """Return list of close prices (floats 0-1) via Parquet → CLOB → Gamma fallback.
-
-    Parameters
-    ----------
-    market_id : str   — Polymarket condition-id
-    token_id  : str   — CLOB token id (for API fallback)
-    days      : int   — lookback window
-    data_dir  : str   — override MARKET_DATA_DIR
-    """
+    """Return list of close prices (floats 0-1) via Parquet -> CLOB -> Gamma fallback."""
     # --- attempt 1: local Parquet ---
     bars = load_parquet_history(market_id, data_dir)
     if bars:
@@ -172,11 +149,7 @@ def get_market_history(market_id: str, token_id: str,
 
 # ── 3. Calibration data ─────────────────────────────────────────
 def get_calibration_data(data_dir: str = None) -> dict:
-    """Load calibration analysis (price_bucket → actual_resolution_rate).
-
-    Looks for ``calibration.json`` in the data directory, as produced by the
-    prediction-market-analysis project.  Returns empty dict if unavailable.
-    """
+    """Load calibration analysis {price_bucket: actual_resolution_rate} from dataset."""
     data_dir = data_dir or MARKET_DATA_DIR
     for name in ("calibration.json", "polymarket/calibration.json",
                  "analysis/calibration.json"):
@@ -185,7 +158,6 @@ def get_calibration_data(data_dir: str = None) -> dict:
             try:
                 with open(fpath, "r", encoding="utf-8") as f:
                     raw = json.load(f)
-                # normalise: ensure keys are strings of bucket boundaries
                 if isinstance(raw, dict):
                     logger.info("Loaded calibration from %s", fpath)
                     return {str(k): float(v) for k, v in raw.items()}
@@ -193,33 +165,28 @@ def get_calibration_data(data_dir: str = None) -> dict:
                 logger.warning("Error reading calibration file %s: %s", fpath, e)
     return {}
 
-
 # ── 4. Dataset download instructions ────────────────────────────
 def download_dataset(dest_dir: str = None) -> bool:
-    """Print instructions for obtaining the prediction-market-analysis dataset.
-
-    The full dataset is ~36 GB so we do NOT auto-download.
-    Returns False always (manual action required).
-    """
+    """Print instructions for the ~36 GB dataset (no auto-download). Returns False."""
     dest_dir = dest_dir or MARKET_DATA_DIR
-    print("=" * 65)
-    print("  Jon-Becker/prediction-market-analysis dataset setup")
-    print("=" * 65)
-    print()
-    print("The dataset contains historical Polymarket trades/prices in Parquet")
-    print("format (~36 GB total).  Automated download is disabled.")
-    print()
-    print("Steps:")
-    print(f"  1. mkdir -p {dest_dir}/polymarket")
-    print("  2. Visit: https://github.com/Jon-Becker/prediction-market-analysis")
-    print("  3. Download the Parquet files you need (or use the provided scripts)")
-    print(f"  4. Place .parquet files in: {dest_dir}/polymarket/")
-    print("  5. Optionally place calibration.json in the same directory")
-    print()
-    print("After setup, bots will auto-detect and use the local data.")
-    print("=" * 65)
-    return False
+    msg = f"""{'=' * 65}
+  Jon-Becker/prediction-market-analysis dataset setup
+{'=' * 65}
 
+The dataset contains historical Polymarket trades/prices in Parquet
+format (~36 GB total).  Automated download is disabled.
+
+Steps:
+  1. mkdir -p {dest_dir}/polymarket
+  2. Visit: https://github.com/Jon-Becker/prediction-market-analysis
+  3. Download the Parquet files you need (or use the provided scripts)
+  4. Place .parquet files in: {dest_dir}/polymarket/
+  5. Optionally place calibration.json in the same directory
+
+After setup, bots will auto-detect and use the local data.
+{'=' * 65}"""
+    print(msg)
+    return False
 
 # ── CLI quick-test ───────────────────────────────────────────────
 if __name__ == "__main__":
