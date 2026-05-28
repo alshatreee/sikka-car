@@ -1,6 +1,7 @@
 """
 Backtesting Engine
 Simulates the hedge fund strategy against historical or synthetic market data.
+Supports real Gamma API data (resolved markets) and synthetic fallback.
 Runs the full pipeline: Scanner → Quant → Risk → Execution → Performance.
 """
 
@@ -227,6 +228,162 @@ class SyntheticMarketGenerator:
         return self._markets.get(market_id, {}).get("current_price", 0.5)
 
 
+class HistoricalMarketGenerator:
+    """Fetches resolved markets from Gamma API for realistic backtesting."""
+
+    GAMMA_API = "https://gamma-api.polymarket.com"
+
+    def __init__(self, config: BacktestConfig, cache_dir: str = ""):
+        self.config = config
+        self.rng = random.Random(config.seed)
+        self._markets: dict[str, dict] = {}
+        self._timeline: list[list[str]] = []
+        self._step_idx = 0
+        self._cache_path = Path(cache_dir or ".") / "bt_historical_cache.json"
+        self._loaded = False
+
+    def load(self) -> bool:
+        """Fetch resolved markets from Gamma API or cache. Returns True if data available."""
+        if self._cache_path.exists():
+            try:
+                cached = json.loads(self._cache_path.read_text())
+                self._markets = cached.get("markets", {})
+                self._timeline = cached.get("timeline", [])
+                self._loaded = bool(self._markets)
+                return self._loaded
+            except Exception:
+                pass
+
+        try:
+            import requests
+        except ImportError:
+            return False
+
+        markets_raw = []
+        for offset in range(0, 500, 100):
+            try:
+                r = requests.get(f"{self.GAMMA_API}/markets", params={
+                    "closed": "true", "limit": 100, "offset": offset,
+                    "order": "volume", "ascending": "false",
+                }, timeout=15)
+                r.raise_for_status()
+                batch = r.json()
+                if not batch:
+                    break
+                markets_raw.extend(batch)
+            except Exception:
+                break
+
+        if len(markets_raw) < 10:
+            return False
+
+        for m in markets_raw:
+            mid = m.get("conditionId") or m.get("id", "")
+            if not mid:
+                continue
+            outcomes = m.get("outcomePrices") or "[]"
+            if isinstance(outcomes, str):
+                try:
+                    outcomes = json.loads(outcomes)
+                except Exception:
+                    outcomes = []
+            yes_p = float(outcomes[0]) if outcomes else 0.5
+
+            end_str = m.get("endDateIso") or m.get("endDate") or ""
+            try:
+                end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                end_dt = self.config.end_date
+
+            resolved_to = str(m.get("resolvedOutcome") or m.get("outcome") or "").upper()
+            outcome = True if resolved_to in ("YES", "1") else False
+
+            self._markets[mid] = {
+                "id": mid,
+                "question": m.get("question", "?")[:80],
+                "initial_yes": max(0.05, min(0.95, yes_p)),
+                "current_price": max(0.05, min(0.95, yes_p)),
+                "liquidity": float(m.get("liquidity") or 30000),
+                "volume": float(m.get("volume") or 10000),
+                "expiry": end_dt,
+                "outcome": outcome,
+                "resolved": False,
+                "category": m.get("groupItemTitle") or "",
+            }
+
+        total_steps = max(1, (self.config.end_date - self.config.start_date).days
+                          // max(1, self.config.step_hours // 24))
+        market_ids = list(self._markets.keys())
+        self.rng.shuffle(market_ids)
+
+        self._timeline = []
+        per_step = max(1, len(market_ids) // max(1, total_steps))
+        for i in range(0, len(market_ids), per_step):
+            self._timeline.append(market_ids[i:i + per_step])
+
+        try:
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self._cache_path.write_text(json.dumps({
+                "markets": self._markets, "timeline": self._timeline,
+            }, default=str))
+        except Exception:
+            pass
+
+        self._loaded = True
+        return True
+
+    def step(self, current_date: datetime) -> list[MarketData]:
+        if not self._loaded or self._step_idx >= len(self._timeline):
+            return []
+
+        active_ids = self._timeline[self._step_idx]
+        self._step_idx += 1
+        available = []
+        for mid in active_ids:
+            m = self._markets.get(mid)
+            if not m or m["resolved"]:
+                continue
+
+            noise = self.rng.gauss(0, self.config.volatility * 0.5)
+            m["current_price"] += noise
+            m["current_price"] = max(0.03, min(0.97, m["current_price"]))
+
+            if self._step_idx >= len(self._timeline) - 2:
+                m["resolved"] = True
+                m["current_price"] = 1.0 if m["outcome"] else 0.0
+                continue
+
+            price = m["current_price"]
+            available.append(MarketData(
+                market_id=mid,
+                question=m["question"],
+                yes_price=price,
+                no_price=1 - price,
+                liquidity_usd=m["liquidity"],
+                volume_24h=m["volume"],
+                spread=abs(self.rng.gauss(0.02, 0.008)),
+                expiry=m["expiry"] if isinstance(m["expiry"], datetime)
+                       else datetime.utcnow() + timedelta(days=14),
+                category=m.get("category", ""),
+            ))
+        return available
+
+    def get_outcome(self, market_id: str) -> Optional[bool]:
+        m = self._markets.get(market_id)
+        if m and m["resolved"]:
+            return m["outcome"]
+        return None
+
+    def get_true_prob(self, market_id: str) -> float:
+        m = self._markets.get(market_id)
+        if not m:
+            return 0.5
+        return 0.95 if m["outcome"] else 0.05
+
+    def get_current_price(self, market_id: str) -> float:
+        return self._markets.get(market_id, {}).get("current_price", 0.5)
+
+
 class Backtester:
     """
     Runs a full backtest simulation.
@@ -244,11 +401,13 @@ class Backtester:
         self,
         fund_config: Optional[HedgeFundConfig] = None,
         backtest_config: Optional[BacktestConfig] = None,
+        use_real_data: bool = False,
     ):
         self.fund_config = fund_config or HedgeFundConfig()
         self.bt_config = backtest_config or BacktestConfig(
             initial_capital=self.fund_config.capital_usd
         )
+        self.use_real_data = use_real_data
         # Sync capital from backtest config without overwriting risk/entry settings
         if self.fund_config.capital_usd != self.bt_config.initial_capital:
             self.fund_config.capital_usd = self.bt_config.initial_capital
@@ -263,7 +422,15 @@ class Backtester:
         import tempfile
         _bt_tmpdir = tempfile.mkdtemp(prefix="bt_")
         tracker = PerformanceTracker(data_dir=_bt_tmpdir)
-        generator = SyntheticMarketGenerator(self.bt_config)
+
+        generator = None
+        if self.use_real_data:
+            hist = HistoricalMarketGenerator(self.bt_config, cache_dir=_bt_tmpdir)
+            if hist.load():
+                generator = hist
+        if generator is None:
+            generator = SyntheticMarketGenerator(self.bt_config)
+
         rng = random.Random(self.bt_config.seed)
 
         positions: list[Position] = []
@@ -521,6 +688,7 @@ def run_quick_backtest(
     capital: float = 1000,
     days: int = 90,
     seed: int = 42,
+    use_real_data: bool = False,
 ) -> BacktestResult:
     """Convenience function for a quick backtest."""
     bt_config = BacktestConfig(
@@ -529,11 +697,14 @@ def run_quick_backtest(
         seed=seed,
         initial_capital=capital,
     )
-    backtester = Backtester(backtest_config=bt_config)
+    backtester = Backtester(backtest_config=bt_config, use_real_data=use_real_data)
     return backtester.run()
 
 
 if __name__ == "__main__":
-    print("Running 90-day backtest...")
-    result = run_quick_backtest(capital=1000, days=90, seed=42)
+    import sys
+    real = "--real" in sys.argv
+    mode = "REAL Gamma API" if real else "SYNTHETIC"
+    print(f"Running 90-day backtest ({mode} data)...")
+    result = run_quick_backtest(capital=1000, days=90, seed=42, use_real_data=real)
     print(result.summary())

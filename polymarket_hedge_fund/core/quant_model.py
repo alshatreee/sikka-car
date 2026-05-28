@@ -19,11 +19,38 @@ class QuantModel:
            + (P_structure × 0.15) + (P_time × 0.15)
 
     Edge = P(est) − market_price
+    news_score is derived from volume spike + price momentum (not manual).
     """
 
     def __init__(self, config: HedgeFundConfig):
         self.weights = config.quant_weights
         self.signal_weights = config.signal_weights
+
+    def _calc_news_proxy(self, market: MarketData) -> float:
+        """Derive news signal from volume spike and price momentum.
+        High volume + price far from 0.5 = strong directional news.
+        Returns 0-1 where >0.5 is bullish, <0.5 is bearish."""
+        vol_signal = min(1.0, market.volume_24h / 80_000)
+        price = market.yes_price
+        price_conviction = abs(price - 0.50) * 2
+        if price > 0.50:
+            news_score = 0.50 + (vol_signal * 0.3 + price_conviction * 0.2)
+        else:
+            news_score = 0.50 - (vol_signal * 0.3 + price_conviction * 0.2)
+        return max(0.05, min(0.95, news_score))
+
+    def _calc_sentiment_proxy(self, market: MarketData) -> float:
+        """Derive sentiment from liquidity flow direction.
+        High liquidity relative to volume = patient money (smart sentiment).
+        Low spread = consensus forming."""
+        liq_vol_ratio = (market.liquidity_usd / max(market.volume_24h, 1))
+        patience_score = min(1.0, liq_vol_ratio / 5.0)
+        consensus_score = max(0.0, 1.0 - market.spread / 0.08)
+        price = market.yes_price
+        if price > 0.50:
+            return 0.50 + (patience_score * 0.15 + consensus_score * 0.15)
+        else:
+            return 0.50 - (patience_score * 0.15 + consensus_score * 0.15)
 
     def estimate(
         self,
@@ -43,9 +70,8 @@ class QuantModel:
         Returns:
             QuantEstimate with all components
         """
-        # Derive component probabilities
-        p_news = signal.news_score
-        p_sentiment = signal.sentiment_score
+        p_news = self._calc_news_proxy(market)
+        p_sentiment = self._calc_sentiment_proxy(market)
         p_structure = self._calc_structure_score(market)
         p_time = self._calc_time_score(market)
 

@@ -52,6 +52,18 @@ class ExecutionEngine:
         self.config = config
         self.api = api
 
+    def _kelly_size(self, edge: float, price: float) -> float:
+        """Quarter-Kelly position sizing for binary markets.
+        f* = edge / (1 - price), then apply kelly_fraction and cap."""
+        if edge <= 0 or price <= 0.02 or price >= 0.98:
+            return self.config.max_order_size_usd
+        payout_room = 1.0 - price
+        kelly_f = edge / payout_room
+        kelly_f = max(0, min(kelly_f, 0.20))
+        sized = self.config.capital_usd * kelly_f * self.config.kelly_fraction
+        cap = self.config.capital_usd * self.config.kelly_max_pct
+        return max(1.0, min(sized, cap))
+
     def build_proposal(
         self,
         market: MarketData,
@@ -63,9 +75,13 @@ class ExecutionEngine:
         quant_estimate=None,
     ) -> TradeProposal:
         """
-        Build a trade proposal with proper sizing and SL/TP.
+        Build a trade proposal with Kelly or fixed sizing and SL/TP.
         """
-        total_size = self.config.max_order_size_usd
+        if self.config.use_kelly_sizing and edge > 0:
+            entry_p = market.yes_price if direction == Direction.YES else market.no_price
+            total_size = self._kelly_size(edge, entry_p)
+        else:
+            total_size = self.config.max_order_size_usd
         phase1 = total_size * self.config.execution.phase1_ratio
         phase2 = total_size * self.config.execution.phase2_ratio
 

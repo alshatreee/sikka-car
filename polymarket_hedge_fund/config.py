@@ -86,6 +86,9 @@ class HedgeFundConfig:
     execution: ExecutionConfig = field(default_factory=ExecutionConfig)
     quant_weights: QuantWeights = field(default_factory=QuantWeights)
     signal_weights: SignalWeights = field(default_factory=SignalWeights)
+    use_kelly_sizing: bool = True
+    kelly_fraction: float = 0.25      # Quarter Kelly (conservative)
+    kelly_max_pct: float = 0.03       # Cap Kelly at 3% of capital
 
     @property
     def max_order_size_usd(self) -> float:
