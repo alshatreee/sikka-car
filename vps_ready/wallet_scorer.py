@@ -50,10 +50,10 @@ def _parse_ts(ts_raw) -> datetime | None:
     return None
 
 
-# ── 1. جلب تاريخ المحفظة ──
-def fetch_wallet_history(address: str, limit: int = 100) -> list[dict]:
-    """GET /activity?user= or /trades?user= — جلب آخر الصفقات."""
-    trades = []
+# ── 1. جلب تاريخ المحفظة (جميع الأنواع) ──
+def fetch_wallet_history(address: str, limit: int = 200) -> list[dict]:
+    """GET /activity?user= — جلب جميع الأنشطة (TRADE + REDEEM + MAKER_REBATE)."""
+    items = []
     for endpoint in ("activity", "trades"):
         url = f"{DATA_API}/{endpoint}"
         try:
@@ -66,47 +66,75 @@ def fetch_wallet_history(address: str, limit: int = 100) -> list[dict]:
         if not isinstance(data, list) or not data:
             continue
         for item in data:
-            if endpoint == "activity" and item.get("type") != "TRADE":
-                continue
+            act_type = item.get("type", "TRADE").upper()
             ts = _parse_ts(item.get("timestamp", item.get("createdAt", 0)))
             if not ts:
                 continue
-            trades.append({
+            items.append({
+                "type": act_type,
                 "market": item.get("title", item.get("market", "")),
-                "side": item.get("side", ""), "price": float(item.get("price", 0)),
+                "side": item.get("side", ""),
+                "price": float(item.get("price", 0)),
                 "size": float(item.get("size", item.get("amount", 0))),
+                "usdc_size": float(item.get("usdcSize", 0) or item.get("cashAmount", 0) or 0),
                 "timestamp": ts.isoformat(),
                 "outcome": item.get("outcome", ""),
             })
-        if trades:
+        if items:
             break
-    if not trades:
+    if not items:
         _log(f"لم يتم جلب بيانات لـ {address[:10]}...")
-    return trades
+    return items
 
 
-# ── 2. تقييم المحفظة ──
-def score_wallet(address: str, trades: list[dict] | None = None) -> dict:
-    """حساب درجة المحفظة المركبة (0-100)."""
-    if trades is None:
-        trades = fetch_wallet_history(address)
+# ── 2. تصنيف المحفظة: trader أو market maker ──
+def classify_wallet(activity: list[dict]) -> str:
+    """إذا كان MAKER_REBATE أو REDEEM > 20% من الأنشطة → market_maker."""
+    if not activity:
+        return "trader"
+    types = [a.get("type", "").upper() for a in activity]
+    n_trade = types.count("TRADE")
+    n_redeem = types.count("REDEEM")
+    n_rebate = types.count("MAKER_REBATE")
+    non_trade = n_redeem + n_rebate
+    total = n_trade + non_trade
+    if total == 0:
+        return "trader"
+    if non_trade / total >= 0.20 or n_rebate >= 3:
+        return "market_maker"
+    return "trader"
+
+
+# ── 3. تقييم المحفظة ──
+def score_wallet(address: str, activity: list[dict] | None = None) -> dict:
+    """حساب درجة المحفظة المركبة (0-100) — يدعم trader و market_maker."""
+    if activity is None:
+        activity = fetch_wallet_history(address)
         time.sleep(RATE_LIMIT_SECS)
 
-    result = {"address": address, "win_rate": 0.0, "profit_factor": 0.0,
-              "avg_trade_size": 0.0, "total_trades": len(trades), "active_days": 0,
-              "consistency": 1.0, "recency": 999, "composite_score": 0.0, "grade": "D"}
-    if not trades:
+    wallet_type = classify_wallet(activity)
+    trades = [a for a in activity if a.get("type", "").upper() == "TRADE"]
+    redeems = [a for a in activity if a.get("type", "").upper() == "REDEEM"]
+    rebates = [a for a in activity if a.get("type", "").upper() == "MAKER_REBATE"]
+
+    result = {
+        "address": address, "wallet_type": wallet_type,
+        "win_rate": 0.0, "profit_factor": 0.0,
+        "avg_trade_size": 0.0, "total_trades": len(trades), "active_days": 0,
+        "consistency": 1.0, "recency": 999,
+        "total_redeemed": 0.0, "total_rebates": 0.0, "net_cashflow": 0.0, "roi": 0.0,
+        "composite_score": 0.0, "grade": "D",
+    }
+    if not activity:
         return result
 
     now = datetime.now(timezone.utc)
-    sizes = [t["price"] * t["size"] for t in trades if t["size"] > 0]
-    result["avg_trade_size"] = round(mean(sizes), 2) if sizes else 0.0
 
-    # أيام النشاط وآخر نشاط
+    # ── أيام النشاط وآخر نشاط (من كل الأنشطة) ──
     days, timestamps = set(), []
-    for t in trades:
+    for a in activity:
         try:
-            dt = datetime.fromisoformat(t["timestamp"])
+            dt = datetime.fromisoformat(a["timestamp"])
             days.add(dt.strftime("%Y-%m-%d"))
             timestamps.append(dt)
         except Exception:
@@ -118,15 +146,29 @@ def score_wallet(address: str, trades: list[dict] | None = None) -> dict:
             latest = latest.replace(tzinfo=timezone.utc)
         result["recency"] = (now - latest).days
 
-    # نسبة الفوز والأرباح
+    # ── حساب REDEEM و MAKER_REBATE ──
+    total_redeemed = sum(a["usdc_size"] or (a["price"] * a["size"]) for a in redeems)
+    total_rebates = sum(a["usdc_size"] or (a["price"] * a["size"]) for a in rebates)
+    result["total_redeemed"] = round(total_redeemed, 2)
+    result["total_rebates"] = round(total_rebates, 2)
+
+    # ── حجم التداول ──
+    sizes = [a["usdc_size"] or (a["price"] * a["size"]) for a in trades if a["size"] > 0]
+    result["avg_trade_size"] = round(mean(sizes), 2) if sizes else 0.0
+
+    # ── نسبة الفوز والأرباح (من TRADE فقط) ──
     wins, losses, gross_profit, gross_loss = 0, 0, 0.0, 0.0
     daily_returns: dict[str, float] = {}
+    total_buys = 0.0
     for t in trades:
         side = t.get("side", "").upper()
         outcome = t.get("outcome", "").upper()
+        usd = t["usdc_size"] or (t["price"] * t["size"]) if t["size"] > 0 else t["price"]
+        if side == "BUY":
+            total_buys += usd
         if outcome not in ("YES", "NO"):
             continue
-        price, usd = t["price"], t["price"] * t["size"] if t["size"] > 0 else t["price"]
+        price = t["price"]
         won = (side == "BUY" and outcome == "YES") or (side == "SELL" and outcome == "NO")
         if won:
             wins += 1
@@ -146,7 +188,12 @@ def score_wallet(address: str, trades: list[dict] | None = None) -> dict:
     result["win_rate"] = round((wins / total_resolved * 100) if total_resolved else 0.0, 1)
     result["profit_factor"] = round((gross_profit / gross_loss) if gross_loss > 0 else 0.0, 2)
 
-    # الاتساق
+    # ── ROI من cashflow (مهم لـ market makers) ──
+    net_cashflow = total_redeemed + total_rebates - total_buys
+    result["net_cashflow"] = round(net_cashflow, 2)
+    result["roi"] = round((net_cashflow / total_buys * 100) if total_buys > 0 else 0.0, 1)
+
+    # ── الاتساق ──
     if len(daily_returns) >= 2:
         vals = list(daily_returns.values())
         avg = mean([abs(v) for v in vals]) or 1.0
@@ -154,18 +201,32 @@ def score_wallet(address: str, trades: list[dict] | None = None) -> dict:
     else:
         result["consistency"] = 0.5
 
-    # ── الدرجة المركبة ──
-    wr_score = min(result["win_rate"] / 100.0, 1.0) * 30
-    pf_score = (min(result["profit_factor"], 3.0) / 3.0) * 15
-    trades_score = (math.log(max(min(result["total_trades"], 200), 1)) / math.log(200)) * 10
-    days_score = min(result["active_days"] / 30.0, 1.0) * 10
-    consistency_score = (1.0 - result["consistency"]) * 10
-    recency_score = (1.0 - result["recency"] / 30.0) * 10 if result["recency"] <= 30 else 0.0
-    sz = result["avg_trade_size"]
-    size_score = 15.0 if sz >= 500 else 10.0 if sz >= 100 else (sz / 100.0) * 10 if sz >= 25 else 2.0
+    # ── الدرجة المركبة — حسب نوع المحفظة ──
+    if wallet_type == "market_maker":
+        roi_pct = result["roi"]
+        roi_score = min(max(roi_pct, 0) / 50.0, 1.0) * 30
+        rebate_score = min(total_rebates / 500.0, 1.0) * 10
+        redeem_score = min(total_redeemed / 5000.0, 1.0) * 15
+        trades_score = (math.log(max(min(len(trades), 200), 1)) / math.log(200)) * 10
+        days_score = min(result["active_days"] / 30.0, 1.0) * 10
+        consistency_score = (1.0 - result["consistency"]) * 10
+        recency_score = (1.0 - result["recency"] / 30.0) * 10 if result["recency"] <= 30 else 0.0
+        sz = result["avg_trade_size"]
+        size_score = 5.0 if sz >= 500 else 3.0 if sz >= 100 else 1.0
+        composite = roi_score + rebate_score + redeem_score + trades_score + \
+                    days_score + consistency_score + recency_score + size_score
+    else:
+        wr_score = min(result["win_rate"] / 100.0, 1.0) * 30
+        pf_score = (min(result["profit_factor"], 3.0) / 3.0) * 15
+        trades_score = (math.log(max(min(result["total_trades"], 200), 1)) / math.log(200)) * 10
+        days_score = min(result["active_days"] / 30.0, 1.0) * 10
+        consistency_score = (1.0 - result["consistency"]) * 10
+        recency_score = (1.0 - result["recency"] / 30.0) * 10 if result["recency"] <= 30 else 0.0
+        sz = result["avg_trade_size"]
+        size_score = 15.0 if sz >= 500 else 10.0 if sz >= 100 else (sz / 100.0) * 10 if sz >= 25 else 2.0
+        composite = wr_score + pf_score + trades_score + days_score + \
+                    consistency_score + recency_score + size_score
 
-    composite = wr_score + pf_score + trades_score + days_score + \
-                consistency_score + recency_score + size_score
     result["composite_score"] = round(min(composite, 100.0), 1)
     s = result["composite_score"]
     result["grade"] = "A" if s >= 80 else "B" if s >= 60 else "C" if s >= 40 else "D"
@@ -203,8 +264,10 @@ def generate_smart_wallets_json(addresses: list[str], output_path: str | None = 
         _log("تحذير: لا توجد محافظ مؤهلة — يتم حفظ الكل كاحتياط")
         ranked = rank_wallets(addresses)
     export = [{"address": w["address"], "name": f"wallet_{i}",
+               "wallet_type": w.get("wallet_type", "trader"),
                "win_rate": w["win_rate"], "profit_factor": w["profit_factor"],
-               "total_trades": w["total_trades"], "avg_trade_size": w["avg_trade_size"]}
+               "total_trades": w["total_trades"], "avg_trade_size": w["avg_trade_size"],
+               "roi": w.get("roi", 0.0), "net_cashflow": w.get("net_cashflow", 0.0)}
               for i, w in enumerate(ranked, 1)]
     path.write_text(json.dumps(export, indent=2))
     _log(f"تم حفظ {len(export)} محفظة في {path}")
@@ -213,12 +276,14 @@ def generate_smart_wallets_json(addresses: list[str], output_path: str | None = 
 
 # ── CLI ──
 def _print_table(results: list[dict]) -> None:
-    print(f"\n{'العنوان':<14} {'الدرجة':>6} {'#':>2} {'WR%':>6} {'PF':>5} "
-          f"{'الصفقات':>7} {'الحجم$':>7} {'الأيام':>5} {'آخر':>4}")
-    print("─" * 75)
+    print(f"\n{'العنوان':<14} {'النوع':<4} {'الدرجة':>6} {'#':>2} {'WR%':>6} {'PF':>5} "
+          f"{'ROI%':>6} {'الصفقات':>7} {'الحجم$':>7} {'الأيام':>5} {'آخر':>4}")
+    print("─" * 90)
     for w in results:
-        print(f"{w['address'][:12]}.. {w['composite_score']:>5.1f} {w['grade']:>2} "
+        wt = "MM" if w.get("wallet_type") == "market_maker" else "TR"
+        print(f"{w['address'][:12]}.. {wt:<4} {w['composite_score']:>5.1f} {w['grade']:>2} "
               f"{w['win_rate']:>5.1f}% {w['profit_factor']:>5.2f} "
+              f"{w.get('roi', 0):>5.1f}% "
               f"{w['total_trades']:>7} {w['avg_trade_size']:>7.1f} "
               f"{w['active_days']:>5} {w['recency']:>4}d")
 
