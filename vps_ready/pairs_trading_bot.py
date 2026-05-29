@@ -60,7 +60,8 @@ DAILY_LOSS_LIM = 10.0
 # ── Logging ──
 logger = logging.getLogger("pairs_trading"); logger.setLevel(logging.INFO); logger.propagate = False
 _fmt = logging.Formatter("[%(asctime)s] %(levelname)s %(message)s", "%H:%M:%S")
-_sh = logging.StreamHandler(); _sh.setFormatter(_fmt); logger.addHandler(_sh)
+if sys.stdin and sys.stdin.isatty():
+    _sh = logging.StreamHandler(); _sh.setFormatter(_fmt); logger.addHandler(_sh)
 try:
     _fh = logging.FileHandler(LOG_FILE, encoding="utf-8"); _fh.setFormatter(_fmt); logger.addHandler(_fh)
 except Exception:
