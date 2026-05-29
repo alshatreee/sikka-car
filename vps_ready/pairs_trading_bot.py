@@ -58,7 +58,7 @@ COINT_PVALUE   = 0.10        # max p-value to consider cointegrated
 DAILY_LOSS_LIM = 10.0
 
 # ── Logging ──
-logger = logging.getLogger("pairs_trading"); logger.setLevel(logging.INFO)
+logger = logging.getLogger("pairs_trading"); logger.setLevel(logging.INFO); logger.propagate = False
 _fmt = logging.Formatter("[%(asctime)s] %(levelname)s %(message)s", "%H:%M:%S")
 _sh = logging.StreamHandler(); _sh.setFormatter(_fmt); logger.addHandler(_sh)
 try:
