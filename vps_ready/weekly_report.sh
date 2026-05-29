@@ -37,6 +37,8 @@ SERVICES=(
     funding-carry-bot
     negrisk-arb-bot
     grid-trading-bot
+    pairs-trading-bot
+    clob-mm-bot
 )
 
 MSG="📊 *Weekly Report* ($WEEK_AGO → $DATE)%0A%0A"

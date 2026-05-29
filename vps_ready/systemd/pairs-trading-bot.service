@@ -1,0 +1,16 @@
+[Unit]
+Description=Pairs Trading Bot - Statistical Arbitrage Bybit ETH/BTC SOL/ETH
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bots
+ExecStart=/usr/bin/python3 /root/bots/pairs_trading_bot.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/root/bots/pairs_trading.log
+StandardError=append:/root/bots/pairs_trading.log
+
+[Install]
+WantedBy=multi-user.target

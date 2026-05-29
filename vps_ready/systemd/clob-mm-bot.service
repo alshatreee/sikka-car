@@ -1,0 +1,16 @@
+[Unit]
+Description=CLOB Market Making Bot - Polymarket Spread Capture
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bots
+ExecStart=/usr/bin/python3 /root/bots/clob_mm_bot.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/root/bots/clob_mm.log
+StandardError=append:/root/bots/clob_mm.log
+
+[Install]
+WantedBy=multi-user.target
