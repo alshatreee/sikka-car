@@ -92,7 +92,6 @@ class QuotedMarket:
     spread_earned: float = 0.0; rebates_earned: float = 0.0
     last_mid: float = 0.5; last_quote_ts: float = 0.0
     active_order_ids: list = field(default_factory=list)
-
 @dataclass
 class BotState:
     markets: list = field(default_factory=list)
@@ -362,30 +361,22 @@ def remove_stale_markets(st: BotState, client, live: bool):
 def run_cycle(st: BotState, live: bool, client):
     today = datetime.utcnow().strftime("%Y-%m-%d")
     if st.day != today:
-        if st.day:
-            tg(f"-- MM Daily\nP&L:${st.daily_pnl:+.4f} Fills:{st.total_fills} "
-               f"Rebates:${st.total_rebates:.4f}")
+        if st.day: tg(f"-- MM Daily\nP&L:${st.daily_pnl:+.4f} Fills:{st.total_fills}")
         st.day = today; st.trades_today = 0; st.daily_pnl = 0.0; st.halted = False
-    # Kill switch
     if st.daily_pnl <= -MAX_DAILY_LOSS:
         if not st.halted:
-            st.halted = True
-            logger.warning(f"KILL: P&L ${st.daily_pnl:.2f} < -${MAX_DAILY_LOSS}")
+            st.halted = True; logger.warning(f"KILL: P&L ${st.daily_pnl:.2f}")
             tg(f"!! MM HALTED — loss ${st.daily_pnl:.2f}")
             if live and client: cancel_all_live(client)
         return
     if st.halted: return
-    # Scan periodically
     if time.time() - st.last_scan_ts > SCAN_SEC or not st.markets:
-        remove_stale_markets(st, client, live)
-        scan_and_add_markets(st)
-    # Refresh quotes
+        remove_stale_markets(st, client, live); scan_and_add_markets(st)
     cycle_pnl = 0.0
     for mkt in st.markets:
         if st.trades_today >= MAX_TRADES_DAY: break
         cycle_pnl += refresh_quotes(mkt, st, client, live)
-    st.daily_pnl += cycle_pnl; st.total_pnl += cycle_pnl
-    save_state(st)
+    st.daily_pnl += cycle_pnl; st.total_pnl += cycle_pnl; save_state(st)
 
 # ── Entry point ──
 def main():
