@@ -2,9 +2,8 @@
 """
 smart_dca_bot.py — Sentiment-weighted DCA accumulator (Bybit Spot)
 
-Accumulate BTC, ETH, SOL — buy MORE when market is fearful/oversold,
-buy NOTHING when greedy/overbought. Fear score = blend of inverted
-Fear & Greed Index + inverted weekly RSI.
+Buy MORE when fearful/oversold, sell portions when greedy/overbought.
+Cycle: buy fear → sell greed → buy fear.
 
 Usage:
     python smart_dca_bot.py          # paper mode
@@ -49,7 +48,7 @@ QUOTE          = "USDT"
 CHECK_SEC      = 4 * 3600
 BASE_BUY_USDT  = float(ENV.get("DCA_BASE_BUY", "5.5"))
 MAX_BUY_USDT   = float(ENV.get("DCA_MAX_BUY", "15.0"))
-MIN_ORDER      = 5.0              # Bybit spot min ~$5 for BTC/ETH
+MIN_ORDER      = 5.0
 MIN_SCORE      = float(ENV.get("DCA_MIN_SCORE", "55"))
 DAILY_CAP_USDT = float(ENV.get("DCA_DAILY_CAP", "10.0"))
 RSI_PERIOD     = 14
@@ -57,6 +56,13 @@ RSI_TIMEFRAME  = "1w"
 W_FNG          = 0.5
 W_RSI          = 0.5
 FNG_URL        = "https://api.alternative.me/fng/?limit=1&format=json"
+
+# ── Sell thresholds (F&G based) ──
+SELL_TIER_1    = float(ENV.get("DCA_SELL_T1", "65"))    # F&G >= 65 → sell 25%
+SELL_TIER_2    = float(ENV.get("DCA_SELL_T2", "80"))    # F&G >= 80 → sell 50%
+SELL_PCT_1     = 0.25
+SELL_PCT_2     = 0.50
+MIN_SELL_USDT  = 5.0
 
 # ── Logging ──
 logger = logging.getLogger("smart_dca"); logger.setLevel(logging.INFO); logger.propagate = False
@@ -97,8 +103,13 @@ class BotState:
     spend_today: float = 0.0
     spend_day: str = ""
     total_spent: float = 0.0
-    accumulated: dict = field(default_factory=dict)
+    total_sold: float = 0.0
+    total_profit: float = 0.0
+    accumulated: dict = field(default_factory=dict)   # coin → USDT spent
+    holdings: dict = field(default_factory=dict)       # coin → qty held
+    avg_price: dict = field(default_factory=dict)      # coin → avg buy price
     buys: int = 0
+    sells: int = 0
     cycles: int = 0
     last_fng: float = -1.0
     last_scores: dict = field(default_factory=dict)
@@ -106,7 +117,12 @@ class BotState:
 def load_state() -> BotState:
     if STATE_FILE.exists():
         try:
-            return BotState(**json.loads(STATE_FILE.read_text()))
+            raw = json.loads(STATE_FILE.read_text())
+            st = BotState()
+            for k, v in raw.items():
+                if hasattr(st, k):
+                    setattr(st, k, v)
+            return st
         except Exception:
             pass
     return BotState()
@@ -118,8 +134,9 @@ def save_state(st: BotState):
 def roll_day(st: BotState):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if st.spend_day != today:
-        if st.spend_day and st.spend_today > 0:
-            tg(f"📊 DCA Daily | spent ${st.spend_today:.2f} | total ${st.total_spent:.2f}")
+        if st.spend_day and (st.spend_today > 0 or st.total_sold > 0):
+            tg(f"📊 DCA Daily | bought ${st.spend_today:.2f} | "
+               f"profit ${st.total_profit:.2f}")
         st.spend_day = today
         st.spend_today = 0.0
 
@@ -186,15 +203,10 @@ def fetch_price(symbol: str) -> float | None:
             return float(tickers[0].get("lastPrice", 0))
     return None
 
-def place_buy_live(symbol: str, usdt: float) -> bool:
+def bybit_signed_request(params: dict) -> dict | None:
     import hmac, hashlib
     ts = str(int(time.time() * 1000))
     recv = "5000"
-    params = {
-        "category": "spot", "symbol": symbol.replace("/", ""),
-        "side": "Buy", "orderType": "Market",
-        "marketUnit": "quoteCoin", "qty": f"{usdt:.2f}",
-    }
     body = json.dumps(params)
     sign_str = f"{ts}{BYBIT_KEY}{recv}{body}"
     sig = hmac.new(BYBIT_SECRET.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
@@ -209,27 +221,87 @@ def place_buy_live(symbol: str, usdt: float) -> bool:
     try:
         req = urllib.request.Request(url, data=body.encode(), headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=15) as r:
-            resp = json.loads(r.read())
-        if resp.get("retCode") == 0:
-            logger.info("[LIVE] BUY %s $%.2f OK", symbol, usdt)
-            return True
-        else:
-            logger.error("[LIVE] BUY %s failed: %s", symbol, resp.get("retMsg"))
-            return False
+            return json.loads(r.read())
     except Exception as e:
-        logger.error("[LIVE] BUY %s error: %s", symbol, e)
-        return False
+        logger.error("Bybit API error: %s", e)
+        return None
 
-def place_buy(symbol: str, usdt: float, live: bool) -> bool:
+def place_buy_live(symbol: str, usdt: float) -> bool:
+    params = {
+        "category": "spot", "symbol": symbol.replace("/", ""),
+        "side": "Buy", "orderType": "Market",
+        "marketUnit": "quoteCoin", "qty": f"{usdt:.2f}",
+    }
+    resp = bybit_signed_request(params)
+    if resp and resp.get("retCode") == 0:
+        logger.info("[LIVE] BUY %s $%.2f OK", symbol, usdt)
+        return True
+    logger.error("[LIVE] BUY %s failed: %s", symbol, resp.get("retMsg") if resp else "no response")
+    return False
+
+def place_sell_live(symbol: str, qty: float) -> bool:
+    sym = symbol.replace("/", "")
+    precision = 6
+    if "BTC" in sym:
+        precision = 6
+    elif "ETH" in sym:
+        precision = 5
+    elif "SOL" in sym:
+        precision = 3
+    qty_str = f"{qty:.{precision}f}"
+    params = {
+        "category": "spot", "symbol": sym,
+        "side": "Sell", "orderType": "Market",
+        "qty": qty_str,
+    }
+    resp = bybit_signed_request(params)
+    if resp and resp.get("retCode") == 0:
+        logger.info("[LIVE] SELL %s qty=%s OK", symbol, qty_str)
+        return True
+    logger.error("[LIVE] SELL %s failed: %s", symbol, resp.get("retMsg") if resp else "no response")
+    return False
+
+def place_buy(symbol: str, usdt: float, live: bool, st: BotState, coin: str) -> bool:
     if usdt < MIN_ORDER:
         logger.info("skip %s: $%.2f < min $%.2f", symbol, usdt, MIN_ORDER)
         return False
+    price = fetch_price(symbol) or 0
+    if price <= 0:
+        logger.warning("no price for %s", symbol)
+        return False
+    qty = usdt / price
     if not live:
-        price = fetch_price(symbol) or 0
-        qty = usdt / price if price > 0 else 0
         logger.info("[PAPER] BUY %s $%.2f (≈%.6f @ $%.2f)", symbol, usdt, qty, price)
-        return True
-    return place_buy_live(symbol, usdt)
+    else:
+        if not place_buy_live(symbol, usdt):
+            return False
+    old_qty = st.holdings.get(coin, 0.0)
+    old_avg = st.avg_price.get(coin, 0.0)
+    new_qty = old_qty + qty
+    st.avg_price[coin] = ((old_avg * old_qty) + (price * qty)) / new_qty if new_qty > 0 else price
+    st.holdings[coin] = new_qty
+    return True
+
+def place_sell(symbol: str, qty: float, live: bool, st: BotState, coin: str) -> bool:
+    price = fetch_price(symbol) or 0
+    if price <= 0:
+        return False
+    sell_value = qty * price
+    if sell_value < MIN_SELL_USDT:
+        logger.info("skip sell %s: $%.2f < min $%.2f", symbol, sell_value, MIN_SELL_USDT)
+        return False
+    if not live:
+        logger.info("[PAPER] SELL %s qty=%.6f ($%.2f @ $%.2f)", symbol, qty, sell_value, price)
+    else:
+        if not place_sell_live(symbol, qty):
+            return False
+    avg = st.avg_price.get(coin, price)
+    profit = (price - avg) * qty
+    st.holdings[coin] = st.holdings.get(coin, 0.0) - qty
+    st.total_sold += sell_value
+    st.total_profit += profit
+    st.sells += 1
+    return True
 
 # ── Main cycle ──
 def run_cycle(st: BotState, live: bool):
@@ -243,6 +315,34 @@ def run_cycle(st: BotState, live: bool):
     st.last_fng = fng
     logger.info("Fear&Greed=%d", int(fng))
 
+    # ── SELL mode: F&G >= SELL_TIER_1 ──
+    if fng >= SELL_TIER_1:
+        sell_pct = SELL_PCT_2 if fng >= SELL_TIER_2 else SELL_PCT_1
+        logger.info("GREED mode (F&G=%d) → sell %.0f%% of holdings", int(fng), sell_pct * 100)
+        sold_any = False
+        for coin in COINS:
+            held = st.holdings.get(coin, 0.0)
+            if held <= 0:
+                continue
+            symbol = f"{coin}/{QUOTE}"
+            sell_qty = held * sell_pct
+            price = fetch_price(symbol) or 0
+            if price > 0 and sell_qty * price >= MIN_SELL_USDT:
+                avg = st.avg_price.get(coin, 0)
+                pnl = (price - avg) / avg * 100 if avg > 0 else 0
+                logger.info("  %s: held=%.6f sell=%.6f avg=$%.2f now=$%.2f (%.1f%%)",
+                            coin, held, sell_qty, avg, price, pnl)
+                if place_sell(symbol, sell_qty, live, st, coin):
+                    sold_any = True
+        if sold_any:
+            tg(f"💰 DCA Sell | F&G={int(fng)} (greed)\n"
+               f"Profit: ${st.total_profit:.2f}")
+        save_state(st)
+        logger.info("Cycle #%d done (SELL) | profit $%.2f",
+                    st.cycles, st.total_profit)
+        return
+
+    # ── BUY mode: fear score >= MIN_SCORE ──
     bought_any = False
     for coin in COINS:
         if st.spend_today >= DAILY_CAP_USDT:
@@ -269,7 +369,7 @@ def run_cycle(st: BotState, live: bool):
         usdt = min(BASE_BUY_USDT * mult, MAX_BUY_USDT)
         usdt = min(usdt, DAILY_CAP_USDT - st.spend_today)
 
-        if place_buy(symbol, usdt, live):
+        if place_buy(symbol, usdt, live, st, coin):
             st.spend_today += usdt
             st.total_spent += usdt
             st.accumulated[coin] = st.accumulated.get(coin, 0.0) + usdt
@@ -288,14 +388,18 @@ def run_cycle(st: BotState, live: bool):
 def show_status(st: BotState):
     print(f"Smart DCA Status")
     print(f"  Cycles:      {st.cycles}")
-    print(f"  Total buys:  {st.buys}")
+    print(f"  Buys:        {st.buys}  |  Sells: {st.sells}")
     print(f"  Total spent: ${st.total_spent:.2f}")
+    print(f"  Total sold:  ${st.total_sold:.2f}")
+    print(f"  Profit:      ${st.total_profit:.2f}")
     print(f"  Today spent: ${st.spend_today:.2f} / ${DAILY_CAP_USDT:.2f}")
     print(f"  Last F&G:    {st.last_fng:.0f}")
-    print(f"  Accumulated:")
+    print(f"  Holdings:")
     for coin in COINS:
-        amt = st.accumulated.get(coin, 0.0)
-        print(f"    {coin}: ${amt:.2f}")
+        qty = st.holdings.get(coin, 0.0)
+        avg = st.avg_price.get(coin, 0.0)
+        spent = st.accumulated.get(coin, 0.0)
+        print(f"    {coin}: {qty:.6f} (avg ${avg:.2f}) spent ${spent:.2f}")
     if st.last_scores:
         print(f"  Last scores:")
         for coin, s in st.last_scores.items():
@@ -316,7 +420,9 @@ def main():
 
     mode = "LIVE" if args.live else "Paper"
     logger.info("%s mode — coins=%s every %dh", mode, COINS, CHECK_SEC // 3600)
-    tg(f"🟢 Smart DCA started ({mode}) — {', '.join(COINS)} every 4h")
+    logger.info("Buy: F&G<%.0f | Sell: F&G>%.0f (25%%) / F&G>%.0f (50%%)",
+                MIN_SCORE, SELL_TIER_1, SELL_TIER_2)
+    tg(f"🟢 Smart DCA started ({mode}) — buy fear / sell greed")
 
     try:
         while True:
@@ -328,7 +434,7 @@ def main():
             time.sleep(CHECK_SEC)
     except KeyboardInterrupt:
         logger.info("Stopped by user")
-        tg(f"🔴 Smart DCA stopped | total spent ${st.total_spent:.2f}")
+        tg(f"🔴 Smart DCA stopped | profit ${st.total_profit:.2f}")
         save_state(st)
 
 if __name__ == "__main__":
