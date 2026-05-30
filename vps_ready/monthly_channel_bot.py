@@ -51,9 +51,12 @@ REINFORCE_PCT  = float(os.getenv("MONTHLY_REINFORCE_PCT", "2.0"))
 REINFORCE_CHECK_SEC = int(os.getenv("MONTHLY_REINFORCE_SEC", "600"))
 
 # ---------- logging / notify ----------
+_IS_TTY = sys.stdin and sys.stdin.isatty()
+
 def log(msg: str) -> None:
     line = f"[{time.strftime('%Y-%m-%dT%H:%M:%S')}] {msg}"
-    print(line, flush=True)
+    if _IS_TTY:
+        print(line, flush=True)
     try:
         with LOG_FILE.open("a") as f:
             f.write(line + "\n")
