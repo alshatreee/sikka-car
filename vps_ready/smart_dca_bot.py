@@ -43,19 +43,19 @@ BYBIT_SECRET = ENV.get("BYBIT_API_SECRET", "")
 TG_TOKEN     = ENV.get("TELEGRAM_TOKEN", "")
 TG_CHAT      = ENV.get("TELEGRAM_CHAT_ID", "")
 
-# ── Strategy parameters ──
+# ── Strategy parameters (overridable via .env) ──
 COINS          = ["BTC", "ETH", "SOL"]
 QUOTE          = "USDT"
-CHECK_SEC      = 4 * 3600          # every 4 hours
-BASE_BUY_USDT  = 1.0              # spend per coin at threshold score
-MAX_BUY_USDT   = 5.0              # hard cap per coin per cycle
-MIN_ORDER      = 1.0              # Bybit spot min order ~$1
-MIN_SCORE      = 55.0             # below this → skip (market too greedy)
-DAILY_CAP_USDT = 10.0             # max daily spend across all coins
+CHECK_SEC      = 4 * 3600
+BASE_BUY_USDT  = float(ENV.get("DCA_BASE_BUY", "5.5"))
+MAX_BUY_USDT   = float(ENV.get("DCA_MAX_BUY", "15.0"))
+MIN_ORDER      = 5.0              # Bybit spot min ~$5 for BTC/ETH
+MIN_SCORE      = float(ENV.get("DCA_MIN_SCORE", "55"))
+DAILY_CAP_USDT = float(ENV.get("DCA_DAILY_CAP", "10.0"))
 RSI_PERIOD     = 14
 RSI_TIMEFRAME  = "1w"
-W_FNG          = 0.5              # weight: Fear & Greed (inverted)
-W_RSI          = 0.5              # weight: RSI (inverted)
+W_FNG          = 0.5
+W_RSI          = 0.5
 FNG_URL        = "https://api.alternative.me/fng/?limit=1&format=json"
 
 # ── Logging ──
@@ -187,28 +187,27 @@ def fetch_price(symbol: str) -> float | None:
     return None
 
 def place_buy_live(symbol: str, usdt: float) -> bool:
-    import hmac, hashlib, urllib.parse
+    import hmac, hashlib
     ts = str(int(time.time() * 1000))
+    recv = "5000"
     params = {
         "category": "spot", "symbol": symbol.replace("/", ""),
         "side": "Buy", "orderType": "Market",
         "marketUnit": "quoteCoin", "qty": f"{usdt:.2f}",
-        "timeInForce": "GTC",
     }
-    sorted_params = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    sign_str = f"{ts}{BYBIT_KEY}{5000}{sorted_params}"
+    body = json.dumps(params)
+    sign_str = f"{ts}{BYBIT_KEY}{recv}{body}"
     sig = hmac.new(BYBIT_SECRET.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
     headers = {
         "Content-Type": "application/json",
         "X-BAPI-API-KEY": BYBIT_KEY,
         "X-BAPI-TIMESTAMP": ts,
-        "X-BAPI-RECV-WINDOW": "5000",
+        "X-BAPI-RECV-WINDOW": recv,
         "X-BAPI-SIGN": sig,
     }
     url = "https://api.bybit.com/v5/order/create"
     try:
-        body = json.dumps(params).encode()
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        req = urllib.request.Request(url, data=body.encode(), headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=15) as r:
             resp = json.loads(r.read())
         if resp.get("retCode") == 0:
