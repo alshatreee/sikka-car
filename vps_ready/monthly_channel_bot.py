@@ -111,45 +111,91 @@ class Signal:
     reinforcements: list[float] = field(default_factory=list)
 
 def parse_signal(text: str) -> Signal | None:
+    """يحلل صيغتين: (1) سعر الشراء/البيع البسيطة (2) الشراء والتعزيز المفصّلة."""
     if not text:
         return None
-    num_m = re.search(r"رقم\s*الصفقة\s*[:\s]*\(?(\d+)\)?", text)
     sym_m = re.search(r"العملة\s*[:\s]*([A-Za-z0-9]+)", text)
+    if not sym_m:
+        return None
+    symbol = sym_m.group(1).upper()
+    num_m = re.search(r"رقم\s*الصفقة\s*[:\s]*\(?(\d+)\)?", text)
+    trade_num = int(num_m.group(1)) if num_m else 0
+
+    # صيغة 1: سعر الشراء / سعر البيع
     buy_m = re.search(r"سعر\s*الشراء\s*[:\s]*([\d.]+)", text)
     sell_m = re.search(r"سعر\s*البيع\s*[:\s]*([\d.]+)", text)
-    if not (sym_m and buy_m and sell_m):
-        return None
-    symbol, buy_p, sell_p = sym_m.group(1).upper(), float(buy_m.group(1)), float(sell_m.group(1))
-    pct_m = re.search(r"سعر\s*البيع\s*[:\s]*[\d.]+\s*\(?([\d.]+)%\)?", text)
-    tp_pct = float(pct_m.group(1)) if pct_m else (
-        round((sell_p - buy_p) / buy_p * 100, 2) if buy_p > 0 else 0.0)
+    if buy_m and sell_m:
+        buy_p, sell_p = float(buy_m.group(1)), float(sell_m.group(1))
+        pct_m = re.search(r"سعر\s*البيع\s*[:\s]*[\d.]+\s*\(?\s*%?([\d.]+)\s*%\)?", text)
+        tp_pct = float(pct_m.group(1)) if pct_m else (
+            round((sell_p - buy_p) / buy_p * 100, 2) if buy_p > 0 else 0.0)
+        reinf = parse_reinforcements(text)
+        return Signal(trade_num, symbol, buy_p, sell_p, tp_pct, reinf)
 
-    reinf = parse_reinforcements(text)
-    return Signal(int(num_m.group(1)) if num_m else 0, symbol, buy_p, sell_p, tp_pct, reinf)
+    # صيغة 2: الشراء والتعزيز + أهداف الصفقة
+    if "الشراء والتعزيز" in text or "التعزيز الأول" in text:
+        buy_p, reinf = _parse_buy_and_reinforce(text)
+        sell_p, tp_pct = _parse_targets(text, buy_p)
+        if buy_p > 0:
+            return Signal(trade_num, symbol, buy_p, sell_p, tp_pct, reinf)
+
+    return None
+
+def _parse_buy_and_reinforce(text: str) -> tuple[float, list[float]]:
+    """يستخرج سعر الشراء الأول وأسعار التعزيز من قسم 'الشراء والتعزيز'."""
+    buy_price = 0.0
+    reinforcements = []
+    for line in text.split("\n"):
+        price_m = re.search(r"[-–]\s*([\d.]+)\s*\(", line)
+        if not price_m:
+            continue
+        try:
+            price = float(price_m.group(1))
+        except ValueError:
+            continue
+        if price <= 0:
+            continue
+        if "الشراء الأول" in line or "الشراء" in line and "تعزيز" not in line.lower():
+            if buy_price == 0:
+                buy_price = price
+        if "التعزيز" in line:
+            reinforcements.append(price)
+    return buy_price, sorted(reinforcements)
+
+def _parse_targets(text: str, buy_price: float) -> tuple[float, float]:
+    """يستخرج أول هدف من 'أهداف الصفقة'."""
+    sell_price = 0.0
+    in_targets = False
+    for line in text.split("\n"):
+        if "أهداف الصفقة" in line:
+            in_targets = True; continue
+        if "أهداف التعزيز" in line:
+            break
+        if in_targets:
+            m = re.search(r"[-–]\s*([\d.]+)\s*\(([\d.]+)%\)", line)
+            if m:
+                sell_price = float(m.group(1))
+                tp_pct = float(m.group(2))
+                return sell_price, tp_pct
+    if sell_price == 0 and buy_price > 0:
+        sell_price = buy_price * 1.20
+    tp_pct = round((sell_price - buy_price) / buy_price * 100, 2) if buy_price > 0 else 0
+    return sell_price, tp_pct
 
 def parse_reinforcements(text: str) -> list[float]:
-    """يستخرج أسعار التعزيز من النص."""
+    """يستخرج أسعار التعزيز — يعمل مع الصيغتين."""
+    if "الشراء والتعزيز" in text or "التعزيز الأول" in text:
+        _, reinf = _parse_buy_and_reinforce(text)
+        return reinf
     prices = []
-    patterns = [
-        r"تعزيز\s*(?:أول|اول|1|١)?\s*[:\s]*([\d.]+)",
-        r"تعزيز\s*(?:ثاني|2|٢)?\s*[:\s]*([\d.]+)",
-        r"تعزيز\s*(?:ثالث|3|٣)?\s*[:\s]*([\d.]+)",
-        r"سعر\s*التعزيز\s*[:\s]*([\d.]+)",
-        r"التعزيز\s*[:\s]*([\d.]+)",
-        r"تعزيزات?\s*[:\s]*([\d.]+(?:\s*[-/–]\s*[\d.]+)*)",
-        r"منطقة\s*(?:شراء|تعزيز|دخول)\s*[:\s]*([\d.]+)",
-        r"الدعم\s*[:\s]*([\d.]+)",
-    ]
-    for pat in patterns:
-        for m in re.finditer(pat, text, re.IGNORECASE):
-            val = m.group(1)
-            for part in re.split(r"\s*[-/–]\s*", val):
-                try:
-                    p = float(part.strip())
-                    if p > 0 and p not in prices:
-                        prices.append(p)
-                except ValueError:
-                    pass
+    for line in text.split("\n"):
+        if "تعزيز" not in line:
+            continue
+        m = re.search(r"([\d.]+)", line)
+        if m:
+            p = float(m.group(1))
+            if p > 0 and p not in prices:
+                prices.append(p)
     return sorted(prices)
 
 # ---------- exchange ----------
