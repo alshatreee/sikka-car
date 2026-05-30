@@ -191,9 +191,12 @@ def parse_reinforcements(text: str) -> list[float]:
     for line in text.split("\n"):
         if "تعزيز" not in line:
             continue
-        m = re.search(r"([\d.]+)", line)
+        m = re.search(r"(\d+\.?\d*)", line)
         if m:
-            p = float(m.group(1))
+            try:
+                p = float(m.group(1))
+            except ValueError:
+                continue
             if p > 0 and p not in prices:
                 prices.append(p)
     return sorted(prices)
