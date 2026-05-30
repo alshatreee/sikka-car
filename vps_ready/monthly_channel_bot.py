@@ -191,7 +191,9 @@ def parse_reinforcements(text: str) -> list[float]:
     for line in text.split("\n"):
         if "تعزيز" not in line:
             continue
-        m = re.search(r"(\d+\.?\d*)", line)
+        m = re.search(r"[-–]\s*(\d+\.?\d*)", line)
+        if not m:
+            m = re.search(r"(\d+\.\d+)", line)
         if m:
             try:
                 p = float(m.group(1))
