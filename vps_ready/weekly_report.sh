@@ -39,6 +39,7 @@ SERVICES=(
     grid-trading-bot
     pairs-trading-bot
     clob-mm-bot
+    smart-dca-bot
 )
 
 MSG="📊 *Weekly Report* ($WEEK_AGO → $DATE)%0A%0A"

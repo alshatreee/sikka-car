@@ -1,0 +1,16 @@
+[Unit]
+Description=Smart DCA Bot - Sentiment-weighted BTC/ETH/SOL Accumulator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bots
+ExecStart=/usr/bin/python3 /root/bots/smart_dca_bot.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/root/bots/smart_dca.log
+StandardError=append:/root/bots/smart_dca.log
+
+[Install]
+WantedBy=multi-user.target
