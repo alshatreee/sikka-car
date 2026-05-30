@@ -23,7 +23,7 @@ if os.name == "nt":
 else:
     BASE_DIR = Path("/root/bots"); BASE_DIR.mkdir(parents=True, exist_ok=True)
 
-ENV_FILE   = BASE_DIR / ".env_naif"
+ENV_FILE   = BASE_DIR / ".env_dca"
 STATE_FILE = BASE_DIR / "smart_dca_state.json"
 LOG_FILE   = BASE_DIR / "smart_dca.log"
 
