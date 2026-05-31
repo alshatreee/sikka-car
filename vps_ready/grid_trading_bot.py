@@ -106,18 +106,18 @@ def auto_range(ex) -> tuple[float, float]:
     if GRID_LOW_ENV and GRID_HIGH_ENV:
         log("⚙️ نطاق يدوي من الإعدادات")
         return float(GRID_LOW_ENV), float(GRID_HIGH_ENV)
-    ohlcv = ex.fetch_ohlcv(ASSET, "1d", limit=30) if ex else _paper_ohlcv()
+    ohlcv = ex.fetch_ohlcv(ASSET, "1d", limit=7) if ex else _paper_ohlcv()
     highs = [c[2] for c in ohlcv]
     lows  = [c[3] for c in ohlcv]
     h, l  = max(highs), min(lows)
     buf   = (h - l) * 0.05
-    log(f"📊 نطاق 30 يوم: {l:.2f} - {h:.2f} | بفر 5%: {l - buf:.2f} - {h + buf:.2f}")
+    log(f"📊 نطاق 7 أيام: {l:.2f} - {h:.2f} | بفر 5%: {l - buf:.2f} - {h + buf:.2f}")
     return round(l - buf, 2), round(h + buf, 2)
 
 def _paper_ohlcv() -> list:
     sym = ASSET.replace("/", "")
     r = requests.get(f"https://api.bybit.com/v5/market/kline?category=spot&symbol={sym}"
-                     f"&interval=D&limit=30", timeout=10)
+                     f"&interval=D&limit=7", timeout=10)
     rows = r.json()["result"]["list"]
     return [[int(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), float(c[5])]
             for c in rows]
@@ -224,8 +224,14 @@ def run():
     # تهيئة الحالة
     st = load_state()
     reset_day(st)
-    st.grid_low = low; st.grid_high = high; st.spacing = spacing
-    st.levels = build_grid(low, high, price)
+    range_changed = st.levels and (abs(st.grid_low - low) > spacing or abs(st.grid_high - high) > spacing)
+    if st.levels and not range_changed:
+        log(f"♻️ استكمال شبكة سابقة ({len(st.levels)} مستوى)")
+    else:
+        if range_changed:
+            log("🔄 النطاق تغير — إعادة بناء الشبكة")
+        st.grid_low = low; st.grid_high = high; st.spacing = spacing
+        st.levels = build_grid(low, high, price)
     save_state(st)
 
     capital = NUM_LEVELS * GRID_SIZE

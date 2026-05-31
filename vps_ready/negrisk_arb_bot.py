@@ -102,7 +102,7 @@ def http_get(url: str, timeout: int = 15):
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode())
     except Exception as e:
-        logger.warning(f"HTTP خطأ: {url[:80]} — {e}"); return None
+        logger.warning(f"HTTP خطأ: {url} — {e}"); return None
 
 def tg(msg: str):
     if not TG_TOKEN or not TG_CHAT: return
@@ -184,9 +184,10 @@ def fetch_events() -> list[dict]:
                 except Exception: pass
             token_id = get_yes_token(m)
             mid = m.get("conditionId") or m.get("condition_id") or m.get("id", "")
+            gamma_id = str(m.get("id") or m.get("slug") or mid)
             q = m.get("question") or m.get("groupItemTitle") or ""
-            outcomes.append({"market_id": str(mid), "token_id": token_id,
-                             "question": q, "price": price})
+            outcomes.append({"market_id": str(mid), "gamma_id": gamma_id,
+                             "token_id": token_id, "question": q, "price": price})
         if skip_event or len(outcomes) < 2: continue
         prices = [o["price"] for o in outcomes]
         price_sum = sum(prices)
@@ -264,7 +265,8 @@ def manage_sets(st: BotState, live: bool, client):
     for arb in st.arb_sets:
         resolved = False; winning = None
         for o in arb["outcomes"]:
-            mdata = http_get(f"{GAMMA_API}/markets/{o['market_id']}")
+            gid = o.get("gamma_id") or o["market_id"]
+            mdata = http_get(f"{GAMMA_API}/markets/{gid}")
             if mdata and (mdata.get("closed") or mdata.get("resolved")):
                 res_price = get_yes_price(mdata) if mdata else 0
                 if res_price >= 0.95: winning = o; resolved = True; break
