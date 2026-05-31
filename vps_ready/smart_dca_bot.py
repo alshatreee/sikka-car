@@ -45,7 +45,7 @@ TG_CHAT      = ENV.get("TELEGRAM_CHAT_ID", "")
 # ── Strategy parameters (overridable via .env) ──
 COINS          = ["BTC", "ETH", "SOL"]
 QUOTE          = "USDT"
-CHECK_SEC      = 4 * 3600
+CHECK_SEC      = 8 * 3600
 BASE_BUY_USDT  = float(ENV.get("DCA_BASE_BUY", "5.5"))
 MAX_BUY_USDT   = float(ENV.get("DCA_MAX_BUY", "15.0"))
 MIN_ORDER      = 5.0
@@ -58,11 +58,12 @@ W_RSI          = 0.5
 FNG_URL        = "https://api.alternative.me/fng/?limit=1&format=json"
 
 # ── Sell thresholds (F&G based) ──
-SELL_TIER_1    = float(ENV.get("DCA_SELL_T1", "65"))    # F&G >= 65 → sell 25%
+SELL_TIER_1    = float(ENV.get("DCA_SELL_T1", "75"))    # F&G >= 75 → sell 25%
 SELL_TIER_2    = float(ENV.get("DCA_SELL_T2", "80"))    # F&G >= 80 → sell 50%
 SELL_PCT_1     = 0.25
 SELL_PCT_2     = 0.50
 MIN_SELL_USDT  = 5.0
+SELL_COOLDOWN  = 48 * 3600
 
 # ── Logging ──
 logger = logging.getLogger("smart_dca"); logger.setLevel(logging.INFO); logger.propagate = False
@@ -113,6 +114,7 @@ class BotState:
     cycles: int = 0
     last_fng: float = -1.0
     last_scores: dict = field(default_factory=dict)
+    last_sell_ts: dict = field(default_factory=dict)   # coin → epoch of last sell
 
 def load_state() -> BotState:
     if STATE_FILE.exists():
@@ -226,7 +228,41 @@ def bybit_signed_request(params: dict) -> dict | None:
         logger.error("Bybit API error: %s", e)
         return None
 
-def place_buy_live(symbol: str, usdt: float) -> bool:
+def bybit_signed_get(path: str, params: str) -> dict | None:
+    import hmac, hashlib
+    ts = str(int(time.time() * 1000))
+    recv = "5000"
+    sign_str = f"{ts}{BYBIT_KEY}{recv}{params}"
+    sig = hmac.new(BYBIT_SECRET.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+    url = f"https://api.bybit.com{path}?{params}"
+    try:
+        req = urllib.request.Request(url, headers={
+            "X-BAPI-API-KEY": BYBIT_KEY,
+            "X-BAPI-TIMESTAMP": ts,
+            "X-BAPI-RECV-WINDOW": recv,
+            "X-BAPI-SIGN": sig,
+        })
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        logger.error("Bybit GET error: %s", e)
+        return None
+
+def get_order_fill(symbol: str, order_id: str) -> tuple[float, float] | None:
+    time.sleep(1)
+    sym = symbol.replace("/", "")
+    params = f"category=spot&symbol={sym}&orderId={order_id}"
+    resp = bybit_signed_get("/v5/order/realtime", params)
+    if resp and resp.get("retCode") == 0:
+        orders = resp.get("result", {}).get("list", [])
+        if orders:
+            qty = float(orders[0].get("cumExecQty", 0))
+            price = float(orders[0].get("avgPrice", 0))
+            if qty > 0 and price > 0:
+                return qty, price
+    return None
+
+def place_buy_live(symbol: str, usdt: float) -> tuple[bool, str]:
     params = {
         "category": "spot", "symbol": symbol.replace("/", ""),
         "side": "Buy", "orderType": "Market",
@@ -234,10 +270,11 @@ def place_buy_live(symbol: str, usdt: float) -> bool:
     }
     resp = bybit_signed_request(params)
     if resp and resp.get("retCode") == 0:
-        logger.info("[LIVE] BUY %s $%.2f OK", symbol, usdt)
-        return True
+        oid = resp.get("result", {}).get("orderId", "")
+        logger.info("[LIVE] BUY %s $%.2f OK (order=%s)", symbol, usdt, oid)
+        return True, oid
     logger.error("[LIVE] BUY %s failed: %s", symbol, resp.get("retMsg") if resp else "no response")
-    return False
+    return False, ""
 
 def place_sell_live(symbol: str, qty: float) -> bool:
     sym = symbol.replace("/", "")
@@ -269,12 +306,20 @@ def place_buy(symbol: str, usdt: float, live: bool, st: BotState, coin: str) -> 
     if price <= 0:
         logger.warning("no price for %s", symbol)
         return False
-    qty = usdt / price
     if not live:
+        qty = usdt / price
         logger.info("[PAPER] BUY %s $%.2f (≈%.6f @ $%.2f)", symbol, usdt, qty, price)
     else:
-        if not place_buy_live(symbol, usdt):
+        ok, oid = place_buy_live(symbol, usdt)
+        if not ok:
             return False
+        fill = get_order_fill(symbol, oid) if oid else None
+        if fill:
+            qty, price = fill
+            logger.info("[LIVE] Fill: %s qty=%.8f @ $%.2f", coin, qty, price)
+        else:
+            qty = usdt / price
+            logger.warning("Could not get fill for %s, using estimate", coin)
     old_qty = st.holdings.get(coin, 0.0)
     old_avg = st.avg_price.get(coin, 0.0)
     new_qty = old_qty + qty
@@ -320,7 +365,13 @@ def run_cycle(st: BotState, live: bool):
         sell_pct = SELL_PCT_2 if fng >= SELL_TIER_2 else SELL_PCT_1
         logger.info("GREED mode (F&G=%d) → sell %.0f%% of holdings", int(fng), sell_pct * 100)
         sold_any = False
+        now = time.time()
         for coin in COINS:
+            last_sell = st.last_sell_ts.get(coin, 0)
+            if now - last_sell < SELL_COOLDOWN:
+                hrs_left = (SELL_COOLDOWN - (now - last_sell)) / 3600
+                logger.info("  %s: cooldown (%.0fh left)", coin, hrs_left)
+                continue
             held = st.holdings.get(coin, 0.0)
             if held <= 0:
                 continue
@@ -334,6 +385,7 @@ def run_cycle(st: BotState, live: bool):
                             coin, held, sell_qty, avg, price, pnl)
                 if place_sell(symbol, sell_qty, live, st, coin):
                     sold_any = True
+                    st.last_sell_ts[coin] = now
         if sold_any:
             tg(f"💰 DCA Sell | F&G={int(fng)} (greed)\n"
                f"Profit: ${st.total_profit:.2f}")
