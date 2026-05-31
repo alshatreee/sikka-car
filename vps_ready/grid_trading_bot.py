@@ -247,11 +247,11 @@ def run():
     log(init_msg.replace("<b>", "").replace("</b>", ""))
     notify(init_msg)
 
-    # وضع الأوامر الأولية (حقيقي)
+    # وضع الأوامر الأولية (حقيقي) — شراء فقط، البيع بعد التعبئة
     if not PAPER and ex:
         for lv in st.levels:
-            if lv["side"] in ("buy", "sell"):
-                place_order(ex, lv["side"], lv["price"])
+            if lv["side"] == "buy":
+                place_order(ex, "buy", lv["price"])
 
     # حلقة المراقبة
     while True:
