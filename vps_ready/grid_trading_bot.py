@@ -43,9 +43,12 @@ CHECK_INTERVAL   = 30
 PAPER = "--live" not in sys.argv
 
 # ── التسجيل والإشعارات ──
+_IS_TTY = sys.stdin and sys.stdin.isatty()
+
 def log(msg: str):
     line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
-    print(line, flush=True)
+    if _IS_TTY:
+        print(line, flush=True)
     try:
         with LOG_FILE.open("a", encoding="utf-8") as f:
             f.write(line + "\n")

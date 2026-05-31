@@ -265,12 +265,14 @@ def manage_sets(st: BotState, live: bool, client):
     for arb in st.arb_sets:
         resolved = False; winning = None
         for o in arb["outcomes"]:
-            gid = o.get("gamma_id") or o["market_id"]
-            mdata = http_get(f"{GAMMA_API}/markets/{gid}")
-            if mdata and (mdata.get("closed") or mdata.get("resolved")):
+            mdata = http_get(f"{CLOB_API}/markets/{o['market_id']}")
+            if not mdata:
+                continue
+            is_closed = mdata.get("closed") or mdata.get("active") is False
+            if is_closed:
                 res_price = get_yes_price(mdata) if mdata else 0
                 if res_price >= 0.95: winning = o; resolved = True; break
-                resolved = mdata.get("resolved", False)
+                resolved = True
         if resolved:
             pnl = round(1.0 * NEGRISK_SIZE - arb["total_cost"] - arb["total_fees"], 4) if winning else round(-arb["total_cost"], 4)
             st.daily_pnl += pnl; st.total_pnl += pnl
