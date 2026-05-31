@@ -247,11 +247,14 @@ def run():
     log(init_msg.replace("<b>", "").replace("</b>", ""))
     notify(init_msg)
 
-    # وضع الأوامر الأولية (حقيقي) — شراء فقط، البيع بعد التعبئة
+    # وضع الأوامر الأولية (حقيقي) — أقرب شراءات للسعر أولاً، توقف عند نفاد الرصيد
     if not PAPER and ex:
-        for lv in st.levels:
-            if lv["side"] == "buy":
-                place_order(ex, "buy", lv["price"])
+        buys = sorted([lv for lv in st.levels if lv["side"] == "buy"],
+                       key=lambda l: -l["price"])
+        for lv in buys:
+            if not place_order(ex, "buy", lv["price"]):
+                log(f"⚠️ توقف وضع الأوامر — الرصيد غير كافٍ")
+                break
 
     # حلقة المراقبة
     while True:
