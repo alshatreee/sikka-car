@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/bots
-ExecStart=/usr/bin/python3 /root/bots/smart_dca_bot.py
+ExecStart=/usr/bin/python3 /root/bots/smart_dca_bot.py --live
 Restart=always
 RestartSec=30
 StandardOutput=append:/root/bots/smart_dca.log
