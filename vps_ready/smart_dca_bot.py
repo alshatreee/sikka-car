@@ -11,10 +11,16 @@ Usage:
     python smart_dca_bot.py --check  # show state
 """
 from __future__ import annotations
-import argparse, json, logging, os, sys, time, urllib.request
+import argparse, json, logging, os, re, sys, time, urllib.request
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+try:
+    from telethon.sync import TelegramClient
+    _HAS_TELETHON = True
+except ImportError:
+    _HAS_TELETHON = False
 
 # ── Paths ──
 if os.name == "nt":
@@ -64,6 +70,13 @@ SELL_PCT_1     = 0.25
 SELL_PCT_2     = 0.50
 MIN_SELL_USDT  = 5.0
 SELL_COOLDOWN  = 48 * 3600
+
+# ── Channel signals config ──
+TG_API_ID      = int(ENV.get("TG_API_ID", "0"))
+TG_API_HASH    = ENV.get("TG_API_HASH", "")
+SIGNAL_CHANNEL = ENV.get("SIGNAL_CHANNEL", "vipdrprofit")
+DCA_SESSION    = str(BASE_DIR / "dca_session")
+CHANNEL_BOOST  = float(ENV.get("DCA_CHANNEL_BOOST", "10"))
 
 # ── Logging ──
 logger = logging.getLogger("smart_dca"); logger.setLevel(logging.INFO); logger.propagate = False
@@ -194,6 +207,51 @@ def size_multiplier(score: float) -> float:
     frac = (score - MIN_SCORE) / (100.0 - MIN_SCORE)
     max_mult = MAX_BUY_USDT / BASE_BUY_USDT
     return 1.0 + frac * (max_mult - 1.0)
+
+# ── Channel signals ──
+_BULLISH_RE = re.compile(r'شراء|buy|long|صعود|صاعد|إيجابي|bullish|دعم|اختراق|ارتفاع', re.I)
+_BEARISH_RE = re.compile(r'بيع|sell|short|هبوط|هابط|سلبي|bearish|مقاومة|كسر|انخفاض', re.I)
+_COIN_RE = {
+    'BTC': re.compile(r'\bBTC\b|Bitcoin|بتكوين|بيتكوين', re.I),
+    'ETH': re.compile(r'\bETH\b|Ethereum|ايثيريوم|إيثيريوم', re.I),
+    'SOL': re.compile(r'\bSOL\b|Solana|سولانا', re.I),
+}
+
+
+def fetch_channel_signals() -> dict[str, float]:
+    """قراءة آخر 24 ساعة من قناة التحليل → إشارة لكل عملة (-1..+1)"""
+    if not _HAS_TELETHON or not TG_API_ID or not TG_API_HASH:
+        return {}
+    try:
+        with TelegramClient(DCA_SESSION, TG_API_ID, TG_API_HASH) as client:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            messages = client.get_messages(SIGNAL_CHANNEL, limit=50)
+            counts = {c: [0, 0] for c in COINS}
+            for msg in messages:
+                if not msg.text:
+                    continue
+                if msg.date and msg.date.replace(tzinfo=timezone.utc) < cutoff:
+                    continue
+                text = msg.text
+                bull = len(_BULLISH_RE.findall(text))
+                bear = len(_BEARISH_RE.findall(text))
+                if bull == 0 and bear == 0:
+                    continue
+                mentioned = [c for c in COINS if _COIN_RE.get(c) and _COIN_RE[c].search(text)]
+                targets = mentioned or COINS
+                for coin in targets:
+                    counts[coin][0] += bull
+                    counts[coin][1] += bear
+            result = {}
+            for coin in COINS:
+                total = counts[coin][0] + counts[coin][1]
+                if total > 0:
+                    result[coin] = (counts[coin][0] - counts[coin][1]) / total
+            return result
+    except Exception as e:
+        logger.warning("Channel signal fetch: %s", e)
+        return {}
+
 
 # ── Execution ──
 def fetch_price(symbol: str) -> float | None:
@@ -360,6 +418,10 @@ def run_cycle(st: BotState, live: bool):
     st.last_fng = fng
     logger.info("Fear&Greed=%d", int(fng))
 
+    channel_signals = fetch_channel_signals()
+    if channel_signals:
+        logger.info("Channel: %s", {k: f"{v:+.2f}" for k, v in channel_signals.items()})
+
     # ── SELL mode: F&G >= SELL_TIER_1 ──
     if fng >= SELL_TIER_1:
         sell_pct = SELL_PCT_2 if fng >= SELL_TIER_2 else SELL_PCT_1
@@ -411,6 +473,9 @@ def run_cycle(st: BotState, live: bool):
             continue
 
         score = blended_score(fng, rsi)
+        ch_sig = channel_signals.get(coin, 0.0)
+        if ch_sig != 0:
+            score += ch_sig * CHANNEL_BOOST
         mult = size_multiplier(score)
         st.last_scores[coin] = {"rsi": round(rsi, 1), "score": round(score, 1), "mult": round(mult, 2)}
         logger.info("  %s: RSI(w)=%.1f score=%.1f mult=%.2f", coin, rsi, score, mult)
@@ -462,12 +527,28 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="Execute real orders")
     ap.add_argument("--check", action="store_true", help="Show state and exit")
+    ap.add_argument("--auth", action="store_true", help="Authenticate Telegram for signal channel")
     args = ap.parse_args()
 
     st = load_state()
 
     if args.check:
         show_status(st)
+        return
+
+    if args.auth:
+        if not _HAS_TELETHON:
+            print("Install telethon: pip install telethon")
+            return
+        with TelegramClient(DCA_SESSION, TG_API_ID, TG_API_HASH) as client:
+            print(f"Testing '{SIGNAL_CHANNEL}'...")
+            try:
+                entity = client.get_entity(SIGNAL_CHANNEL)
+                print(f"Found: {getattr(entity, 'title', SIGNAL_CHANNEL)}")
+                msgs = client.get_messages(entity, limit=3)
+                print(f"OK — {len(msgs)} messages readable")
+            except Exception as e:
+                print(f"Error: {e}")
         return
 
     mode = "LIVE" if args.live else "Paper"
