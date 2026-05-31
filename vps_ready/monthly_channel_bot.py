@@ -42,7 +42,10 @@ TRADE_PCT    = float(os.getenv("MONTHLY_TRADE_PCT", "10"))
 TRADE_SIZE   = CAPITAL * TRADE_PCT / 100
 SL_PCT       = float(os.getenv("MONTHLY_SL_PCT", "5.0"))
 MAX_HOLD_DAYS = int(os.getenv("MONTHLY_MAX_HOLD_DAYS", "30"))
-MAX_DAILY_TRADES, MAX_OPEN, MAX_DAILY_LOSS = 10, 10, 50.0
+MAX_DAILY_TRADES = 10
+MAX_OPEN = 10
+MAX_DAILY_LOSS_PCT = float(os.getenv("MONTHLY_MAX_LOSS_PCT", "5.0"))
+MAX_DAILY_LOSS = CAPITAL * MAX_DAILY_LOSS_PCT / 100
 CHECK_INTERVAL = 300
 PAPER_MODE = "--live" not in sys.argv
 
@@ -240,6 +243,25 @@ def spot_sell(exchange, pair: str, qty: float) -> dict | None:
     except Exception as e:
         log(f"خطأ في البيع: {pair} — {e}"); return None
 
+def place_stop_loss(exchange, pair: str, qty: float, trigger_price: float) -> str | None:
+    try:
+        order = exchange.create_order(pair, 'market', 'sell', qty, None, {
+            'triggerPrice': str(trigger_price),
+        })
+        oid = order.get('id', '')
+        log(f"أمر وقف خسارة: {pair} @ {trigger_price} | أمر={oid}")
+        return oid
+    except Exception as e:
+        log(f"خطأ وقف الخسارة: {pair} — {e}")
+        return None
+
+def cancel_sl_order(exchange, pair: str, order_id: str):
+    try:
+        exchange.cancel_order(order_id, pair)
+        log(f"إلغاء وقف خسارة: {pair} | أمر={order_id}")
+    except Exception as e:
+        log(f"خطأ إلغاء الأمر: {pair} — {e}")
+
 # ---------- trade logic ----------
 def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية جديدة") -> bool:
     rollover_day(state)
@@ -266,22 +288,27 @@ def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية
         entry = float(order.get("average", entry))
         qty = float(order.get("filled", qty))
 
+    sl_order_id = None
+    if not PAPER_MODE:
+        sl_order_id = place_stop_loss(exchange, pair, qty, sl_price)
+
     state.open_positions[pair] = {
         "trade_num": signal.trade_num, "symbol": signal.symbol, "pair": pair,
         "entry": entry, "qty": qty, "sl": sl_price, "tp": signal.sell_price,
         "tp_pct": signal.tp_pct, "opened": time.time(),
         "opened_str": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "reason": reason,
+        "reason": reason, "sl_order_id": sl_order_id,
     }
     state.daily_trades += 1; save_state(state)
 
     mode = "ورقي" if PAPER_MODE else "حقيقي"
+    sl_info = "أمر منصة" if sl_order_id else "فحص دوري"
     msg = (f"صفقة [{mode}] — {reason}\n#{signal.trade_num} | {pair}\n"
            f"دخول: {entry} | هدف: {signal.sell_price} ({signal.tp_pct}%)\n"
-           f"وقف: {sl_price} (-{SL_PCT}%) | ${TRADE_SIZE:.0f}")
+           f"وقف: {sl_price} (-{SL_PCT}%) [{sl_info}] | ${TRADE_SIZE:.0f}")
     log(msg); notify(msg); return True
 
-def close_trade(state: State, pair: str, reason: str, price: float, exchange):
+def close_trade(state: State, pair: str, reason: str, price: float, exchange, skip_sell: bool = False):
     pos = state.open_positions.pop(pair, None)
     if not pos:
         return
@@ -289,7 +316,11 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange):
     pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
 
     if not PAPER_MODE:
-        spot_sell(exchange, pair, pos["qty"])
+        sl_oid = pos.get("sl_order_id")
+        if sl_oid and not skip_sell:
+            cancel_sl_order(exchange, pair, sl_oid)
+        if not skip_sell:
+            spot_sell(exchange, pair, pos["qty"])
 
     state.daily_pnl += pnl
     if state.daily_pnl <= -MAX_DAILY_LOSS:
@@ -322,7 +353,19 @@ async def check_positions(state: State, exchange):
             price = exchange.fetch_ticker(pair)["last"]
         except Exception as e:
             log(f"خطأ في جلب سعر {pair}: {e}"); continue
-        if price <= pos["sl"]:
+
+        sl_oid = pos.get("sl_order_id")
+        if sl_oid and not PAPER_MODE:
+            try:
+                sl_order = exchange.fetch_order(sl_oid, pair)
+                if sl_order.get('status') in ('closed', 'filled'):
+                    fill_price = float(sl_order.get('average', 0)) or price
+                    close_trade(state, pair, "وقف خسارة", fill_price, exchange, skip_sell=True)
+                    continue
+            except Exception as e:
+                log(f"فحص أمر SL {pair}: {e}")
+
+        if PAPER_MODE and price <= pos["sl"]:
             close_trade(state, pair, "وقف خسارة", price, exchange)
         elif price >= pos["tp"]:
             close_trade(state, pair, "هدف ربح", price, exchange)
