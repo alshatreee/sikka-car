@@ -1,0 +1,301 @@
+"""
+bot_monitor.py — مراقب وتحليل بوت القناة الشهرية
+
+يفحص كل 15 دقيقة:
+- حالة خدمة systemd (شغالة / إعادة تشغيل متكررة / متجمدة)
+- أخطاء المنصات وأوامر التداول في اللوق
+- أنماط غريبة: تكرار شراء عملة، رصيد غير كافٍ متكرر، إيقاف التداول
+- توقف تحديث اللوق (تجمّد البوت)
+
+ينبه على التيليجرام عند اكتشاف مشكلة جديدة (بدون إعادة تشغيل).
+
+    python3 bot_monitor.py            # تشغيل مستمر
+    python3 bot_monitor.py --once     # فحص واحد + تقرير
+    python3 bot_monitor.py --report   # تقرير صحة فوري
+
+    pip install python-dotenv requests
+"""
+from __future__ import annotations
+import json, os, re, subprocess, sys, time
+from dataclasses import dataclass, field, asdict
+from pathlib import Path
+from dotenv import load_dotenv
+
+BASE_DIR = Path(r"C:\Users\xman9\Desktop") if os.name == "nt" else Path("/root/bots")
+BASE_DIR.mkdir(parents=True, exist_ok=True)
+ENV_FILE = BASE_DIR / ".env_monthly"
+TARGET_LOG = BASE_DIR / "monthly.log"
+STATE_FILE = BASE_DIR / "monitor_state.json"
+LOG_FILE = BASE_DIR / "monitor.log"
+load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
+
+SERVICE_NAME = os.getenv("MONITOR_SERVICE", "monthly-channel-bot")
+NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+NOTIFY_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
+
+CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "900"))
+LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "30"))
+MAX_RESTARTS_HR = int(os.getenv("MONITOR_MAX_RESTARTS", "4"))
+DUP_BUY_WINDOW = int(os.getenv("MONITOR_DUP_WINDOW", "20"))
+INSUFFICIENT_LIMIT = int(os.getenv("MONITOR_INSUFFICIENT_LIMIT", "10"))
+DAILY_SUMMARY_HOUR = int(os.getenv("MONITOR_SUMMARY_HOUR", "21"))
+
+_IS_TTY = sys.stdin and sys.stdin.isatty()
+
+# أنماط الأخطاء في اللوق — (المفتاح, التعبير, الخطورة)
+ERROR_PATTERNS = [
+    ("exchange_down", r"خطأ (KuCoin|Bybit):", "🔴 منصة"),
+    ("buy_error", r"خطأ في الشراء:", "🔴 شراء"),
+    ("sell_error", r"خطأ في البيع:", "🔴 بيع"),
+    ("sl_error", r"خطأ وقف الخسارة:", "🟠 وقف خسارة"),
+    ("balance_error", r"خطأ جلب الرصيد:", "🟠 رصيد"),
+    ("check_error", r"خطأ في فحص", "🟠 فحص"),
+    ("notify_error", r"خطأ في الإشعار:", "🟡 إشعار"),
+    ("halt", r"إيقاف التداول", "🔴 إيقاف تداول"),
+]
+
+
+def log(msg: str) -> None:
+    line = f"[{time.strftime('%Y-%m-%dT%H:%M:%S')}] {msg}"
+    if _IS_TTY:
+        print(line, flush=True)
+    try:
+        with LOG_FILE.open("a") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
+def notify(msg: str) -> None:
+    if not NOTIFY_TOKEN or not NOTIFY_CHAT:
+        return
+    try:
+        import requests
+        requests.post(
+            f"https://api.telegram.org/bot{NOTIFY_TOKEN}/sendMessage",
+            json={"chat_id": NOTIFY_CHAT, "text": msg, "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except Exception as e:
+        log(f"خطأ إرسال: {e}")
+
+
+@dataclass
+class MonitorState:
+    log_offset: int = 0
+    last_summary_day: str = ""
+    last_alert_hashes: list[str] = field(default_factory=list)
+    error_counts: dict[str, int] = field(default_factory=dict)
+
+
+def load_state() -> MonitorState:
+    if STATE_FILE.exists():
+        try:
+            data = json.loads(STATE_FILE.read_text())
+            return MonitorState(**{k: v for k, v in data.items()
+                                  if k in MonitorState.__dataclass_fields__})
+        except Exception:
+            pass
+    return MonitorState()
+
+
+def save_state(state: MonitorState):
+    STATE_FILE.write_text(json.dumps(asdict(state), ensure_ascii=False, indent=2))
+
+
+def read_new_lines(state: MonitorState) -> list[str]:
+    """قراءة الأسطر الجديدة من اللوق منذ آخر فحص"""
+    if not TARGET_LOG.exists():
+        return []
+    size = TARGET_LOG.stat().st_size
+    if state.log_offset > size:
+        state.log_offset = 0  # اللوق دُوّر/أُفرغ
+    with TARGET_LOG.open("r", errors="replace") as f:
+        f.seek(state.log_offset)
+        lines = f.readlines()
+        state.log_offset = f.tell()
+    return lines
+
+
+def service_status() -> dict:
+    """حالة خدمة systemd"""
+    info = {"active": False, "restarts": 0, "sub": "?", "since": "?"}
+    try:
+        out = subprocess.run(
+            ["systemctl", "show", SERVICE_NAME,
+             "-p", "ActiveState,SubState,NRestarts,ActiveEnterTimestamp"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+        for line in out.splitlines():
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k == "ActiveState":
+                info["active"] = (v == "active")
+            elif k == "SubState":
+                info["sub"] = v
+            elif k == "NRestarts":
+                info["restarts"] = int(v) if v.isdigit() else 0
+            elif k == "ActiveEnterTimestamp":
+                info["since"] = v
+    except Exception as e:
+        log(f"خطأ حالة الخدمة: {e}")
+    return info
+
+
+def log_age_minutes() -> float:
+    if not TARGET_LOG.exists():
+        return 1e9
+    return (time.time() - TARGET_LOG.stat().st_mtime) / 60
+
+
+def analyze_lines(lines: list[str]) -> dict:
+    """تحليل الأسطر الجديدة واكتشاف المشاكل"""
+    findings = {"errors": {}, "buys": [], "insufficient": 0, "details": []}
+
+    for line in lines:
+        for key, pat, label in ERROR_PATTERNS:
+            if re.search(pat, line):
+                findings["errors"].setdefault(key, {"label": label, "count": 0, "sample": ""})
+                findings["errors"][key]["count"] += 1
+                if not findings["errors"][key]["sample"]:
+                    findings["errors"][key]["sample"] = line.strip()[-160:]
+
+        m = re.search(r"أمر شراء: ([A-Z0-9]+)/USDT", line)
+        if m:
+            findings["buys"].append(m.group(1))
+
+        if "رصيد غير كافٍ" in line:
+            findings["insufficient"] += 1
+
+    return findings
+
+
+def detect_duplicate_buys(buys: list[str]) -> dict:
+    """اكتشاف تكرار شراء نفس العملة في نافذة قريبة"""
+    dups = {}
+    counts = {}
+    for sym in buys[-DUP_BUY_WINDOW:]:
+        counts[sym] = counts.get(sym, 0) + 1
+    for sym, c in counts.items():
+        if c >= 2:
+            dups[sym] = c
+    return dups
+
+
+def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
+    """تشغيل كل الفحوصات وإرجاع قائمة التنبيهات"""
+    alerts = []
+
+    # 1) حالة الخدمة
+    svc = service_status()
+    if not svc["active"]:
+        alerts.append(f"🔴 <b>البوت متوقف!</b>\nالحالة: {svc['sub']}")
+    if svc["restarts"] > MAX_RESTARTS_HR:
+        alerts.append(f"🟠 <b>إعادة تشغيل متكررة</b>\nعدد المرات: {svc['restarts']}")
+
+    # 2) تجمّد اللوق
+    age = log_age_minutes()
+    if svc["active"] and age > LOG_STALE_MIN:
+        alerts.append(f"🟠 <b>اللوق متوقف</b>\nآخر تحديث قبل {age:.0f} دقيقة (قد يكون البوت متجمّد)")
+
+    # 3) تحليل الأسطر الجديدة
+    lines = read_new_lines(state)
+    findings = analyze_lines(lines)
+
+    for key, data in findings["errors"].items():
+        state.error_counts[key] = state.error_counts.get(key, 0) + data["count"]
+        alerts.append(
+            f"{data['label']} <b>خطأ ({data['count']}×)</b>\n<code>{data['sample']}</code>"
+        )
+
+    # 4) تكرار شراء عملة
+    dups = detect_duplicate_buys(findings["buys"])
+    if dups:
+        d = "\n".join(f"  {s}: {c}×" for s, c in dups.items())
+        alerts.append(f"🔴 <b>تكرار شراء عملة!</b>\n{d}")
+
+    # 5) رصيد غير كافٍ متكرر
+    if findings["insufficient"] >= INSUFFICIENT_LIMIT:
+        alerts.append(
+            f"🟡 <b>رصيد غير كافٍ متكرر</b>\n"
+            f"{findings['insufficient']} محاولة فاشلة — تحقّق من رصيد المنصة"
+        )
+
+    save_state(state)
+    return alerts
+
+
+def build_health_report(state: MonitorState) -> str:
+    svc = service_status()
+    age = log_age_minutes()
+    status = "🟢 شغّال" if svc["active"] else "🔴 متوقف"
+    lines = [
+        f"<b>🩺 تقرير صحة البوت</b>\n",
+        f"الخدمة: {status} ({svc['sub']})",
+        f"إعادة التشغيل: {svc['restarts']}×",
+        f"آخر تحديث لوق: قبل {age:.0f} دقيقة",
+    ]
+    if state.error_counts:
+        lines.append("\n<b>إجمالي الأخطاء المرصودة:</b>")
+        for key, count in state.error_counts.items():
+            label = next((l for k, p, l in ERROR_PATTERNS if k == key), key)
+            lines.append(f"  {label}: {count}")
+    else:
+        lines.append("\n✅ لا أخطاء مرصودة")
+    return "\n".join(lines)
+
+
+def main():
+    if "--report" in sys.argv:
+        state = load_state()
+        report = build_health_report(state)
+        log(report.replace("<b>", "").replace("</b>", "").replace("<code>", "").replace("</code>", ""))
+        notify(report)
+        return
+
+    if "--once" in sys.argv:
+        state = load_state()
+        alerts = run_checks(state)
+        if alerts:
+            msg = "⚠️ <b>تنبيه مراقبة البوت</b>\n\n" + "\n\n".join(alerts)
+            log(f"تنبيهات: {len(alerts)}")
+            notify(msg)
+        else:
+            log("لا مشاكل")
+        return
+
+    log(f"بدء مراقبة {SERVICE_NAME} | فحص كل {CHECK_INTERVAL}s")
+    state = load_state()
+
+    # تجاهل اللوق القديم عند أول تشغيل
+    if state.log_offset == 0 and TARGET_LOG.exists():
+        state.log_offset = TARGET_LOG.stat().st_size
+        save_state(state)
+        log(f"بدء من نهاية اللوق (offset={state.log_offset})")
+
+    notify(f"🩺 بدأت مراقبة البوت <b>{SERVICE_NAME}</b>\nفحص كل {CHECK_INTERVAL//60} دقيقة")
+
+    while True:
+        time.sleep(CHECK_INTERVAL)
+        try:
+            alerts = run_checks(state)
+            if alerts:
+                msg = "⚠️ <b>تنبيه مراقبة البوت</b>\n\n" + "\n\n".join(alerts)
+                log(f"تنبيهات ({len(alerts)}): {[a[:40] for a in alerts]}")
+                notify(msg)
+
+            today = time.strftime("%Y-%m-%d")
+            hour = int(time.strftime("%H"))
+            if hour == DAILY_SUMMARY_HOUR and state.last_summary_day != today:
+                notify(build_health_report(state))
+                state.last_summary_day = today
+                save_state(state)
+                log("تقرير صحة يومي أُرسل")
+
+        except Exception as e:
+            log(f"خطأ في المراقبة: {e}")
+
+
+if __name__ == "__main__":
+    main()

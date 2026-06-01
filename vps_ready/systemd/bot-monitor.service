@@ -1,0 +1,16 @@
+[Unit]
+Description=Monthly Channel Bot Monitor & Analyzer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bots
+ExecStart=/usr/bin/python3 /root/bots/bot_monitor.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/root/bots/monitor.log
+StandardError=append:/root/bots/monitor.log
+
+[Install]
+WantedBy=multi-user.target
