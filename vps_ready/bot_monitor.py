@@ -48,11 +48,79 @@ ERROR_PATTERNS = [
     ("buy_error", r"خطأ في الشراء:", "🔴 شراء"),
     ("sell_error", r"خطأ في البيع:", "🔴 بيع"),
     ("sl_error", r"خطأ وقف الخسارة:", "🟠 وقف خسارة"),
+    ("sl_check_error", r"فحص أمر SL", "🟠 فحص وقف"),
     ("balance_error", r"خطأ جلب الرصيد:", "🟠 رصيد"),
     ("check_error", r"خطأ في فحص", "🟠 فحص"),
     ("notify_error", r"خطأ في الإشعار:", "🟡 إشعار"),
     ("halt", r"إيقاف التداول", "🔴 إيقاف تداول"),
+    ("insufficient", r"رصيد غير كافٍ", "🟡 رصيد ناقص"),
+    ("dup_position", r"مركز مفتوح بالفعل|العملة مفتوحة بالفعل", "🟡 تكرار"),
+    ("symbol_missing", r"الزوج غير موجود", "🟡 زوج مفقود"),
 ]
+
+# شرح كل خطأ + اقتراح الحل
+ERROR_DIAGNOSIS = {
+    "exchange_down": {
+        "explain": "المنصة لا تستجيب — قد تكون معطلة مؤقتاً أو مفاتيح API منتهية",
+        "fix": "تحقق من حالة المنصة وصلاحية مفاتيح API في ملف .env_monthly",
+        "severity": "عالي",
+    },
+    "buy_error": {
+        "explain": "فشل تنفيذ أمر الشراء — الرصيد غير كافٍ أو الزوج غير متاح أو حد أدنى غير محقق",
+        "fix": "تحقق من رصيد USDT في المنصة وتأكد أن العملة متاحة للتداول الفوري",
+        "severity": "عالي",
+    },
+    "sell_error": {
+        "explain": "فشل تنفيذ أمر البيع — الكمية أقل من الحد الأدنى أو العملة محظورة",
+        "fix": "تحقق من الكمية المتاحة في محفظة المنصة وحدود التداول الأدنى",
+        "severity": "عالي",
+    },
+    "sl_error": {
+        "explain": "فشل وضع أمر وقف الخسارة على المنصة",
+        "fix": "البوت يستخدم فحص السعر كبديل احتياطي — لا خطر فوري",
+        "severity": "متوسط",
+    },
+    "sl_check_error": {
+        "explain": "فشل فحص حالة أمر وقف الخسارة — غالباً مشكلة API مع المنصة",
+        "fix": "إذا تكرر: حدّث البوت لآخر نسخة. البوت يفحص السعر يدوياً كاحتياط",
+        "severity": "متوسط",
+    },
+    "balance_error": {
+        "explain": "فشل جلب رصيد المحفظة من المنصة",
+        "fix": "تحقق من صلاحيات API — يجب أن تشمل 'قراءة الرصيد'",
+        "severity": "متوسط",
+    },
+    "check_error": {
+        "explain": "خطأ أثناء فحص المراكز المفتوحة أو جلب الأسعار",
+        "fix": "غالباً مؤقت بسبب ضغط على المنصة — إذا تكرر باستمرار تحقق من اتصال الإنترنت",
+        "severity": "متوسط",
+    },
+    "notify_error": {
+        "explain": "فشل إرسال إشعار تيليجرام — لا يؤثر على التداول",
+        "fix": "تحقق من TELEGRAM_TOKEN و TELEGRAM_CHAT_ID في .env_monthly",
+        "severity": "منخفض",
+    },
+    "halt": {
+        "explain": "البوت أوقف التداول تلقائياً لأن الخسارة اليومية تجاوزت الحد المسموح",
+        "fix": "راجع الصفقات المغلقة اليوم — التداول يستأنف تلقائياً غداً",
+        "severity": "عالي",
+    },
+    "insufficient": {
+        "explain": "الرصيد المتاح أقل من حجم الصفقة المطلوب ($100)",
+        "fix": "حوّل USDT للمحفظة الفورية (Spot) أو قلّل MONTHLY_BYBIT_TRADE_SIZE",
+        "severity": "متوسط",
+    },
+    "dup_position": {
+        "explain": "البوت تجاهل توصية لأن العملة مفتوحة بالفعل — سلوك طبيعي",
+        "fix": "لا إجراء مطلوب — هذا حماية من الشراء المزدوج",
+        "severity": "معلومة",
+    },
+    "symbol_missing": {
+        "explain": "العملة غير موجودة في المنصتين (Bybit و KuCoin)",
+        "fix": "العملة قد تكون جديدة أو غير مدرجة — البوت يتجاهلها تلقائياً",
+        "severity": "منخفض",
+    },
+}
 
 
 def log(msg: str) -> None:
@@ -190,14 +258,30 @@ def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
     # 1) حالة الخدمة
     svc = service_status()
     if not svc["active"]:
-        alerts.append(f"🔴 <b>البوت متوقف!</b>\nالحالة: {svc['sub']}")
+        alerts.append(
+            f"🔴 <b>البوت متوقف!</b>\n"
+            f"الحالة: {svc['sub']}\n"
+            f"السبب: الخدمة توقفت — قد يكون خطأ برمجي أو نفاد الذاكرة\n"
+            f"الحل: شغّل <code>systemctl restart {SERVICE_NAME}</code>\n"
+            f"للتفاصيل: <code>journalctl -u {SERVICE_NAME} --no-pager -n 20</code>"
+        )
     if svc["restarts"] > MAX_RESTARTS_HR:
-        alerts.append(f"🟠 <b>إعادة تشغيل متكررة</b>\nعدد المرات: {svc['restarts']}")
+        alerts.append(
+            f"🟠 <b>إعادة تشغيل متكررة</b>\n"
+            f"عدد المرات: {svc['restarts']}\n"
+            f"السبب: البوت يتوقف ويعاد تشغيله باستمرار — غالباً خطأ متكرر\n"
+            f"الحل: راجع <code>journalctl -u {SERVICE_NAME} --no-pager -n 50</code>"
+        )
 
     # 2) تجمّد اللوق
     age = log_age_minutes()
     if svc["active"] and age > LOG_STALE_MIN:
-        alerts.append(f"🟠 <b>اللوق متوقف</b>\nآخر تحديث قبل {age:.0f} دقيقة (قد يكون البوت متجمّد)")
+        alerts.append(
+            f"🟠 <b>اللوق متوقف</b>\n"
+            f"آخر تحديث: قبل {age:.0f} دقيقة\n"
+            f"السبب: البوت شغال لكن لا يكتب باللوق — قد يكون متجمّد أو ينتظر اتصال\n"
+            f"الحل: <code>systemctl restart {SERVICE_NAME}</code>"
+        )
 
     # 3) تحليل الأسطر الجديدة
     lines = read_new_lines(state)
@@ -205,21 +289,35 @@ def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
 
     for key, data in findings["errors"].items():
         state.error_counts[key] = state.error_counts.get(key, 0) + data["count"]
+        diag = ERROR_DIAGNOSIS.get(key, {})
+        explain = diag.get("explain", "خطأ غير معروف")
+        fix = diag.get("fix", "راجع اللوق يدوياً")
+        severity = diag.get("severity", "?")
         alerts.append(
-            f"{data['label']} <b>خطأ ({data['count']}×)</b>\n<code>{data['sample']}</code>"
+            f"{data['label']} <b>خطأ ({data['count']}×)</b>\n"
+            f"الخطورة: {severity}\n"
+            f"السبب: {explain}\n"
+            f"الحل: {fix}\n"
+            f"<code>{data['sample']}</code>"
         )
 
     # 4) تكرار شراء عملة
     dups = detect_duplicate_buys(findings["buys"])
     if dups:
         d = "\n".join(f"  {s}: {c}×" for s, c in dups.items())
-        alerts.append(f"🔴 <b>تكرار شراء عملة!</b>\n{d}")
+        alerts.append(
+            f"🔴 <b>تكرار شراء عملة!</b>\n{d}\n"
+            f"السبب: البوت اشترى نفس العملة أكثر من مرة — قد يكون خلل في حفظ المراكز\n"
+            f"الحل: حدّث البوت لآخر نسخة وتحقق من ملف الحالة monthly_state.json"
+        )
 
     # 5) رصيد غير كافٍ متكرر
     if findings["insufficient"] >= INSUFFICIENT_LIMIT:
         alerts.append(
             f"🟡 <b>رصيد غير كافٍ متكرر</b>\n"
-            f"{findings['insufficient']} محاولة فاشلة — تحقّق من رصيد المنصة"
+            f"{findings['insufficient']} محاولة فاشلة\n"
+            f"السبب: رصيد USDT أقل من حجم الصفقة ($100)\n"
+            f"الحل: حوّل USDT إلى المحفظة الفورية (Spot) في المنصة"
         )
 
     save_state(state)
@@ -240,9 +338,13 @@ def build_health_report(state: MonitorState) -> str:
         lines.append("\n<b>إجمالي الأخطاء المرصودة:</b>")
         for key, count in state.error_counts.items():
             label = next((l for k, p, l in ERROR_PATTERNS if k == key), key)
-            lines.append(f"  {label}: {count}")
+            diag = ERROR_DIAGNOSIS.get(key, {})
+            fix = diag.get("fix", "")
+            lines.append(f"  {label}: {count}×")
+            if fix:
+                lines.append(f"    ↳ {fix}")
     else:
-        lines.append("\n✅ لا أخطاء مرصودة")
+        lines.append("\n✅ لا أخطاء مرصودة — البوت يعمل بشكل سليم")
     return "\n".join(lines)
 
 
