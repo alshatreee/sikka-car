@@ -56,6 +56,8 @@ BTC_DROP_LIMIT = float(os.getenv("MONTHLY_BTC_DROP_LIMIT", "5.0"))
 MIN_TRADE_USDT = float(os.getenv("MONTHLY_MIN_TRADE_USDT", "5.0"))
 KUCOIN_TRADE_SIZE = float(os.getenv("MONTHLY_KUCOIN_TRADE_SIZE", "100"))
 BYBIT_TRADE_SIZE = float(os.getenv("MONTHLY_BYBIT_TRADE_SIZE", "100"))
+# عملات محمية — البوت يرفض شرائها أو بيعها (عملاتك اليدوية)
+PROTECTED_SYMBOLS = [s.strip().upper() for s in os.getenv("MONTHLY_PROTECTED_SYMBOLS", "").split(",") if s.strip()]
 CHECK_INTERVAL = 300
 PAPER_MODE = "--live" not in sys.argv
 
@@ -402,6 +404,8 @@ def partial_rebuy(state, pair: str, price: float, exchange):
 # ---------- trade logic ----------
 def open_trade(state: State, signal: Signal, reason: str = "توصية جديدة") -> bool:
     rollover_day(state)
+    if signal.symbol in PROTECTED_SYMBOLS:
+        log(f"عملة محمية — تجاهل: {signal.symbol}"); return False
     if state.halted:
         log("متوقف — تجاوز حد الخسارة اليومي"); return False
     if state.daily_trades >= MAX_DAILY_TRADES:
@@ -501,6 +505,8 @@ async def check_positions(state: State):
         pos = state.open_positions.get(pair)
         if not pos:
             continue
+        if pos.get("symbol") in PROTECTED_SYMBOLS:
+            continue  # لا نبيع عملة محمية أبداً
         ex_name = pos.get("exchange", "bybit")
         exchange = _exchanges.get(ex_name)
         if not exchange:
@@ -864,6 +870,8 @@ async def main():
     asyncio.create_task(reinforcement_checker())
     log(f"Listening... (cap=${CAPITAL}, size={TRADE_PCT}%, SL={SL_PCT}%, "
         f"partial_TP={PARTIAL_TP_PCT}%→{PARTIAL_SELL_PCT}%, rebuy=-{REBUY_DROP_PCT}%)")
+    if PROTECTED_SYMBOLS:
+        log(f"عملات محمية (لا تُشترى ولا تُباع): {PROTECTED_SYMBOLS}")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
