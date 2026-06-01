@@ -613,7 +613,10 @@ async def check_pending_signals(state: State):
         if pair in state.open_positions:
             continue
         try:
-            price = _exchanges[ex_name].fetch_ticker(pair)["last"]
+            price = _exchanges[ex_name].fetch_ticker(pair).get("last")
+            if not price:
+                continue
+            price = float(price)
         except Exception:
             continue
 
@@ -650,7 +653,10 @@ async def check_reinforcements(state: State):
         if pair in state.open_positions:
             continue
         try:
-            price = _exchanges[ex_name].fetch_ticker(pair)["last"]
+            price = _exchanges[ex_name].fetch_ticker(pair).get("last")
+            if not price:
+                continue
+            price = float(price)
         except Exception:
             continue
 
