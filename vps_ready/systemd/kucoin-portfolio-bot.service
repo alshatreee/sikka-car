@@ -1,0 +1,16 @@
+[Unit]
+Description=KuCoin Portfolio Tracker & Alerts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/bots
+ExecStart=/usr/bin/python3 /root/bots/kucoin_portfolio_bot.py
+Restart=always
+RestartSec=30
+StandardOutput=append:/root/bots/portfolio.log
+StandardError=append:/root/bots/portfolio.log
+
+[Install]
+WantedBy=multi-user.target
