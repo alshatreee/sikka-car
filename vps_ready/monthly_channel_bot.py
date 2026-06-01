@@ -46,6 +46,9 @@ MAX_DAILY_TRADES = 10
 MAX_OPEN = 10
 MAX_DAILY_LOSS_PCT = float(os.getenv("MONTHLY_MAX_LOSS_PCT", "5.0"))
 MAX_DAILY_LOSS = CAPITAL * MAX_DAILY_LOSS_PCT / 100
+PARTIAL_TP_PCT = float(os.getenv("MONTHLY_PARTIAL_TP_PCT", "3.0"))
+PARTIAL_SELL_PCT = float(os.getenv("MONTHLY_PARTIAL_SELL_PCT", "50"))
+REBUY_DROP_PCT = float(os.getenv("MONTHLY_REBUY_DROP_PCT", "5.0"))
 CHECK_INTERVAL = 300
 PAPER_MODE = "--live" not in sys.argv
 
@@ -262,6 +265,72 @@ def cancel_sl_order(exchange, pair: str, order_id: str):
     except Exception as e:
         log(f"خطأ إلغاء الأمر: {pair} — {e}")
 
+# ---------- partial TP / re-entry ----------
+def partial_sell(state, pair: str, price: float, exchange):
+    """بيع جزئي عند ارتفاع السعر — يحفظ المبلغ لإعادة الشراء عند النزول."""
+    pos = state.open_positions.get(pair)
+    if not pos or pos.get("partial_taken"):
+        return
+    sell_qty = pos["qty"] * PARTIAL_SELL_PCT / 100
+    remaining_qty = pos["qty"] - sell_qty
+
+    if not PAPER_MODE:
+        order = spot_sell(exchange, pair, sell_qty)
+        if not order:
+            return
+        fill_price = float(order.get("average", price))
+        partial_usdt = fill_price * float(order.get("filled", sell_qty))
+        sl_oid = pos.get("sl_order_id")
+        if sl_oid:
+            cancel_sl_order(exchange, pair, sl_oid)
+        pos["sl_order_id"] = None
+    else:
+        partial_usdt = price * sell_qty
+
+    pos["qty"] = remaining_qty
+    pos["partial_taken"] = True
+    pos["partial_usdt"] = round(partial_usdt, 4)
+    save_state(state)
+
+    pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
+    msg = (f"بيع جزئي: {pair}\n"
+           f"بيع {PARTIAL_SELL_PCT:.0f}% @ {price} (+{pnl_pct:.1f}%)\n"
+           f"محفوظ: ${partial_usdt:.2f} | متبقي: {remaining_qty:.6f}")
+    log(msg); notify(msg)
+
+def partial_rebuy(state, pair: str, price: float, exchange):
+    """إعادة شراء الكمية المباعة عند نزول السعر تحت سعر الدخول."""
+    pos = state.open_positions.get(pair)
+    if not pos or not pos.get("partial_taken"):
+        return
+    partial_usdt = pos.get("partial_usdt", 0)
+    if partial_usdt <= 0:
+        return
+
+    rebuy_qty = partial_usdt / price
+    if not PAPER_MODE:
+        order = spot_buy(exchange, pair, partial_usdt)
+        if not order:
+            return
+        rebuy_qty = float(order.get("filled", rebuy_qty))
+
+    new_qty = pos["qty"] + rebuy_qty
+
+    if not PAPER_MODE:
+        new_sl_oid = place_stop_loss(exchange, pair, new_qty, pos["sl"])
+        pos["sl_order_id"] = new_sl_oid
+
+    pos["qty"] = new_qty
+    pos["partial_taken"] = False
+    pos["partial_usdt"] = 0
+    save_state(state)
+
+    drop_pct = (price - pos["entry"]) / pos["entry"] * 100
+    msg = (f"إعادة شراء: {pair}\n"
+           f"شراء @ {price} ({drop_pct:+.1f}%)\n"
+           f"${partial_usdt:.2f} → {rebuy_qty:.6f} | إجمالي: {new_qty:.6f}")
+    log(msg); notify(msg)
+
 # ---------- trade logic ----------
 def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية جديدة") -> bool:
     rollover_day(state)
@@ -355,6 +424,8 @@ async def check_positions(state: State, exchange):
             log(f"خطأ في جلب سعر {pair}: {e}"); continue
 
         sl_oid = pos.get("sl_order_id")
+
+        # 1) exchange SL filled (live)
         if sl_oid and not PAPER_MODE:
             try:
                 sl_order = exchange.fetch_order(sl_oid, pair)
@@ -365,9 +436,27 @@ async def check_positions(state: State, exchange):
             except Exception as e:
                 log(f"فحص أمر SL {pair}: {e}")
 
-        if PAPER_MODE and price <= pos["sl"]:
+        # 2) re-entry: partial was taken + price dropped → buy back
+        if pos.get("partial_taken"):
+            rebuy_trigger = pos["entry"] * (1 - REBUY_DROP_PCT / 100)
+            if price <= rebuy_trigger:
+                partial_rebuy(state, pair, price, exchange)
+                continue
+
+        # 3) polling SL (paper mode or live with no exchange SL)
+        if price <= pos["sl"] and (PAPER_MODE or not sl_oid):
             close_trade(state, pair, "وقف خسارة", price, exchange)
-        elif price >= pos["tp"]:
+            continue
+
+        # 4) partial take-profit: sell portion when price rises
+        if not pos.get("partial_taken"):
+            partial_tp_trigger = pos["entry"] * (1 + PARTIAL_TP_PCT / 100)
+            if price >= partial_tp_trigger:
+                partial_sell(state, pair, price, exchange)
+                continue
+
+        # 5) full TP
+        if price >= pos["tp"]:
             close_trade(state, pair, "هدف ربح", price, exchange)
         elif (time.time() - pos["opened"]) / 86400 >= MAX_HOLD_DAYS:
             close_trade(state, pair, f"مدة قصوى ({MAX_HOLD_DAYS} يوم)", price, exchange)
@@ -503,6 +592,7 @@ def run_check():
     state = load_state()
     log(f"مراكز: {len(state.open_positions)} | صفقات اليوم: {state.daily_trades} | PnL: ${state.daily_pnl:.2f}")
     log(f"رأس المال: ${CAPITAL} | حجم: ${TRADE_SIZE} | الوضع: {'ورقي' if PAPER_MODE else 'حقيقي'}")
+    log(f"بيع جزئي: {PARTIAL_SELL_PCT}% عند +{PARTIAL_TP_PCT}% | إعادة شراء عند -{REBUY_DROP_PCT}%")
 
     if state.reinforcements:
         log(f"تعزيزات محفوظة ({len(state.reinforcements)} عملة):")
@@ -615,7 +705,8 @@ async def main():
 
     asyncio.create_task(position_checker())
     asyncio.create_task(reinforcement_checker())
-    log(f"Listening... (cap=${CAPITAL}, size={TRADE_PCT}%, SL={SL_PCT}%)")
+    log(f"Listening... (cap=${CAPITAL}, size={TRADE_PCT}%, SL={SL_PCT}%, "
+        f"partial_TP={PARTIAL_TP_PCT}%→{PARTIAL_SELL_PCT}%, rebuy=-{REBUY_DROP_PCT}%)")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
