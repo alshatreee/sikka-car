@@ -271,10 +271,20 @@ def _safe_float(*values, default=0.0) -> float:
 
 def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
     try:
-        price = exchange.fetch_ticker(pair)["last"]
+        price = _safe_float(exchange.fetch_ticker(pair).get("last"))
         qty = usdt_amount / price
         order = exchange.create_market_buy_order(pair, qty)
         log(f"أمر شراء: {pair} | كمية={qty:.6f} | ${usdt_amount}")
+        # إعادة جلب الأمر للحصول على الكمية المنفّذة الفعلية (دقة الحفظ)
+        filled = _safe_float(order.get("filled"), order.get("amount"))
+        if not filled and order.get("id"):
+            try:
+                time.sleep(1)
+                fetched = exchange.fetch_order(order["id"], pair)
+                if _safe_float(fetched.get("filled"), fetched.get("amount")):
+                    return fetched
+            except Exception:
+                pass
         return order
     except Exception as e:
         log(f"خطأ في الشراء: {pair} — {e}"); return None
