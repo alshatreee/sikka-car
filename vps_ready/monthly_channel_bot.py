@@ -49,6 +49,8 @@ MAX_DAILY_LOSS = CAPITAL * MAX_DAILY_LOSS_PCT / 100
 PARTIAL_TP_PCT = float(os.getenv("MONTHLY_PARTIAL_TP_PCT", "3.0"))
 PARTIAL_SELL_PCT = float(os.getenv("MONTHLY_PARTIAL_SELL_PCT", "50"))
 REBUY_DROP_PCT = float(os.getenv("MONTHLY_REBUY_DROP_PCT", "5.0"))
+BTC_DROP_LIMIT = float(os.getenv("MONTHLY_BTC_DROP_LIMIT", "5.0"))
+MIN_TRADE_USDT = float(os.getenv("MONTHLY_MIN_TRADE_USDT", "5.0"))
 CHECK_INTERVAL = 300
 PAPER_MODE = "--live" not in sys.argv
 
@@ -265,6 +267,34 @@ def cancel_sl_order(exchange, pair: str, order_id: str):
     except Exception as e:
         log(f"خطأ إلغاء الأمر: {pair} — {e}")
 
+def btc_trend_ok(exchange) -> bool:
+    try:
+        ticker = exchange.fetch_ticker("BTC/USDT")
+        change = ticker.get("percentage")
+        if change is None:
+            op, last = ticker.get("open", 0), ticker.get("last", 0)
+            change = (last - op) / op * 100 if op and last else 0
+        if change <= -BTC_DROP_LIMIT:
+            log(f"فلتر BTC: {change:+.1f}% خلال 24س (حد -{BTC_DROP_LIMIT}%) — إيقاف الشراء")
+            return False
+        return True
+    except Exception as e:
+        log(f"خطأ فلتر BTC: {e}")
+        return True
+
+def get_trade_size(exchange) -> float:
+    if PAPER_MODE:
+        return TRADE_SIZE
+    try:
+        balance = exchange.fetch_balance()
+        free_usdt = float(balance.get("USDT", {}).get("free", 0))
+        size = free_usdt * TRADE_PCT / 100
+        log(f"رصيد: ${free_usdt:.2f} | حجم الصفقة: ${size:.2f} ({TRADE_PCT}%)")
+        return round(size, 2)
+    except Exception as e:
+        log(f"خطأ جلب الرصيد: {e} — استخدام الحجم الثابت ${TRADE_SIZE}")
+        return TRADE_SIZE
+
 # ---------- partial TP / re-entry ----------
 def partial_sell(state, pair: str, price: float, exchange):
     """بيع جزئي عند ارتفاع السعر — يحفظ المبلغ لإعادة الشراء عند النزول."""
@@ -340,6 +370,8 @@ def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية
         log(f"حد الصفقات اليومي ({MAX_DAILY_TRADES})"); return False
     if len(state.open_positions) >= MAX_OPEN:
         log(f"حد المراكز المفتوحة ({MAX_OPEN})"); return False
+    if not btc_trend_ok(exchange):
+        return False
 
     pair = verify_symbol(exchange, signal.symbol)
     if not pair:
@@ -347,11 +379,15 @@ def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية
     if pair in state.open_positions:
         log(f"مركز مفتوح بالفعل: {pair}"); return False
 
+    trade_size = get_trade_size(exchange)
+    if trade_size < MIN_TRADE_USDT:
+        log(f"رصيد غير كافٍ: ${trade_size:.2f} < ${MIN_TRADE_USDT}"); return False
+
     sl_price = round(signal.buy_price * (1 - SL_PCT / 100), 8)
-    entry, qty = signal.buy_price, TRADE_SIZE / signal.buy_price
+    entry, qty = signal.buy_price, trade_size / signal.buy_price
 
     if not PAPER_MODE:
-        order = spot_buy(exchange, pair, TRADE_SIZE)
+        order = spot_buy(exchange, pair, trade_size)
         if not order:
             return False
         entry = float(order.get("average", entry))
@@ -374,7 +410,7 @@ def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية
     sl_info = "أمر منصة" if sl_order_id else "فحص دوري"
     msg = (f"صفقة [{mode}] — {reason}\n#{signal.trade_num} | {pair}\n"
            f"دخول: {entry} | هدف: {signal.sell_price} ({signal.tp_pct}%)\n"
-           f"وقف: {sl_price} (-{SL_PCT}%) [{sl_info}] | ${TRADE_SIZE:.0f}")
+           f"وقف: {sl_price} (-{SL_PCT}%) [{sl_info}] | ${trade_size:.0f}")
     log(msg); notify(msg); return True
 
 def close_trade(state: State, pair: str, reason: str, price: float, exchange, skip_sell: bool = False):
