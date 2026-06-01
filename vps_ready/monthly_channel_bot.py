@@ -312,7 +312,7 @@ def place_stop_loss(exchange, pair: str, qty: float, trigger_price: float) -> st
 
 def cancel_sl_order(exchange, pair: str, order_id: str):
     try:
-        params = {"stop": True} if exchange.id == "bybit" else {}
+        params = {"stop": True, "orderFilter": "StopOrder"} if exchange.id == "bybit" else {}
         exchange.cancel_order(order_id, pair, params=params)
         log(f"إلغاء وقف خسارة: {pair} | أمر={order_id}")
     except Exception as e:
@@ -535,13 +535,20 @@ async def check_positions(state: State):
         sl_check_ok = False
         if sl_oid and not PAPER_MODE:
             try:
-                params = {"stop": True} if exchange.id == "bybit" else {}
-                sl_order = exchange.fetch_order(sl_oid, pair, params=params)
-                sl_check_ok = True
-                if sl_order.get('status') in ('closed', 'filled', 'triggered'):
-                    fill_price = _safe_float(sl_order.get('average'), sl_order.get('price'), default=price)
-                    close_trade(state, pair, "وقف خسارة", fill_price, exchange, skip_sell=True)
-                    continue
+                if exchange.id == "bybit":
+                    open_stops = exchange.fetch_open_orders(pair, params={"stop": True})
+                    if any(o.get("id") == sl_oid for o in open_stops):
+                        sl_check_ok = True
+                    else:
+                        close_trade(state, pair, "وقف خسارة (منصة)", price, exchange, skip_sell=True)
+                        continue
+                else:
+                    sl_order = exchange.fetch_order(sl_oid, pair)
+                    sl_check_ok = True
+                    if sl_order.get('status') in ('closed', 'filled', 'triggered'):
+                        fill_price = _safe_float(sl_order.get('average'), sl_order.get('price'), default=price)
+                        close_trade(state, pair, "وقف خسارة", fill_price, exchange, skip_sell=True)
+                        continue
             except Exception as e:
                 log(f"فحص أمر SL {pair}: {e}")
 
