@@ -54,6 +54,7 @@ PARTIAL_SELL_PCT = float(os.getenv("MONTHLY_PARTIAL_SELL_PCT", "50"))
 REBUY_DROP_PCT = float(os.getenv("MONTHLY_REBUY_DROP_PCT", "5.0"))
 BTC_DROP_LIMIT = float(os.getenv("MONTHLY_BTC_DROP_LIMIT", "5.0"))
 MIN_TRADE_USDT = float(os.getenv("MONTHLY_MIN_TRADE_USDT", "5.0"))
+KUCOIN_TRADE_SIZE = float(os.getenv("MONTHLY_KUCOIN_TRADE_SIZE", "100"))
 CHECK_INTERVAL = 300
 PAPER_MODE = "--live" not in sys.argv
 
@@ -400,7 +401,7 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         log(f"مركز مفتوح بالفعل: {pair}"); return False
 
     exchange = _exchanges[ex_name]
-    trade_size = get_trade_size(exchange)
+    trade_size = KUCOIN_TRADE_SIZE if ex_name == "kucoin" else get_trade_size(exchange)
     if trade_size < MIN_TRADE_USDT:
         log(f"رصيد غير كافٍ: ${trade_size:.2f} < ${MIN_TRADE_USDT}"); return False
 
