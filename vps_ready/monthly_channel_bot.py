@@ -92,6 +92,8 @@ class State:
     trade_history: list[dict] = field(default_factory=list)
     reinforcements: dict[str, list] = field(default_factory=dict)
     reinforced_keys: list[str] = field(default_factory=list)
+    pending_signals: list[dict] = field(default_factory=list)
+    executed_signals: list[str] = field(default_factory=list)
 
 def load_state() -> State:
     if STATE_FILE.exists():
@@ -543,6 +545,16 @@ async def scan_history(client, state: State):
             signal = parse_signal(msg.text)
             if signal:
                 total_signals += 1
+                sig_key = f"{signal.symbol}_{signal.trade_num}"
+                if sig_key not in state.executed_signals:
+                    existing = [s["key"] for s in state.pending_signals]
+                    if sig_key not in existing:
+                        state.pending_signals.append({
+                            "key": sig_key, "symbol": signal.symbol,
+                            "buy_price": signal.buy_price, "sell_price": signal.sell_price,
+                            "tp_pct": signal.tp_pct, "trade_num": signal.trade_num,
+                            "date": msg.date.strftime("%Y-%m-%d") if msg.date else "",
+                        })
                 if signal.reinforcements:
                     total_reinf += len(signal.reinforcements)
                     if signal.symbol not in state.reinforcements:
@@ -574,11 +586,53 @@ async def scan_history(client, state: State):
         log(f"  {channel_name}: {count} رسالة مفحوصة")
 
     save_state(state)
-    log(f"مسح التاريخ: {total_signals} توصية، {total_reinf} سعر تعزيز")
+    log(f"مسح التاريخ: {total_signals} توصية، {total_reinf} سعر تعزيز، {len(state.pending_signals)} توصية معلّقة")
     if state.reinforcements:
         for sym, entries in state.reinforcements.items():
             prices = [e["price"] for e in entries]
             log(f"  {sym}: تعزيزات {prices}")
+    if state.pending_signals:
+        for s in state.pending_signals:
+            log(f"  معلّقة: {s['symbol']} شراء={s['buy_price']} بيع={s['sell_price']}")
+
+async def check_pending_signals(state: State):
+    if not state.pending_signals:
+        return
+    rollover_day(state)
+    if state.halted:
+        return
+
+    for sig_data in list(state.pending_signals):
+        symbol = sig_data["symbol"]
+        buy_price = sig_data["buy_price"]
+        if buy_price <= 0:
+            continue
+        pair, ex_name = find_pair_exchange(symbol)
+        if not pair:
+            continue
+        if pair in state.open_positions:
+            continue
+        try:
+            price = _exchanges[ex_name].fetch_ticker(pair)["last"]
+        except Exception:
+            continue
+
+        diff_pct = (price - buy_price) / buy_price * 100
+        if -REINFORCE_PCT <= diff_pct <= REINFORCE_PCT:
+            sig = Signal(
+                trade_num=sig_data.get("trade_num", 0),
+                symbol=symbol,
+                buy_price=price,
+                sell_price=sig_data.get("sell_price", buy_price * 1.15),
+                tp_pct=sig_data.get("tp_pct", 15),
+            )
+            log(f"توصية معلّقة! {symbol} @ ${price:.4f} قريب من ${buy_price} (فرق {diff_pct:+.1f}%)")
+            if open_trade(state, sig, reason=f"توصية معلّقة #{sig_data.get('trade_num',0)}"):
+                state.pending_signals.remove(sig_data)
+                state.executed_signals.append(sig_data["key"])
+                if len(state.executed_signals) > 500:
+                    state.executed_signals = state.executed_signals[-500:]
+                save_state(state)
 
 async def check_reinforcements(state: State):
     if not state.reinforcements:
@@ -762,6 +816,8 @@ async def main():
             try:
                 if state.reinforcements:
                     await check_reinforcements(state)
+                if state.pending_signals:
+                    await check_pending_signals(state)
             except Exception as e:
                 log(f"خطأ في فحص التعزيزات: {e}")
 
