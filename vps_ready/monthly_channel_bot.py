@@ -34,6 +34,9 @@ TG_SESSION   = str(BASE_DIR / "monthly_session")
 BYBIT_KEY    = os.getenv("BYBIT_API_KEY", "")
 BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
 BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "true").lower() == "true"
+KUCOIN_KEY    = os.getenv("KUCOIN_API_KEY", "")
+KUCOIN_SECRET = os.getenv("KUCOIN_API_SECRET", "")
+KUCOIN_PASS   = os.getenv("KUCOIN_PASSPHRASE", "")
 NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT  = os.getenv("TELEGRAM_CHAT_ID", "")
 
@@ -220,6 +223,21 @@ def get_exchange():
         ex.set_sandbox_mode(True)
     return ex
 
+def get_kucoin_exchange():
+    import ccxt
+    return ccxt.kucoin({"apiKey": KUCOIN_KEY, "secret": KUCOIN_SECRET,
+                         "password": KUCOIN_PASS,
+                         "options": {"defaultType": "spot"}})
+
+_exchanges: dict = {}
+
+def find_pair_exchange(symbol: str):
+    for name, ex in _exchanges.items():
+        pair = verify_symbol(ex, symbol)
+        if pair:
+            return pair, name
+    return None, None
+
 def verify_symbol(exchange, symbol: str) -> str | None:
     pair = f"{symbol}/USDT"
     exchange.load_markets()
@@ -250,9 +268,11 @@ def spot_sell(exchange, pair: str, qty: float) -> dict | None:
 
 def place_stop_loss(exchange, pair: str, qty: float, trigger_price: float) -> str | None:
     try:
-        order = exchange.create_order(pair, 'market', 'sell', qty, None, {
-            'triggerPrice': str(trigger_price),
-        })
+        if exchange.id == 'kucoin':
+            params = {'stop': 'loss', 'stopPrice': str(trigger_price)}
+        else:
+            params = {'triggerPrice': str(trigger_price)}
+        order = exchange.create_order(pair, 'market', 'sell', qty, None, params)
         oid = order.get('id', '')
         log(f"أمر وقف خسارة: {pair} @ {trigger_price} | أمر={oid}")
         return oid
@@ -362,7 +382,7 @@ def partial_rebuy(state, pair: str, price: float, exchange):
     log(msg); notify(msg)
 
 # ---------- trade logic ----------
-def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية جديدة") -> bool:
+def open_trade(state: State, signal: Signal, reason: str = "توصية جديدة") -> bool:
     rollover_day(state)
     if state.halted:
         log("متوقف — تجاوز حد الخسارة اليومي"); return False
@@ -371,12 +391,13 @@ def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية
     if len(state.open_positions) >= MAX_OPEN:
         log(f"حد المراكز المفتوحة ({MAX_OPEN})"); return False
 
-    pair = verify_symbol(exchange, signal.symbol)
+    pair, ex_name = find_pair_exchange(signal.symbol)
     if not pair:
         log(f"الزوج غير موجود: {signal.symbol}/USDT"); return False
     if pair in state.open_positions:
         log(f"مركز مفتوح بالفعل: {pair}"); return False
 
+    exchange = _exchanges[ex_name]
     trade_size = get_trade_size(exchange)
     if trade_size < MIN_TRADE_USDT:
         log(f"رصيد غير كافٍ: ${trade_size:.2f} < ${MIN_TRADE_USDT}"); return False
@@ -400,13 +421,13 @@ def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية
         "entry": entry, "qty": qty, "sl": sl_price, "tp": signal.sell_price,
         "tp_pct": signal.tp_pct, "opened": time.time(),
         "opened_str": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "reason": reason, "sl_order_id": sl_order_id,
+        "reason": reason, "sl_order_id": sl_order_id, "exchange": ex_name,
     }
     state.daily_trades += 1; save_state(state)
 
     mode = "ورقي" if PAPER_MODE else "حقيقي"
     sl_info = "أمر منصة" if sl_order_id else "فحص دوري"
-    msg = (f"صفقة [{mode}] — {reason}\n#{signal.trade_num} | {pair}\n"
+    msg = (f"صفقة [{mode}] — {reason}\n#{signal.trade_num} | {pair} [{ex_name}]\n"
            f"دخول: {entry} | هدف: {signal.sell_price} ({signal.tp_pct}%)\n"
            f"وقف: {sl_price} (-{SL_PCT}%) [{sl_info}] | ${trade_size:.0f}")
     log(msg); notify(msg); return True
@@ -444,13 +465,17 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
            f"ربح: {sign}${pnl:.2f} ({sign}{pnl_pct:.1f}%)")
     log(msg); notify(msg)
 
-async def check_positions(state: State, exchange):
+async def check_positions(state: State):
     rollover_day(state)
     if not state.open_positions:
         return
     for pair in list(state.open_positions):
         pos = state.open_positions.get(pair)
         if not pos:
+            continue
+        ex_name = pos.get("exchange", "bybit")
+        exchange = _exchanges.get(ex_name)
+        if not exchange:
             continue
         try:
             price = exchange.fetch_ticker(pair)["last"]
@@ -555,8 +580,7 @@ async def scan_history(client, state: State):
             prices = [e["price"] for e in entries]
             log(f"  {sym}: تعزيزات {prices}")
 
-async def check_reinforcements(state: State, exchange):
-    """يفحص هل السعر الحالي قريب من سعر تعزيز → يشتري."""
+async def check_reinforcements(state: State):
     if not state.reinforcements:
         return
     rollover_day(state)
@@ -566,13 +590,13 @@ async def check_reinforcements(state: State, exchange):
     for symbol, entries in list(state.reinforcements.items()):
         if not entries:
             continue
-        pair = verify_symbol(exchange, symbol)
+        pair, ex_name = find_pair_exchange(symbol)
         if not pair:
             continue
         if pair in state.open_positions:
             continue
         try:
-            price = exchange.fetch_ticker(pair)["last"]
+            price = _exchanges[ex_name].fetch_ticker(pair)["last"]
         except Exception:
             continue
 
@@ -600,8 +624,8 @@ async def check_reinforcements(state: State, exchange):
                     sell_price=sell_price,
                     tp_pct=tp_pct,
                 )
-                log(f"💡 تعزيز! {symbol} @ ${price} قريب من ${reinf_price} (فرق {diff_pct:.1f}%)")
-                if open_trade(state, sig, exchange, reason=f"تعزيز @ {reinf_price}"):
+                log(f"تعزيز! {symbol} @ ${price} قريب من ${reinf_price} (فرق {diff_pct:.1f}%)")
+                if open_trade(state, sig, reason=f"تعزيز @ {reinf_price}"):
                     state.reinforced_keys.append(key)
                     if len(state.reinforced_keys) > 500:
                         state.reinforced_keys = state.reinforced_keys[-500:]
@@ -660,17 +684,24 @@ async def main():
 
     state = load_state(); rollover_day(state)
 
-    exchange = get_exchange() if not PAPER_MODE else None
-    if exchange:
-        exchange.load_markets(); log(f"Bybit متصل | testnet={BYBIT_TESTNET}")
+    try:
+        bybit_ex = get_exchange(); bybit_ex.load_markets()
+        _exchanges["bybit"] = bybit_ex
+        log(f"Bybit متصل | testnet={BYBIT_TESTNET}")
+    except Exception as e:
+        log(f"خطأ Bybit: {e}")
 
-    paper_ex = None
-    if PAPER_MODE:
+    if KUCOIN_KEY:
         try:
-            paper_ex = get_exchange(); paper_ex.load_markets()
-        except Exception:
-            log("تحذير: لا يمكن تحميل الأسواق للتحقق")
-    active_ex = exchange or paper_ex
+            kc = get_kucoin_exchange(); kc.load_markets()
+            _exchanges["kucoin"] = kc
+            log("KuCoin متصل")
+        except Exception as e:
+            log(f"خطأ KuCoin: {e}")
+
+    if not _exchanges:
+        log("خطأ: لا منصة متصلة!"); return
+    log(f"المنصات: {', '.join(_exchanges.keys())}")
 
     client = TelegramClient(TG_SESSION, TG_API_ID, TG_API_HASH)
     await client.start()
@@ -714,17 +745,14 @@ async def main():
             f"بيع={signal.sell_price} ({signal.tp_pct}%)")
         notify(f"توصية جديدة #{signal.trade_num}\nالعملة: {signal.symbol}\n"
                f"شراء: {signal.buy_price}\nبيع: {signal.sell_price} ({signal.tp_pct}%)")
-        if active_ex:
-            open_trade(state, signal, active_ex, reason="توصية جديدة")
-        else:
-            log("لا يوجد اتصال بالمنصة — تخطي")
+        open_trade(state, signal, reason="توصية جديدة")
 
     async def position_checker():
         while True:
             await asyncio.sleep(CHECK_INTERVAL)
             try:
-                if active_ex and state.open_positions:
-                    await check_positions(state, active_ex)
+                if state.open_positions:
+                    await check_positions(state)
             except Exception as e:
                 log(f"خطأ في فحص المراكز: {e}")
 
@@ -732,8 +760,8 @@ async def main():
         while True:
             await asyncio.sleep(REINFORCE_CHECK_SEC)
             try:
-                if active_ex and state.reinforcements:
-                    await check_reinforcements(state, active_ex)
+                if state.reinforcements:
+                    await check_reinforcements(state)
             except Exception as e:
                 log(f"خطأ في فحص التعزيزات: {e}")
 
