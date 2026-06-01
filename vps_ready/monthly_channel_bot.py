@@ -312,7 +312,8 @@ def place_stop_loss(exchange, pair: str, qty: float, trigger_price: float) -> st
 
 def cancel_sl_order(exchange, pair: str, order_id: str):
     try:
-        exchange.cancel_order(order_id, pair)
+        params = {"stop": True} if exchange.id == "bybit" else {}
+        exchange.cancel_order(order_id, pair, params=params)
         log(f"إلغاء وقف خسارة: {pair} | أمر={order_id}")
     except Exception as e:
         log(f"خطأ إلغاء الأمر: {pair} — {e}")
@@ -531,10 +532,13 @@ async def check_positions(state: State):
         sl_oid = pos.get("sl_order_id")
 
         # 1) exchange SL filled (live)
+        sl_check_ok = False
         if sl_oid and not PAPER_MODE:
             try:
-                sl_order = exchange.fetch_order(sl_oid, pair)
-                if sl_order.get('status') in ('closed', 'filled'):
+                params = {"stop": True} if exchange.id == "bybit" else {}
+                sl_order = exchange.fetch_order(sl_oid, pair, params=params)
+                sl_check_ok = True
+                if sl_order.get('status') in ('closed', 'filled', 'triggered'):
                     fill_price = _safe_float(sl_order.get('average'), sl_order.get('price'), default=price)
                     close_trade(state, pair, "وقف خسارة", fill_price, exchange, skip_sell=True)
                     continue
@@ -548,8 +552,8 @@ async def check_positions(state: State):
                 partial_rebuy(state, pair, price, exchange)
                 continue
 
-        # 3) polling SL (paper mode or live with no exchange SL)
-        if price <= pos["sl"] and (PAPER_MODE or not sl_oid):
+        # 3) polling SL (fallback if exchange SL check failed, or no SL order)
+        if price <= pos["sl"] and (PAPER_MODE or not sl_oid or not sl_check_ok):
             close_trade(state, pair, "وقف خسارة", price, exchange)
             continue
 
