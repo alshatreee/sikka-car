@@ -95,6 +95,7 @@ class State:
     reinforced_keys: list[str] = field(default_factory=list)
     pending_signals: list[dict] = field(default_factory=list)
     executed_signals: list[str] = field(default_factory=list)
+    entered_symbols: list[str] = field(default_factory=list)
 
 def load_state() -> State:
     if STATE_FILE.exists():
@@ -399,6 +400,8 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         log(f"الزوج غير موجود: {signal.symbol}/USDT"); return False
     if pair in state.open_positions:
         log(f"مركز مفتوح بالفعل: {pair}"); return False
+    if any(p.get("symbol") == signal.symbol for p in state.open_positions.values()):
+        log(f"العملة مفتوحة بالفعل بمنصة أخرى: {signal.symbol}"); return False
 
     exchange = _exchanges[ex_name]
     trade_size = KUCOIN_TRADE_SIZE if ex_name == "kucoin" else get_trade_size(exchange)
@@ -426,7 +429,10 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         "opened_str": time.strftime("%Y-%m-%d %H:%M:%S"),
         "reason": reason, "sl_order_id": sl_order_id, "exchange": ex_name,
     }
-    state.daily_trades += 1; save_state(state)
+    state.daily_trades += 1
+    if signal.symbol not in state.entered_symbols:
+        state.entered_symbols.append(signal.symbol)
+    save_state(state)
 
     mode = "ورقي" if PAPER_MODE else "حقيقي"
     sl_info = "أمر منصة" if sl_order_id else "فحص دوري"
@@ -608,6 +614,9 @@ async def check_pending_signals(state: State):
         buy_price = sig_data["buy_price"]
         if buy_price <= 0:
             continue
+        if symbol in state.entered_symbols:
+            state.pending_signals.remove(sig_data)
+            continue
         pair, ex_name = find_pair_exchange(symbol)
         if not pair:
             continue
@@ -647,6 +656,8 @@ async def check_reinforcements(state: State):
 
     for symbol, entries in list(state.reinforcements.items()):
         if not entries:
+            continue
+        if symbol in state.entered_symbols:
             continue
         pair, ex_name = find_pair_exchange(symbol)
         if not pair:
