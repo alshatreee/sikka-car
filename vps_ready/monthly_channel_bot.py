@@ -370,8 +370,6 @@ def open_trade(state: State, signal: Signal, exchange, reason: str = "توصية
         log(f"حد الصفقات اليومي ({MAX_DAILY_TRADES})"); return False
     if len(state.open_positions) >= MAX_OPEN:
         log(f"حد المراكز المفتوحة ({MAX_OPEN})"); return False
-    if not btc_trend_ok(exchange):
-        return False
 
     pair = verify_symbol(exchange, signal.symbol)
     if not pair:
