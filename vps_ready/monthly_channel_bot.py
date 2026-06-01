@@ -254,6 +254,19 @@ def verify_symbol(exchange, symbol: str) -> str | None:
             return mk
     return None
 
+def _safe_float(*values, default=0.0) -> float:
+    """يرجّع أول قيمة قابلة للتحويل لرقم — يتجاهل None والقيم الفارغة."""
+    for v in values:
+        if v is None:
+            continue
+        try:
+            f = float(v)
+            if f:
+                return f
+        except (TypeError, ValueError):
+            continue
+    return default
+
 def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
     try:
         price = exchange.fetch_ticker(pair)["last"]
@@ -333,8 +346,8 @@ def partial_sell(state, pair: str, price: float, exchange):
         order = spot_sell(exchange, pair, sell_qty)
         if not order:
             return
-        fill_price = float(order.get("average", price))
-        partial_usdt = fill_price * float(order.get("filled", sell_qty))
+        fill_price = _safe_float(order.get("average"), order.get("price"), default=price)
+        partial_usdt = fill_price * _safe_float(order.get("filled"), order.get("amount"), default=sell_qty)
         sl_oid = pos.get("sl_order_id")
         if sl_oid:
             cancel_sl_order(exchange, pair, sl_oid)
@@ -367,7 +380,7 @@ def partial_rebuy(state, pair: str, price: float, exchange):
         order = spot_buy(exchange, pair, partial_usdt)
         if not order:
             return
-        rebuy_qty = float(order.get("filled", rebuy_qty))
+        rebuy_qty = _safe_float(order.get("filled"), order.get("amount"), default=rebuy_qty)
 
     new_qty = pos["qty"] + rebuy_qty
 
@@ -417,8 +430,12 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         order = spot_buy(exchange, pair, trade_size)
         if not order:
             return False
-        entry = float(order.get("average", entry))
-        qty = float(order.get("filled", qty))
+        # المنصة قد ترجع None لـ average/filled مباشرة بعد الأمر — نتعامل بأمان
+        try:
+            entry = float(order.get("average") or order.get("price") or entry)
+            qty = float(order.get("filled") or order.get("amount") or qty)
+        except (TypeError, ValueError):
+            pass  # نستخدم القيم التقديرية (entry/qty) إذا فشل التحليل
 
     sl_order_id = None
     if not PAPER_MODE:
@@ -489,7 +506,9 @@ async def check_positions(state: State):
         if not exchange:
             continue
         try:
-            price = exchange.fetch_ticker(pair)["last"]
+            price = _safe_float(exchange.fetch_ticker(pair).get("last"))
+            if not price:
+                continue
         except Exception as e:
             log(f"خطأ في جلب سعر {pair}: {e}"); continue
 
@@ -500,7 +519,7 @@ async def check_positions(state: State):
             try:
                 sl_order = exchange.fetch_order(sl_oid, pair)
                 if sl_order.get('status') in ('closed', 'filled'):
-                    fill_price = float(sl_order.get('average', 0)) or price
+                    fill_price = _safe_float(sl_order.get('average'), sl_order.get('price'), default=price)
                     close_trade(state, pair, "وقف خسارة", fill_price, exchange, skip_sell=True)
                     continue
             except Exception as e:
