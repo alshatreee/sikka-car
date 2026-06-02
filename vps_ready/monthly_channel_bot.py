@@ -44,6 +44,7 @@ CAPITAL      = float(os.getenv("MONTHLY_CAPITAL", "1000"))
 TRADE_PCT    = float(os.getenv("MONTHLY_TRADE_PCT", "10"))
 TRADE_SIZE   = CAPITAL * TRADE_PCT / 100
 SL_PCT       = float(os.getenv("MONTHLY_SL_PCT", "5.0"))
+CATASTROPHIC_SL_PCT = float(os.getenv("MONTHLY_CATASTROPHIC_SL", "30.0"))
 MAX_HOLD_DAYS = int(os.getenv("MONTHLY_MAX_HOLD_DAYS", "30"))
 MAX_DAILY_TRADES = 10
 MAX_OPEN = 10
@@ -53,10 +54,10 @@ PARTIAL_TP_PCT = float(os.getenv("MONTHLY_PARTIAL_TP_PCT", "3.0"))
 PARTIAL_SELL_PCT = float(os.getenv("MONTHLY_PARTIAL_SELL_PCT", "50"))
 REBUY_DROP_PCT = float(os.getenv("MONTHLY_REBUY_DROP_PCT", "10.0"))
 BTC_DROP_LIMIT = float(os.getenv("MONTHLY_BTC_DROP_LIMIT", "5.0"))
+LIMIT_ORDER_SLIP = float(os.getenv("MONTHLY_LIMIT_SLIP", "0.5"))  # % فوق السوق للشراء
 MIN_TRADE_USDT = float(os.getenv("MONTHLY_MIN_TRADE_USDT", "5.0"))
 KUCOIN_TRADE_SIZE = float(os.getenv("MONTHLY_KUCOIN_TRADE_SIZE", "100"))
 BYBIT_TRADE_SIZE = float(os.getenv("MONTHLY_BYBIT_TRADE_SIZE", "100"))
-# عملات محمية — البوت يرفض شرائها أو بيعها (عملاتك اليدوية)
 PROTECTED_SYMBOLS = [s.strip().upper() for s in os.getenv("MONTHLY_PROTECTED_SYMBOLS", "").split(",") if s.strip()]
 CHECK_INTERVAL = 300
 PAPER_MODE = "--live" not in sys.argv
@@ -270,21 +271,42 @@ def _safe_float(*values, default=0.0) -> float:
     return default
 
 def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
+    """شراء بأمر محدود (0.5% فوق السوق) مع احتياط سوق إذا لم يُنفَّذ خلال 30 ثانية"""
     try:
         price = _safe_float(exchange.fetch_ticker(pair).get("last"))
+        if not price:
+            return None
         qty = usdt_amount / price
-        order = exchange.create_market_buy_order(pair, qty)
-        log(f"أمر شراء: {pair} | كمية={qty:.6f} | ${usdt_amount}")
-        # إعادة جلب الأمر للحصول على الكمية المنفّذة الفعلية (دقة الحفظ)
-        filled = _safe_float(order.get("filled"), order.get("amount"))
-        if not filled and order.get("id"):
+        limit_price = round(price * (1 + LIMIT_ORDER_SLIP / 100), 8)
+
+        if PAPER_MODE:
+            log(f"أمر شراء [ورقي]: {pair} | سعر={price} | كمية={qty:.6f} | ${usdt_amount}")
+            return {"filled": qty, "amount": qty, "average": price, "price": price}
+
+        order = exchange.create_limit_buy_order(pair, qty, limit_price)
+        log(f"أمر شراء محدود: {pair} | سعر={limit_price:.6g} | كمية={qty:.6f} | ${usdt_amount}")
+
+        # انتظار التنفيذ حتى 30 ثانية
+        oid = order.get("id")
+        if oid:
+            for _ in range(6):
+                time.sleep(5)
+                try:
+                    fetched = exchange.fetch_order(oid, pair)
+                    if fetched.get("status") in ("closed", "filled"):
+                        log(f"أمر شراء نُفِّذ: {pair}")
+                        return fetched
+                    if fetched.get("status") == "canceled":
+                        break
+                except Exception:
+                    pass
+            # إلغاء والتحويل لأمر سوق
             try:
-                time.sleep(1)
-                fetched = exchange.fetch_order(order["id"], pair)
-                if _safe_float(fetched.get("filled"), fetched.get("amount")):
-                    return fetched
+                exchange.cancel_order(oid, pair)
             except Exception:
                 pass
+            log(f"لم يُنفَّذ الأمر المحدود — تحويل لأمر سوق: {pair}")
+            order = exchange.create_market_buy_order(pair, qty)
         return order
     except Exception as e:
         log(f"خطأ في الشراء: {pair} — {e}"); return None
@@ -318,16 +340,34 @@ def cancel_sl_order(exchange, pair: str, order_id: str):
     except Exception as e:
         log(f"خطأ إلغاء الأمر: {pair} — {e}")
 
+_btc_sma_cache: tuple[float, float] | None = None  # (timestamp, sma50)
+
 def btc_trend_ok(exchange) -> bool:
+    global _btc_sma_cache
     try:
         ticker = exchange.fetch_ticker("BTC/USDT")
+        last = _safe_float(ticker.get("last"))
         change = ticker.get("percentage")
         if change is None:
-            op, last = ticker.get("open", 0), ticker.get("last", 0)
+            op = _safe_float(ticker.get("open"))
             change = (last - op) / op * 100 if op and last else 0
+
         if change <= -BTC_DROP_LIMIT:
-            log(f"فلتر BTC: {change:+.1f}% خلال 24س (حد -{BTC_DROP_LIMIT}%) — إيقاف الشراء")
+            log(f"فلتر BTC: {change:+.1f}% خلال 24س — إيقاف الشراء")
             return False
+
+        # SMA50 اليومي — يُحدَّث كل ساعة
+        now = time.time()
+        if _btc_sma_cache is None or now - _btc_sma_cache[0] > 3600:
+            ohlcv = exchange.fetch_ohlcv("BTC/USDT", "1d", limit=51)
+            if len(ohlcv) >= 50:
+                sma50 = sum(c[4] for c in ohlcv[-50:]) / 50
+                _btc_sma_cache = (now, sma50)
+
+        if _btc_sma_cache and last < _btc_sma_cache[1]:
+            log(f"فلتر BTC: السعر ${last:.0f} تحت SMA50 ${_btc_sma_cache[1]:.0f} — إيقاف الشراء")
+            return False
+
         return True
     except Exception as e:
         log(f"خطأ فلتر BTC: {e}")
@@ -493,6 +533,28 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
            f"ربح: {sign}${pnl:.2f} ({sign}{pnl_pct:.1f}%)")
     log(msg); notify(msg)
 
+def compute_stats(history: list[dict]) -> str:
+    """إحصائيات الأداء: نسبة الربح، التوقع الرياضي، الإجمالي"""
+    if len(history) < 3:
+        return f"صفقات مغلقة: {len(history)} (يحتاج 100+ لدقة التحليل)"
+    wins   = [t for t in history if t.get("pnl", 0) > 0]
+    losses = [t for t in history if t.get("pnl", 0) <= 0]
+    n = len(history)
+    wr = len(wins) / n * 100
+    avg_win  = sum(t["pnl"] for t in wins)  / len(wins)  if wins   else 0
+    avg_loss = sum(t["pnl"] for t in losses) / len(losses) if losses else 0
+    expectancy = (wr / 100 * avg_win) + ((1 - wr / 100) * avg_loss)
+    total = sum(t["pnl"] for t in history)
+    verdict = "إيجابي ✅" if expectancy > 0 else "سلبي — راجع الاستراتيجية ⚠️"
+    return (
+        f"📊 <b>إحصائيات ({n} صفقة)</b>\n"
+        f"نسبة الربح: {wr:.1f}% ({len(wins)} ربح / {len(losses)} خسارة)\n"
+        f"متوسط الربح: ${avg_win:.2f} | متوسط الخسارة: ${avg_loss:.2f}\n"
+        f"التوقع الرياضي: ${expectancy:.2f}/صفقة ({verdict})\n"
+        f"الإجمالي: ${total:.2f}"
+    )
+
+
 async def check_positions(state: State):
     rollover_day(state)
     if not state.open_positions:
@@ -514,21 +576,27 @@ async def check_positions(state: State):
         except Exception as e:
             log(f"خطأ في جلب سعر {pair}: {e}"); continue
 
-        # 1) إعادة شراء بعد البيع الجزئي إذا نزل السعر -10%
+        # 1) وقف خسارة كارثي -30% (حماية من الانهيار الكامل)
+        cat_sl = pos["entry"] * (1 - CATASTROPHIC_SL_PCT / 100)
+        if price <= cat_sl:
+            close_trade(state, pair, f"وقف كارثي -{CATASTROPHIC_SL_PCT:.0f}%", price, exchange)
+            continue
+
+        # 2) إعادة شراء بعد البيع الجزئي إذا نزل السعر -10%
         if pos.get("partial_taken"):
             rebuy_trigger = pos["entry"] * (1 - REBUY_DROP_PCT / 100)
             if price <= rebuy_trigger:
                 partial_rebuy(state, pair, price, exchange)
                 continue
 
-        # 2) بيع جزئي عند ارتفاع +3%
+        # 3) بيع جزئي عند ارتفاع +3%
         if not pos.get("partial_taken"):
             partial_tp_trigger = pos["entry"] * (1 + PARTIAL_TP_PCT / 100)
             if price >= partial_tp_trigger:
                 partial_sell(state, pair, price, exchange)
                 continue
 
-        # 3) هدف ربح كامل
+        # 4) هدف ربح كامل
         if price >= pos["tp"]:
             close_trade(state, pair, "هدف ربح", price, exchange)
         elif (time.time() - pos["opened"]) / 86400 >= MAX_HOLD_DAYS:
@@ -846,11 +914,19 @@ async def main():
 
     asyncio.create_task(position_checker())
     asyncio.create_task(reinforcement_checker())
-    log(f"Listening... (cap=${CAPITAL}, size={TRADE_PCT}%, SL={SL_PCT}%, "
-        f"partial_TP={PARTIAL_TP_PCT}%→{PARTIAL_SELL_PCT}%, rebuy=-{REBUY_DROP_PCT}%)")
+    log(f"Listening... (cap=${CAPITAL}, size=$100 ثابت, "
+        f"وقف_كارثي=-{CATASTROPHIC_SL_PCT}%, "
+        f"partial_TP=+{PARTIAL_TP_PCT}%→{PARTIAL_SELL_PCT}%, rebuy=-{REBUY_DROP_PCT}%, "
+        f"BTC_filter=24h+SMA50)")
     if PROTECTED_SYMBOLS:
-        log(f"عملات محمية (لا تُشترى ولا تُباع): {PROTECTED_SYMBOLS}")
+        log(f"عملات محمية: {PROTECTED_SYMBOLS}")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
+    if "--stats" in sys.argv:
+        state = load_state()
+        report = compute_stats(state.trade_history)
+        clean = report.replace("<b>","").replace("</b>","")
+        print(clean)
+        sys.exit(0)
     asyncio.run(main())
