@@ -132,24 +132,22 @@ def save_state(state: PortfolioState):
 
 
 def calc_avg_entry(exchange, symbol: str) -> float | None:
+    """متوسط سعر الشراء من آخر 500 صفقة — يحسب فقط صفقات الشراء"""
     pair = f"{symbol}/USDT"
     try:
-        trades = exchange.fetch_my_trades(pair, limit=100)
+        trades = exchange.fetch_my_trades(pair, limit=500)
         if not trades:
             return None
-        total_qty = 0.0
-        total_cost = 0.0
+        buy_qty = 0.0
+        buy_cost = 0.0
         for t in trades:
-            price = float(t["price"])
-            amount = float(t["amount"])
             if t["side"] == "buy":
-                total_qty += amount
-                total_cost += price * amount
-            elif t["side"] == "sell":
-                total_qty -= amount
-                total_cost -= price * amount
-        if total_qty > 0 and total_cost > 0:
-            return total_cost / total_qty
+                price = float(t["price"])
+                amount = float(t["amount"])
+                buy_qty += amount
+                buy_cost += price * amount
+        if buy_qty > 0 and buy_cost > 0:
+            return buy_cost / buy_qty
     except Exception as e:
         log(f"خطأ جلب صفقات {symbol}: {e}")
     return None
@@ -206,14 +204,17 @@ def fetch_portfolio(exchanges: dict) -> list[dict]:
 def update_entry_prices(exchanges: dict, state: PortfolioState, holdings: list[dict]):
     for h in holdings:
         key = f"{h['symbol']}@{h['exchange']}"
-        if key not in state.entry_prices:
-            exchange = exchanges.get(h["exchange"])
-            if not exchange:
-                continue
-            avg = calc_avg_entry(exchange, h["symbol"])
-            if avg:
-                state.entry_prices[key] = round(avg, 8)
+        # أعد الحساب دائماً — عشان يعكس أي شراء جديد
+        exchange = exchanges.get(h["exchange"])
+        if not exchange:
+            continue
+        avg = calc_avg_entry(exchange, h["symbol"])
+        if avg:
+            if state.entry_prices.get(key) != round(avg, 8):
                 log(f"سعر دخول {h['symbol']} [{h['exchange']}]: ${avg:.6f}")
+            state.entry_prices[key] = round(avg, 8)
+        elif key not in state.entry_prices:
+            pass  # لا تمسح السعر المحفوظ يدوياً (مثل NIL)
 
 
 def build_report(state: PortfolioState, holdings: list[dict]) -> str:
