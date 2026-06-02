@@ -33,8 +33,8 @@ SERVICE_NAME = os.getenv("MONITOR_SERVICE", "monthly-channel-bot")
 NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
-CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "300"))
-LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "5"))
+CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "900"))
+LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "30"))
 AUTO_RESTART = os.getenv("MONITOR_AUTO_RESTART", "true").lower() == "true"
 MAX_RESTARTS_HR = int(os.getenv("MONITOR_MAX_RESTARTS", "4"))
 DUP_BUY_WINDOW = int(os.getenv("MONITOR_DUP_WINDOW", "20"))

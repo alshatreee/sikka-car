@@ -920,6 +920,7 @@ async def main():
         while True:
             await asyncio.sleep(CHECK_INTERVAL)
             try:
+                log(f"نبض — مراكز: {len(state.open_positions)} | معلقة: {len(state.pending_signals)}")
                 if state.open_positions:
                     await check_positions(state)
             except Exception as e:
