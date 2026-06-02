@@ -114,6 +114,9 @@ class PortfolioState:
     alerted_up: dict[str, float] = field(default_factory=dict)
     alerted_down: dict[str, float] = field(default_factory=dict)
     last_report_day: str = ""
+    daily_highs: dict[str, float] = field(default_factory=dict)
+    daily_lows: dict[str, float] = field(default_factory=dict)
+    tracking_day: str = ""
 
 
 def load_state() -> PortfolioState:
@@ -258,6 +261,15 @@ def build_report(state: PortfolioState, holdings: list[dict], usdt_balances: dic
             price = h["price"]
             value = h["value"]
 
+            key = f"{sym}@{ex_name}"
+            high = state.daily_highs.get(key)
+            low = state.daily_lows.get(key)
+            range_line = ""
+            if high and low and entry and entry > 0:
+                high_pct = (high - entry) / entry * 100
+                low_pct = (low - entry) / entry * 100
+                range_line = f"\n   اليوم: ↑${high:.6g} ({high_pct:+.1f}%) | ↓${low:.6g} ({low_pct:+.1f}%)"
+
             if entry and entry > 0:
                 pnl_pct = (price - entry) / entry * 100
                 pnl_usdt = (price - entry) * h["amount"]
@@ -268,6 +280,7 @@ def build_report(state: PortfolioState, holdings: list[dict], usdt_balances: dic
                     f"{emoji} <b>{sym}</b>: ${value:.2f}\n"
                     f"   دخول: ${entry:.6g} → حالي: ${price:.6g}\n"
                     f"   {sign}{pnl_pct:.1f}% ({sign}${pnl_usdt:.2f})"
+                    f"{range_line}"
                 )
             else:
                 lines.append(
@@ -280,6 +293,21 @@ def build_report(state: PortfolioState, holdings: list[dict], usdt_balances: dic
     lines.append(f"<b>الإجمالي: ${grand_total:.2f}</b>")
     lines.append(f"<b>ربح/خسارة العملات: {sign}${total_pnl:.2f}</b>")
     return "\n".join(lines)
+
+
+def track_daily_prices(state: PortfolioState, holdings: list[dict]):
+    today = time.strftime("%Y-%m-%d")
+    if state.tracking_day != today:
+        state.daily_highs.clear()
+        state.daily_lows.clear()
+        state.tracking_day = today
+    for h in holdings:
+        key = f"{h['symbol']}@{h['exchange']}"
+        price = h["price"]
+        if key not in state.daily_highs or price > state.daily_highs[key]:
+            state.daily_highs[key] = price
+        if key not in state.daily_lows or price < state.daily_lows[key]:
+            state.daily_lows[key] = price
 
 
 def check_alerts(state: PortfolioState, holdings: list[dict]):
@@ -389,6 +417,7 @@ def main():
 
     holdings, usdt_balances = fetch_portfolio(exchanges)
     update_entry_prices(exchanges, state, holdings)
+    track_daily_prices(state, holdings)
     save_state(state)
     log(f"عملات بالمحفظة: {len(holdings)}")
     for h in holdings:
@@ -411,6 +440,7 @@ def main():
         try:
             holdings, usdt_balances = fetch_portfolio(exchanges)
             update_entry_prices(exchanges, state, holdings)
+            track_daily_prices(state, holdings)
             check_alerts(state, holdings)
             clean_stale_entries(state, holdings)
             save_state(state)
