@@ -45,7 +45,7 @@ TRADE_PCT    = float(os.getenv("MONTHLY_TRADE_PCT", "10"))
 TRADE_SIZE   = CAPITAL * TRADE_PCT / 100
 SL_PCT       = float(os.getenv("MONTHLY_SL_PCT", "5.0"))
 CATASTROPHIC_SL_PCT = float(os.getenv("MONTHLY_CATASTROPHIC_SL", "30.0"))
-MAX_HOLD_DAYS = int(os.getenv("MONTHLY_MAX_HOLD_DAYS", "30"))
+MAX_HOLD_DAYS = int(os.getenv("MONTHLY_MAX_HOLD_DAYS", "45"))
 MAX_DAILY_TRADES = 10
 MAX_OPEN = 10
 MAX_DAILY_LOSS_PCT = float(os.getenv("MONTHLY_MAX_LOSS_PCT", "5.0"))
@@ -55,6 +55,7 @@ PARTIAL_SELL_PCT = float(os.getenv("MONTHLY_PARTIAL_SELL_PCT", "50"))
 REBUY_DROP_PCT = float(os.getenv("MONTHLY_REBUY_DROP_PCT", "10.0"))
 BTC_DROP_LIMIT = float(os.getenv("MONTHLY_BTC_DROP_LIMIT", "5.0"))
 LIMIT_ORDER_SLIP = float(os.getenv("MONTHLY_LIMIT_SLIP", "0.5"))  # % فوق السوق للشراء
+MAX_TP_PCT = float(os.getenv("MONTHLY_MAX_TP_PCT", "100"))  # تجاهل توصيات T1 > 100%
 MIN_TRADE_USDT = float(os.getenv("MONTHLY_MIN_TRADE_USDT", "5.0"))
 KUCOIN_TRADE_SIZE = float(os.getenv("MONTHLY_KUCOIN_TRADE_SIZE", "100"))
 BYBIT_TRADE_SIZE = float(os.getenv("MONTHLY_BYBIT_TRADE_SIZE", "100"))
@@ -238,9 +239,13 @@ def get_kucoin_exchange():
                          "options": {"defaultType": "spot"}})
 
 _exchanges: dict = {}
+_EXCHANGE_PRIORITY = ["bybit", "kucoin"]
 
 def find_pair_exchange(symbol: str):
-    for name, ex in _exchanges.items():
+    for name in _EXCHANGE_PRIORITY:
+        ex = _exchanges.get(name)
+        if not ex:
+            continue
         pair = verify_symbol(ex, symbol)
         if pair:
             return pair, name
@@ -508,11 +513,21 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
     pos = state.open_positions.pop(pair, None)
     if not pos:
         return
-    pnl = (price - pos["entry"]) * pos["qty"]
+    sell_qty = pos["qty"]
+    pnl = (price - pos["entry"]) * sell_qty
     pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
 
     if not PAPER_MODE and not skip_sell:
-        spot_sell(exchange, pair, pos["qty"])
+        try:
+            balance = exchange.fetch_balance()
+            sym = pair.split("/")[0]
+            available = float(balance.get(sym, {}).get("free", 0))
+            if available < sell_qty:
+                sell_qty = available
+        except Exception:
+            pass
+        if sell_qty > 0:
+            spot_sell(exchange, pair, sell_qty)
 
     state.daily_pnl += pnl
     if state.daily_pnl <= -MAX_DAILY_LOSS:
@@ -704,6 +719,11 @@ async def check_pending_signals(state: State):
             continue
 
         diff_pct = (price - buy_price) / buy_price * 100
+        tp_pct_val = sig_data.get("tp_pct", 0)
+        if tp_pct_val > MAX_TP_PCT:
+            log(f"تجاهل توصية معلّقة: {symbol} هدف +{tp_pct_val:.0f}% > {MAX_TP_PCT:.0f}%")
+            state.pending_signals.remove(sig_data)
+            continue
         if -REINFORCE_PCT <= diff_pct <= REINFORCE_PCT:
             sig = Signal(
                 trade_num=sig_data.get("trade_num", 0),
@@ -796,6 +816,7 @@ def run_check():
     log(f"مراكز: {len(state.open_positions)} | صفقات اليوم: {state.daily_trades} | PnL: ${state.daily_pnl:.2f}")
     log(f"رأس المال: ${CAPITAL} | حجم: ${TRADE_SIZE} | الوضع: {'ورقي' if PAPER_MODE else 'حقيقي'}")
     log(f"بيع جزئي: {PARTIAL_SELL_PCT}% عند +{PARTIAL_TP_PCT}% | إعادة شراء عند -{REBUY_DROP_PCT}%")
+    log(f"مدة قصوى: {MAX_HOLD_DAYS} يوم | حد الهدف: {MAX_TP_PCT}% (أعلى يُتجاهل)")
 
     if state.reinforcements:
         log(f"تعزيزات محفوظة ({len(state.reinforcements)} عملة):")
@@ -888,6 +909,12 @@ async def main():
 
         log(f"توصية: #{signal.trade_num} {signal.symbol} شراء={signal.buy_price} "
             f"بيع={signal.sell_price} ({signal.tp_pct}%)")
+
+        if signal.tp_pct > MAX_TP_PCT:
+            log(f"تجاهل: {signal.symbol} هدف +{signal.tp_pct:.0f}% أعلى من الحد {MAX_TP_PCT:.0f}%")
+            notify(f"تجاهل توصية #{signal.trade_num} {signal.symbol}\nالهدف +{signal.tp_pct:.0f}% أعلى من الحد المسموح ({MAX_TP_PCT:.0f}%)")
+            return
+
         notify(f"توصية جديدة #{signal.trade_num}\nالعملة: {signal.symbol}\n"
                f"شراء: {signal.buy_price}\nبيع: {signal.sell_price} ({signal.tp_pct}%)")
         open_trade(state, signal, reason="توصية جديدة")
@@ -917,6 +944,7 @@ async def main():
     log(f"Listening... (cap=${CAPITAL}, size=$100 ثابت, "
         f"وقف_كارثي=-{CATASTROPHIC_SL_PCT}%, "
         f"partial_TP=+{PARTIAL_TP_PCT}%→{PARTIAL_SELL_PCT}%, rebuy=-{REBUY_DROP_PCT}%, "
+        f"max_hold={MAX_HOLD_DAYS}d, max_tp={MAX_TP_PCT}%, "
         f"BTC_filter=24h+SMA50)")
     if PROTECTED_SYMBOLS:
         log(f"عملات محمية: {PROTECTED_SYMBOLS}")

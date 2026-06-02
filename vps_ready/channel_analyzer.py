@@ -27,10 +27,14 @@ TG_CHANNELS = [c.strip() for c in os.getenv("MONTHLY_CHANNELS", "").split(",") i
 
 BYBIT_KEY    = os.getenv("BYBIT_API_KEY", "")
 BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
+KUCOIN_KEY    = os.getenv("KUCOIN_API_KEY", "")
+KUCOIN_SECRET = os.getenv("KUCOIN_API_SECRET", "")
+KUCOIN_PASS   = os.getenv("KUCOIN_PASSPHRASE", "")
 
 ANALYSIS_DAYS   = int(sys.argv[sys.argv.index("--days") + 1]) if "--days" in sys.argv else 365
 SL_PCT          = 30.0   # وقف الخسارة الكارثي المستخدم في المحاكاة
-MAX_HOLD_DAYS   = 30     # أقصى مدة للصفقة
+MAX_HOLD_DAYS   = 45     # أقصى مدة للصفقة
+MAX_TP_PCT      = 100.0  # تجاهل توصيات بهدف أعلى من 100%
 NOTIFY_RESULTS  = "--notify" in sys.argv
 NOTIFY_TOKEN    = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT     = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -153,6 +157,8 @@ async def scan_channels() -> list[SignalRec]:
                     sig = _parse_signal(msg.text)
                     if not sig:
                         continue
+                    if sig["tp_pct"] > MAX_TP_PCT:
+                        continue
                     found += 1
                     sl_price = sig["buy"] * (1 - SL_PCT / 100)
                     results.append(SignalRec(
@@ -173,17 +179,46 @@ async def scan_channels() -> list[SignalRec]:
 
 # ─── محاكاة الصفقات بـ OHLCV ────────────────────────────────────────
 
-def get_exchange():
+def get_exchanges() -> list:
     import ccxt
-    ex = ccxt.bybit({"apiKey": BYBIT_KEY, "secret": BYBIT_SECRET})
-    ex.load_markets()
-    return ex
+    exchanges = []
+    try:
+        bybit = ccxt.bybit({"apiKey": BYBIT_KEY, "secret": BYBIT_SECRET})
+        bybit.load_markets()
+        exchanges.append(bybit)
+        print(f"  Bybit: {len(bybit.markets)} زوج")
+    except Exception as e:
+        print(f"  خطأ Bybit: {e}")
+    try:
+        kucoin = ccxt.kucoin({"apiKey": KUCOIN_KEY, "secret": KUCOIN_SECRET,
+                              "password": KUCOIN_PASS})
+        kucoin.load_markets()
+        exchanges.append(kucoin)
+        print(f"  KuCoin: {len(kucoin.markets)} زوج")
+    except Exception as e:
+        print(f"  خطأ KuCoin: {e}")
+    try:
+        binance = ccxt.binance()
+        binance.load_markets()
+        exchanges.append(binance)
+        print(f"  Binance: {len(binance.markets)} زوج")
+    except Exception as e:
+        print(f"  خطأ Binance: {e}")
+    return exchanges
 
 
-def simulate(rec: SignalRec, exchange) -> SignalRec:
+def _find_exchange(symbol: str, exchanges: list):
+    pair = f"{symbol}/USDT"
+    for ex in exchanges:
+        if pair in ex.markets:
+            return ex, pair
+    return None, None
+
+
+def simulate(rec: SignalRec, exchanges: list) -> SignalRec:
     """محاكاة نتيجة الصفقة باستخدام بيانات OHLCV الحقيقية"""
-    pair = f"{rec.symbol}/USDT"
-    if pair not in exchange.markets:
+    exchange, pair = _find_exchange(rec.symbol, exchanges)
+    if not exchange:
         rec.outcome = "NO_DATA"
         return rec
 
@@ -191,8 +226,7 @@ def simulate(rec: SignalRec, exchange) -> SignalRec:
     deadline_ms = since_ms + MAX_HOLD_DAYS * 86400 * 1000
 
     try:
-        # جلب شموع ساعية لمدة 30 يوماً (720 شمعة)
-        ohlcv = exchange.fetch_ohlcv(pair, "1h", since=since_ms, limit=720)
+        ohlcv = exchange.fetch_ohlcv(pair, "1h", since=since_ms, limit=1080)
         if not ohlcv:
             rec.outcome = "NO_DATA"
             return rec
@@ -330,7 +364,7 @@ def notify(msg: str):
 
 async def main():
     print(f"=== تحليل القنوات — آخر {ANALYSIS_DAYS} يوم ===")
-    print(f"وقف كارثي: -{SL_PCT}% | مدة قصوى: {MAX_HOLD_DAYS} يوم\n")
+    print(f"وقف كارثي: -{SL_PCT}% | مدة قصوى: {MAX_HOLD_DAYS} يوم | حد الهدف: {MAX_TP_PCT}%\n")
 
     if not TG_API_ID or not TG_API_HASH:
         print("خطأ: TG_API_ID و TG_API_HASH غير مضبوطين في .env_monthly")
@@ -347,15 +381,15 @@ async def main():
         return
 
     # 2) محاكاة كل توصية
-    print("\nجلب البيانات التاريخية ومحاكاة الصفقات...")
-    try:
-        exchange = get_exchange()
-    except Exception as e:
-        print(f"خطأ الاتصال بـ Bybit: {e}")
+    print("\nالاتصال بالمنصات...")
+    exchanges = get_exchanges()
+    if not exchanges:
+        print("خطأ: لا منصة متصلة!")
         return
 
+    print(f"\nجلب البيانات التاريخية ومحاكاة الصفقات...")
     for i, rec in enumerate(records):
-        records[i] = simulate(rec, exchange)
+        records[i] = simulate(rec, exchanges)
         outcome_ar = {"WIN":"ربح","LOSS":"خسارة","EXPIRED":"منتهية","OPEN":"مفتوحة","NO_DATA":"لا بيانات"}.get(rec.outcome, rec.outcome)
         print(f"  [{i+1}/{len(records)}] {rec.symbol} {rec.date.strftime('%Y-%m-%d')} → {outcome_ar} {rec.pnl_pct:+.1f}%")
         time.sleep(0.3)  # تجنب rate limit
