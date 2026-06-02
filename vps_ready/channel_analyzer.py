@@ -34,7 +34,6 @@ KUCOIN_PASS   = os.getenv("KUCOIN_PASSPHRASE", "")
 ANALYSIS_DAYS   = int(sys.argv[sys.argv.index("--days") + 1]) if "--days" in sys.argv else 365
 SL_PCT          = 20.0   # وقف الخسارة الكارثي المستخدم في المحاكاة
 MAX_HOLD_DAYS   = 45     # أقصى مدة للصفقة
-MAX_TP_PCT      = 100.0  # تجاهل توصيات بهدف أعلى من 100%
 NOTIFY_RESULTS  = "--notify" in sys.argv
 NOTIFY_TOKEN    = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT     = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -156,8 +155,6 @@ async def scan_channels() -> list[SignalRec]:
                     total_msgs += 1
                     sig = _parse_signal(msg.text)
                     if not sig:
-                        continue
-                    if sig["tp_pct"] > MAX_TP_PCT:
                         continue
                     found += 1
                     sl_price = sig["buy"] * (1 - SL_PCT / 100)
@@ -364,7 +361,7 @@ def notify(msg: str):
 
 async def main():
     print(f"=== تحليل القنوات — آخر {ANALYSIS_DAYS} يوم ===")
-    print(f"وقف كارثي: -{SL_PCT}% | مدة قصوى: {MAX_HOLD_DAYS} يوم | حد الهدف: {MAX_TP_PCT}%\n")
+    print(f"وقف كارثي: -{SL_PCT}% | مدة قصوى: {MAX_HOLD_DAYS} يوم\n")
 
     if not TG_API_ID or not TG_API_HASH:
         print("خطأ: TG_API_ID و TG_API_HASH غير مضبوطين في .env_monthly")
