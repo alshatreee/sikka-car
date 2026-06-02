@@ -33,8 +33,9 @@ SERVICE_NAME = os.getenv("MONITOR_SERVICE", "monthly-channel-bot")
 NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
-CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "900"))
-LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "30"))
+CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "300"))
+LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "5"))
+AUTO_RESTART = os.getenv("MONITOR_AUTO_RESTART", "true").lower() == "true"
 MAX_RESTARTS_HR = int(os.getenv("MONITOR_MAX_RESTARTS", "4"))
 DUP_BUY_WINDOW = int(os.getenv("MONITOR_DUP_WINDOW", "20"))
 INSUFFICIENT_LIMIT = int(os.getenv("MONITOR_INSUFFICIENT_LIMIT", "10"))
@@ -251,6 +252,18 @@ def detect_duplicate_buys(buys: list[str]) -> dict:
     return dups
 
 
+def auto_restart(reason: str) -> bool:
+    """إعادة تشغيل البوت تلقائياً وإرجاع True إذا نجح"""
+    try:
+        subprocess.run(["systemctl", "restart", SERVICE_NAME],
+                       capture_output=True, timeout=30)
+        log(f"✅ إعادة تشغيل تلقائية: {reason}")
+        return True
+    except Exception as e:
+        log(f"❌ فشل إعادة التشغيل: {e}")
+        return False
+
+
 def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
     """تشغيل كل الفحوصات وإرجاع قائمة التنبيهات"""
     alerts = []
@@ -258,12 +271,16 @@ def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
     # 1) حالة الخدمة
     svc = service_status()
     if not svc["active"]:
+        if AUTO_RESTART:
+            restarted = auto_restart("البوت متوقف")
+            status_msg = "✅ تمت إعادة التشغيل تلقائياً" if restarted else "❌ فشلت إعادة التشغيل — تدخل يدوي مطلوب"
+        else:
+            status_msg = f"الحل: شغّل <code>systemctl restart {SERVICE_NAME}</code>"
         alerts.append(
             f"🔴 <b>البوت متوقف!</b>\n"
             f"الحالة: {svc['sub']}\n"
             f"السبب: الخدمة توقفت — قد يكون خطأ برمجي أو نفاد الذاكرة\n"
-            f"الحل: شغّل <code>systemctl restart {SERVICE_NAME}</code>\n"
-            f"للتفاصيل: <code>journalctl -u {SERVICE_NAME} --no-pager -n 20</code>"
+            f"{status_msg}"
         )
     if svc["restarts"] > MAX_RESTARTS_HR:
         alerts.append(
@@ -273,14 +290,18 @@ def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
             f"الحل: راجع <code>journalctl -u {SERVICE_NAME} --no-pager -n 50</code>"
         )
 
-    # 2) تجمّد اللوق
+    # 2) تجمّد اللوق — إعادة تشغيل تلقائية
     age = log_age_minutes()
     if svc["active"] and age > LOG_STALE_MIN:
+        if AUTO_RESTART:
+            restarted = auto_restart(f"اللوق متوقف منذ {age:.0f} دقيقة")
+            status_msg = "✅ تمت إعادة التشغيل تلقائياً" if restarted else "❌ فشلت إعادة التشغيل"
+        else:
+            status_msg = f"الحل: <code>systemctl restart {SERVICE_NAME}</code>"
         alerts.append(
-            f"🟠 <b>اللوق متوقف</b>\n"
+            f"🟠 <b>البوت متجمّد — تمت إعادة تشغيله</b>\n"
             f"آخر تحديث: قبل {age:.0f} دقيقة\n"
-            f"السبب: البوت شغال لكن لا يكتب باللوق — قد يكون متجمّد أو ينتظر اتصال\n"
-            f"الحل: <code>systemctl restart {SERVICE_NAME}</code>"
+            f"{status_msg}"
         )
 
     # 3) تحليل الأسطر الجديدة
