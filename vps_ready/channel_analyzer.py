@@ -32,7 +32,7 @@ KUCOIN_SECRET = os.getenv("KUCOIN_API_SECRET", "")
 KUCOIN_PASS   = os.getenv("KUCOIN_PASSPHRASE", "")
 
 ANALYSIS_DAYS   = int(sys.argv[sys.argv.index("--days") + 1]) if "--days" in sys.argv else 365
-SL_PCT          = 30.0   # وقف الخسارة الكارثي المستخدم في المحاكاة
+SL_PCT          = 20.0   # وقف الخسارة الكارثي المستخدم في المحاكاة
 MAX_HOLD_DAYS   = 45     # أقصى مدة للصفقة
 MAX_TP_PCT      = 100.0  # تجاهل توصيات بهدف أعلى من 100%
 NOTIFY_RESULTS  = "--notify" in sys.argv
