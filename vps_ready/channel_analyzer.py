@@ -23,7 +23,7 @@ load_dotenv(BASE_DIR / ".env_monthly")
 TG_API_ID   = int(os.getenv("TG_API_ID", "0"))
 TG_API_HASH = os.getenv("TG_API_HASH", "")
 TG_SESSION  = str(BASE_DIR / "monthly_session")
-TG_CHANNELS = [c.strip() for c in os.getenv("TG_CHANNELS", "").split(",") if c.strip()]
+TG_CHANNELS = [c.strip() for c in os.getenv("MONTHLY_CHANNELS", "").split(",") if c.strip()]
 
 BYBIT_KEY    = os.getenv("BYBIT_API_KEY", "")
 BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
@@ -56,48 +56,74 @@ class SignalRec:
 # ─── محلل التوصيات (نسخة مستقلة) ──────────────────────────────────
 
 def _parse_signal(text: str) -> dict | None:
-    """يحلل رسالة التوصية — يدعم الصيغتين الرئيسيتين"""
-    # رقم الصفقة
-    num_m = re.search(r"(?:صفقة|توصية)\s*#?\s*(\d+)", text)
-    trade_num = int(num_m.group(1)) if num_m else 0
+    """يحلل رسالة التوصية — يدعم صيغتي القناة الشهرية والقناة العامة"""
 
-    # اسم العملة
-    sym_m = re.search(r"\b([A-Z]{2,10})\s*/\s*USDT\b|\bعملة[:\s]+([A-Z]{2,10})\b", text)
+    # تجاهل الأسهم الأمريكية
+    if re.search(r"NYSE|NASDAQ|أسهم\s*أمريكية", text, re.IGNORECASE):
+        return None
+    type_m = re.search(r"النوع[:\s]+(\S+)", text)
+    if type_m and "USDT" not in type_m.group(1).upper():
+        return None
+
+    # رقم الصفقة — يدعم "رقم الصفقة:(15)" و "صفقة #5"
+    num_m = re.search(r"رقم\s*الصفقة\s*[:(]?\s*(\d+)|(?:صفقة|توصية)\s*#?\s*(\d+)", text)
+    trade_num = int((num_m.group(1) or num_m.group(2))) if num_m else 0
+
+    # اسم العملة — يدعم "العملة: WARD" و "WARD/USDT"
+    sym_m = re.search(r"\b([A-Z]{2,10})\s*/\s*USDT\b|ال?عملة[:\s]+([A-Z]{2,10})", text)
     if not sym_m:
         sym_m = re.search(r"^\s*([A-Z]{2,10})\s*:", text, re.MULTILINE)
     if not sym_m:
         return None
     symbol = (sym_m.group(1) or sym_m.group(2)).strip().upper()
 
-    # سعر الشراء
-    buy_m = re.search(r"(?:سعر\s*)?الشراء[:\s]*([\d.]+)", text)
-    if not buy_m:
-        return None
-    buy_p = float(buy_m.group(1))
-    if buy_p <= 0:
+    lines = text.splitlines()
+
+    # سعر الشراء — صيغة 1: "سعر الشراء: 0.123"
+    buy_p: float | None = None
+    buy_m = re.search(r"(?:سعر\s*)?الشراء[:\s]+([\d.]+)", text)
+    if buy_m:
+        buy_p = float(buy_m.group(1))
+    else:
+        # صيغة 2: أول سعر في قائمة "الشراء والتعزيز:"
+        in_section = False
+        for line in lines:
+            if re.search(r"الشراء\s*(?:والتعزيز)?", line) and ":" in line:
+                in_section = True
+                continue
+            if in_section:
+                pm = re.search(r"[-–]\s*([\d]+\.[\d]+)", line)
+                if pm:
+                    buy_p = float(pm.group(1))
+                    break
+    if not buy_p or buy_p <= 0:
         return None
 
-    # سعر البيع / الهدف
+    # سعر البيع / الهدف — صيغة 1: "سعر البيع  0.14" أو "الهدف: 0.14"
+    sell_p: float | None = None
     sell_m = re.search(r"(?:سعر\s*)?البيع[:\s]*([\d.]+)", text)
-    if not sell_m:
-        sell_m = re.search(r"الهدف[:\s]*([\d.]+)", text)
-    if not sell_m:
-        # أول هدف من قائمة الأهداف
+    if sell_m:
+        sell_p = float(sell_m.group(1))
+    else:
+        sell_m2 = re.search(r"الهدف[:\s]*([\d.]+)", text)
+        if sell_m2:
+            sell_p = float(sell_m2.group(1))
+
+    if not sell_p:
+        # صيغة 2: أول هدف من قائمة "أهداف الصفقة:"
         in_targets = False
-        for line in text.splitlines():
-            if "أهداف" in line:
+        for line in lines:
+            if "أهداف" in line and ("صفقة" in line or "الصفقة" in line):
                 in_targets = True
                 continue
             if in_targets:
-                hm = re.search(r"[\d]+[.)]\s*([\d.]+)", line)
-                if hm:
-                    sell_p = float(hm.group(1))
-                    tp_pct = round((sell_p - buy_p) / buy_p * 100, 2)
-                    return {"symbol": symbol, "num": trade_num,
-                            "buy": buy_p, "sell": sell_p, "tp_pct": tp_pct}
+                pm = re.search(r"[-–]\s*([\d]+\.[\d]+)", line)
+                if pm:
+                    sell_p = float(pm.group(1))
+                    break
+
+    if not sell_p:
         sell_p = buy_p * 1.20
-    else:
-        sell_p = float(sell_m.group(1))
 
     if sell_p <= buy_p:
         return None
@@ -310,7 +336,7 @@ async def main():
         print("خطأ: TG_API_ID و TG_API_HASH غير مضبوطين في .env_monthly")
         return
     if not TG_CHANNELS:
-        print("خطأ: TG_CHANNELS فارغ في .env_monthly")
+        print("خطأ: MONTHLY_CHANNELS فارغ في .env_monthly")
         return
 
     # 1) مسح القنوات
