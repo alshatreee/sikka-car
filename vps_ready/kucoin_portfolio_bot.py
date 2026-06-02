@@ -31,6 +31,8 @@ KUCOIN_SECRET = os.getenv("KUCOIN_API_SECRET", "")
 KUCOIN_PASS = os.getenv("KUCOIN_PASSPHRASE", "")
 BYBIT_KEY = os.getenv("BYBIT_API_KEY", "")
 BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
+GATE_KEY = os.getenv("GATE_API_KEY", "")
+GATE_SECRET = os.getenv("GATE_API_SECRET", "")
 NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 
@@ -87,6 +89,15 @@ def get_bybit_exchange():
     })
 
 
+def get_gate_exchange():
+    import ccxt
+    return ccxt.gateio({
+        "apiKey": GATE_KEY,
+        "secret": GATE_SECRET,
+        "options": {"defaultType": "spot"},
+    })
+
+
 def init_exchanges() -> dict:
     exchanges = {}
     if BYBIT_KEY:
@@ -105,6 +116,14 @@ def init_exchanges() -> dict:
             log(f"KuCoin متصل — {len(ex.markets)} زوج")
         except Exception as e:
             log(f"خطأ KuCoin: {e}")
+    if GATE_KEY:
+        try:
+            ex = get_gate_exchange()
+            ex.load_markets()
+            exchanges["Gate"] = ex
+            log(f"Gate متصل — {len(ex.markets)} زوج")
+        except Exception as e:
+            log(f"خطأ Gate: {e}")
     return exchanges
 
 
