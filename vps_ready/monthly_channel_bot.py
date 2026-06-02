@@ -59,6 +59,9 @@ MIN_TRADE_USDT = float(os.getenv("MONTHLY_MIN_TRADE_USDT", "5.0"))
 KUCOIN_TRADE_SIZE = float(os.getenv("MONTHLY_KUCOIN_TRADE_SIZE", "100"))
 BYBIT_TRADE_SIZE = float(os.getenv("MONTHLY_BYBIT_TRADE_SIZE", "100"))
 PROTECTED_SYMBOLS = [s.strip().upper() for s in os.getenv("MONTHLY_PROTECTED_SYMBOLS", "").split(",") if s.strip()]
+MAX_CONSECUTIVE_LOSSES = int(os.getenv("MONTHLY_MAX_CONSEC_LOSSES", "3"))
+TRAILING_STOP_ACTIVATE_PCT = float(os.getenv("MONTHLY_TRAIL_ACTIVATE", "5.0"))
+TRAILING_STOP_DISTANCE_PCT = float(os.getenv("MONTHLY_TRAIL_DISTANCE", "3.0"))
 CHECK_INTERVAL = 300
 PAPER_MODE = "--live" not in sys.argv
 
@@ -100,6 +103,7 @@ class State:
     pending_signals: list[dict] = field(default_factory=list)
     executed_signals: list[str] = field(default_factory=list)
     entered_symbols: list[str] = field(default_factory=list)
+    consecutive_losses: int = 0
 
 def load_state() -> State:
     if STATE_FILE.exists():
@@ -121,6 +125,7 @@ def rollover_day(s: State) -> None:
     today = time.strftime("%Y-%m-%d")
     if s.day != today:
         s.day, s.daily_trades, s.daily_pnl, s.halted = today, 0, 0.0, False
+        s.consecutive_losses = 0
         save_state(s); log(f"=== يوم جديد {today} — إعادة تعيين ===")
 
 # ---------- signal parser ----------
@@ -129,9 +134,16 @@ class Signal:
     trade_num: int; symbol: str; buy_price: float; sell_price: float; tp_pct: float
     reinforcements: list[float] = field(default_factory=list)
 
+_COMPLETED_PATTERNS = re.compile(
+    r"✅|✓|☑|تم\s*تحقيق|تحقق\s*الهدف|وصل\s*الهدف|تم\s*الوصول|تم\s*البيع|أغلقت|مغلقة|closed|reached|done",
+    re.IGNORECASE,
+)
+
 def parse_signal(text: str) -> Signal | None:
     """يحلل صيغتين: (1) سعر الشراء/البيع البسيطة (2) الشراء والتعزيز المفصّلة."""
     if not text:
+        return None
+    if _COMPLETED_PATTERNS.search(text):
         return None
     sym_m = re.search(r"العملة\s*[:\s]*([A-Za-z0-9]+)", text)
     if not sym_m:
@@ -459,6 +471,9 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         log(f"عملة محمية — تجاهل: {signal.symbol}"); return False
     if state.halted:
         log("متوقف — تجاوز حد الخسارة اليومي"); return False
+    if state.consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+        log(f"متوقف — {state.consecutive_losses} خسائر متتالية (الحد: {MAX_CONSECUTIVE_LOSSES})")
+        return False
     if state.daily_trades >= MAX_DAILY_TRADES:
         log(f"حد الصفقات اليومي ({MAX_DAILY_TRADES})"); return False
     if len(state.open_positions) >= MAX_OPEN:
@@ -535,6 +550,15 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
         log(f"إيقاف التداول — خسارة يومية ${state.daily_pnl:.2f}")
         notify(f"إيقاف التداول — خسارة يومية ${state.daily_pnl:.2f}")
 
+    if pnl < 0:
+        state.consecutive_losses += 1
+        if state.consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+            msg_halt = (f"إيقاف التداول — {state.consecutive_losses} خسائر متتالية\n"
+                        f"يُستأنف تلقائياً في اليوم التالي")
+            log(msg_halt); notify(msg_halt)
+    else:
+        state.consecutive_losses = 0
+
     state.trade_history.append({"pair": pair, "entry": pos["entry"], "exit": price,
         "pnl": round(pnl, 2), "pnl_pct": round(pnl_pct, 2), "reason": reason,
         "closed": time.strftime("%Y-%m-%d %H:%M:%S")})
@@ -591,6 +615,13 @@ async def check_positions(state: State):
         except Exception as e:
             log(f"خطأ في جلب سعر {pair}: {e}"); continue
 
+        # تتبع أعلى سعر (للوقف المتحرك)
+        highest = pos.get("highest_price", pos["entry"])
+        if price > highest:
+            pos["highest_price"] = price
+            highest = price
+            save_state(state)
+
         # أهداف >30%: سوينج متحرك — +3% من آخر سعر شراء
         high_target = pos.get("tp_pct", 0) > 30
         base = pos.get("swing_base", pos["entry"]) if high_target else pos["entry"]
@@ -601,7 +632,18 @@ async def check_positions(state: State):
             close_trade(state, pair, f"وقف كارثي -{CATASTROPHIC_SL_PCT:.0f}%", price, exchange)
             continue
 
-        # 2) إعادة شراء بعد البيع الجزئي
+        # 2) وقف متحرك — يتفعل بعد ربح +TRAILING_STOP_ACTIVATE_PCT%
+        gain_from_entry = (highest - pos["entry"]) / pos["entry"] * 100
+        if gain_from_entry >= TRAILING_STOP_ACTIVATE_PCT:
+            trail_stop = highest * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
+            if price <= trail_stop:
+                trail_pnl = (price - pos["entry"]) / pos["entry"] * 100
+                close_trade(state, pair,
+                    f"وقف متحرك (أعلى={highest:.4f} → نزل {TRAILING_STOP_DISTANCE_PCT}%)",
+                    price, exchange)
+                continue
+
+        # 3) إعادة شراء بعد البيع الجزئي
         if pos.get("partial_taken"):
             rebuy_trigger = base * (1 - REBUY_DROP_PCT / 100)
             if price <= rebuy_trigger:
@@ -611,14 +653,14 @@ async def check_positions(state: State):
                     save_state(state)
                 continue
 
-        # 3) بيع جزئي عند ارتفاع +3%
+        # 4) بيع جزئي عند ارتفاع +3%
         if not pos.get("partial_taken"):
             partial_tp_trigger = base * (1 + PARTIAL_TP_PCT / 100)
             if price >= partial_tp_trigger:
                 partial_sell(state, pair, price, exchange)
                 continue
 
-        # 4) هدف ربح كامل
+        # 5) هدف ربح كامل
         if price >= pos["tp"]:
             close_trade(state, pair, "هدف ربح", price, exchange)
         elif (time.time() - pos["opened"]) / 86400 >= MAX_HOLD_DAYS:
@@ -898,6 +940,10 @@ async def main():
         if not signal:
             log("لم يتم التعرف على التوصية"); return
 
+        sig_key = f"{signal.symbol}_{signal.trade_num}"
+        if sig_key in state.executed_signals:
+            log(f"توصية سبق تنفيذها — تجاهل: {sig_key}"); return
+
         if signal.reinforcements and signal.symbol:
             if signal.symbol not in state.reinforcements:
                 state.reinforcements[signal.symbol] = []
@@ -914,7 +960,11 @@ async def main():
 
         notify(f"توصية جديدة #{signal.trade_num}\nالعملة: {signal.symbol}\n"
                f"شراء: {signal.buy_price}\nبيع: {signal.sell_price} ({signal.tp_pct}%)")
-        open_trade(state, signal, reason="توصية جديدة")
+        if open_trade(state, signal, reason="توصية جديدة"):
+            state.executed_signals.append(sig_key)
+            if len(state.executed_signals) > 500:
+                state.executed_signals = state.executed_signals[-500:]
+            save_state(state)
 
     async def position_checker():
         while True:
@@ -941,8 +991,9 @@ async def main():
     asyncio.create_task(reinforcement_checker())
     log(f"Listening... (cap=${CAPITAL}, size=$100 ثابت, "
         f"وقف_كارثي=-{CATASTROPHIC_SL_PCT}%, "
+        f"trailing=+{TRAILING_STOP_ACTIVATE_PCT}%→-{TRAILING_STOP_DISTANCE_PCT}%, "
         f"partial_TP=+{PARTIAL_TP_PCT}%→{PARTIAL_SELL_PCT}%, rebuy=-{REBUY_DROP_PCT}%, "
-        f"max_hold={MAX_HOLD_DAYS}d, "
+        f"max_hold={MAX_HOLD_DAYS}d, max_consec_loss={MAX_CONSECUTIVE_LOSSES}, "
         f"BTC_filter=24h+SMA50)")
     if PROTECTED_SYMBOLS:
         log(f"عملات محمية: {PROTECTED_SYMBOLS}")
