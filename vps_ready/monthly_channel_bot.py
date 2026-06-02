@@ -62,6 +62,11 @@ PROTECTED_SYMBOLS = [s.strip().upper() for s in os.getenv("MONTHLY_PROTECTED_SYM
 MAX_CONSECUTIVE_LOSSES = int(os.getenv("MONTHLY_MAX_CONSEC_LOSSES", "3"))
 TRAILING_STOP_ACTIVATE_PCT = float(os.getenv("MONTHLY_TRAIL_ACTIVATE", "5.0"))
 TRAILING_STOP_DISTANCE_PCT = float(os.getenv("MONTHLY_TRAIL_DISTANCE", "3.0"))
+MAX_CONCURRENT = int(os.getenv("MONTHLY_MAX_CONCURRENT", "5"))
+PHASE1_RATIO = float(os.getenv("MONTHLY_PHASE1_RATIO", "0.6"))
+PHASE2_DELAY_MIN = int(os.getenv("MONTHLY_PHASE2_DELAY", "60"))
+ATR_PERIOD = int(os.getenv("MONTHLY_ATR_PERIOD", "14"))
+ATR_SL_MULTIPLIER = float(os.getenv("MONTHLY_ATR_SL_MULT", "2.0"))
 CHECK_INTERVAL = 300
 PAPER_MODE = "--live" not in sys.argv
 
@@ -464,6 +469,38 @@ def partial_rebuy(state, pair: str, price: float, exchange):
            f"${partial_usdt:.2f} → {rebuy_qty:.6f} | إجمالي: {new_qty:.6f}")
     log(msg); notify(msg)
 
+# ---------- ATR & dynamic sizing ----------
+_atr_cache: dict[str, tuple[float, float]] = {}  # pair -> (timestamp, atr)
+
+def calc_atr(exchange, pair: str) -> float | None:
+    now = time.time()
+    cached = _atr_cache.get(pair)
+    if cached and now - cached[0] < 3600:
+        return cached[1]
+    try:
+        ohlcv = exchange.fetch_ohlcv(pair, "1d", limit=ATR_PERIOD + 1)
+        if len(ohlcv) < ATR_PERIOD + 1:
+            return None
+        trs = []
+        for i in range(1, len(ohlcv)):
+            h, l, prev_c = ohlcv[i][2], ohlcv[i][3], ohlcv[i - 1][4]
+            trs.append(max(h - l, abs(h - prev_c), abs(l - prev_c)))
+        atr = sum(trs[-ATR_PERIOD:]) / ATR_PERIOD
+        _atr_cache[pair] = (now, atr)
+        return atr
+    except Exception as e:
+        log(f"خطأ ATR {pair}: {e}")
+        return None
+
+def dynamic_trade_size(base_size: float, tp_pct: float) -> float:
+    if tp_pct >= 20:
+        return round(base_size * 1.5, 2)
+    elif tp_pct >= 10:
+        return round(base_size * 1.2, 2)
+    elif tp_pct < 5:
+        return round(base_size * 0.7, 2)
+    return base_size
+
 # ---------- trade logic ----------
 def open_trade(state: State, signal: Signal, reason: str = "توصية جديدة") -> bool:
     rollover_day(state)
@@ -476,8 +513,8 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         return False
     if state.daily_trades >= MAX_DAILY_TRADES:
         log(f"حد الصفقات اليومي ({MAX_DAILY_TRADES})"); return False
-    if len(state.open_positions) >= MAX_OPEN:
-        log(f"حد المراكز المفتوحة ({MAX_OPEN})"); return False
+    if len(state.open_positions) >= MAX_CONCURRENT:
+        log(f"حد المراكز المفتوحة ({MAX_CONCURRENT})"); return False
 
     pair, ex_name = find_pair_exchange(signal.symbol)
     if not pair:
@@ -489,14 +526,18 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
 
     exchange = _exchanges[ex_name]
     _fixed = {"kucoin": KUCOIN_TRADE_SIZE, "bybit": BYBIT_TRADE_SIZE}.get(ex_name)
-    trade_size = _fixed if _fixed else get_trade_size(exchange)
+    base_size = _fixed if _fixed else get_trade_size(exchange)
+    trade_size = dynamic_trade_size(base_size, signal.tp_pct)
     if trade_size < MIN_TRADE_USDT:
         log(f"رصيد غير كافٍ: ${trade_size:.2f} < ${MIN_TRADE_USDT}"); return False
 
-    entry, qty = signal.buy_price, trade_size / signal.buy_price
+    phase1_size = round(trade_size * PHASE1_RATIO, 2)
+    phase2_size = round(trade_size - phase1_size, 2)
+
+    entry, qty = signal.buy_price, phase1_size / signal.buy_price
 
     if not PAPER_MODE:
-        order = spot_buy(exchange, pair, trade_size)
+        order = spot_buy(exchange, pair, phase1_size)
         if not order:
             return False
         try:
@@ -505,6 +546,11 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         except (TypeError, ValueError):
             pass
 
+    atr = calc_atr(exchange, pair)
+    atr_sl = round(entry - atr * ATR_SL_MULTIPLIER, 8) if atr else None
+    cat_sl = entry * (1 - CATASTROPHIC_SL_PCT / 100)
+    effective_sl = max(atr_sl, cat_sl) if atr_sl else cat_sl
+
     state.open_positions[pair] = {
         "trade_num": signal.trade_num, "symbol": signal.symbol, "pair": pair,
         "entry": entry, "qty": qty, "tp": signal.sell_price,
@@ -512,6 +558,10 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         "opened_str": time.strftime("%Y-%m-%d %H:%M:%S"),
         "reason": reason, "exchange": ex_name,
         "swing_base": entry,
+        "total_size": trade_size,
+        "phase2_size": phase2_size,
+        "phase2_done": phase2_size <= 0,
+        "atr_sl": atr_sl,
     }
     state.daily_trades += 1
     if signal.symbol not in state.entered_symbols:
@@ -519,9 +569,11 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
     save_state(state)
 
     mode = "ورقي" if PAPER_MODE else "حقيقي"
+    sl_info = f"ATR={atr_sl:.4f}" if atr_sl else f"ثابت={cat_sl:.4f}"
+    sz_info = f"${phase1_size:.0f}(60%)+${phase2_size:.0f}(40%)" if phase2_size > 0 else f"${trade_size:.0f}"
     msg = (f"صفقة [{mode}] — {reason}\n#{signal.trade_num} | {pair} [{ex_name}]\n"
            f"دخول: {entry} | هدف: {signal.sell_price} ({signal.tp_pct}%)\n"
-           f"بيع جزئي عند +{PARTIAL_TP_PCT}% | إعادة شراء عند -{REBUY_DROP_PCT}% | ${trade_size:.0f}")
+           f"حجم: {sz_info} | وقف: {sl_info}")
     log(msg); notify(msg); return True
 
 def close_trade(state: State, pair: str, reason: str, price: float, exchange, skip_sell: bool = False):
@@ -626,10 +678,13 @@ async def check_positions(state: State):
         high_target = pos.get("tp_pct", 0) > 30
         base = pos.get("swing_base", pos["entry"]) if high_target else pos["entry"]
 
-        # 1) وقف خسارة كارثي (دائماً من سعر الدخول الأصلي)
+        # 1) وقف خسارة (ATR ذكي أو كارثي ثابت)
+        atr_sl = pos.get("atr_sl")
         cat_sl = pos["entry"] * (1 - CATASTROPHIC_SL_PCT / 100)
-        if price <= cat_sl:
-            close_trade(state, pair, f"وقف كارثي -{CATASTROPHIC_SL_PCT:.0f}%", price, exchange)
+        effective_sl = max(atr_sl, cat_sl) if atr_sl else cat_sl
+        if price <= effective_sl:
+            sl_type = "ATR" if atr_sl and effective_sl == atr_sl else f"كارثي -{CATASTROPHIC_SL_PCT:.0f}%"
+            close_trade(state, pair, f"وقف {sl_type}", price, exchange)
             continue
 
         # 2) وقف متحرك — يتفعل بعد ربح +TRAILING_STOP_ACTIVATE_PCT%
@@ -665,6 +720,69 @@ async def check_positions(state: State):
             close_trade(state, pair, "هدف ربح", price, exchange)
         elif (time.time() - pos["opened"]) / 86400 >= MAX_HOLD_DAYS:
             close_trade(state, pair, f"مدة قصوى ({MAX_HOLD_DAYS} يوم)", price, exchange)
+
+# ---------- phase 2 entry ----------
+async def check_phase2(state: State):
+    for pair in list(state.open_positions):
+        pos = state.open_positions.get(pair)
+        if not pos or pos.get("phase2_done", True):
+            continue
+        phase2_size = pos.get("phase2_size", 0)
+        if phase2_size < MIN_TRADE_USDT:
+            pos["phase2_done"] = True; save_state(state); continue
+
+        elapsed_min = (time.time() - pos["opened"]) / 60
+        if elapsed_min < PHASE2_DELAY_MIN:
+            continue
+
+        ex_name = pos.get("exchange", "bybit")
+        exchange = _exchanges.get(ex_name)
+        if not exchange:
+            continue
+        try:
+            price = _safe_float(exchange.fetch_ticker(pair).get("last"))
+            if not price:
+                continue
+        except Exception:
+            continue
+
+        if price > pos["entry"] * 1.03:
+            pos["phase2_done"] = True; save_state(state)
+            log(f"المرحلة 2 ألغيت: {pair} — السعر ارتفع +3% فوق الدخول")
+            continue
+
+        if not PAPER_MODE:
+            order = spot_buy(exchange, pair, phase2_size)
+            if not order:
+                continue
+            try:
+                p2_qty = float(order.get("filled") or order.get("amount") or phase2_size / price)
+                p2_price = float(order.get("average") or order.get("price") or price)
+            except (TypeError, ValueError):
+                p2_qty = phase2_size / price
+                p2_price = price
+        else:
+            p2_qty = phase2_size / price
+            p2_price = price
+
+        old_qty = pos["qty"]
+        old_entry = pos["entry"]
+        new_qty = old_qty + p2_qty
+        new_entry = (old_entry * old_qty + p2_price * p2_qty) / new_qty
+        pos["qty"] = new_qty
+        pos["entry"] = round(new_entry, 8)
+        pos["swing_base"] = new_entry
+        pos["phase2_done"] = True
+
+        atr = calc_atr(exchange, pair)
+        if atr:
+            pos["atr_sl"] = round(new_entry - atr * ATR_SL_MULTIPLIER, 8)
+
+        save_state(state)
+        msg = (f"المرحلة 2: {pair}\n"
+               f"شراء إضافي ${phase2_size:.0f} @ {p2_price:.4f}\n"
+               f"متوسط جديد: {new_entry:.4f} | إجمالي: {new_qty:.6f}")
+        log(msg); notify(msg)
 
 # ---------- history scanner ----------
 async def scan_history(client, state: State):
@@ -973,6 +1091,7 @@ async def main():
                 log(f"نبض — مراكز: {len(state.open_positions)} | معلقة: {len(state.pending_signals)}")
                 if state.open_positions:
                     await check_positions(state)
+                    await check_phase2(state)
             except Exception as e:
                 log(f"خطأ في فحص المراكز: {e}")
 
@@ -989,12 +1108,13 @@ async def main():
 
     asyncio.create_task(position_checker())
     asyncio.create_task(reinforcement_checker())
-    log(f"Listening... (cap=${CAPITAL}, size=$100 ثابت, "
-        f"وقف_كارثي=-{CATASTROPHIC_SL_PCT}%, "
+    log(f"Listening... (cap=${CAPITAL}, "
+        f"sizing=dynamic(×0.7-×1.5), phase={PHASE1_RATIO:.0%}+{1-PHASE1_RATIO:.0%}@{PHASE2_DELAY_MIN}min, "
+        f"max_open={MAX_CONCURRENT}, "
+        f"SL=ATR×{ATR_SL_MULTIPLIER}/كارثي-{CATASTROPHIC_SL_PCT}%, "
         f"trailing=+{TRAILING_STOP_ACTIVATE_PCT}%→-{TRAILING_STOP_DISTANCE_PCT}%, "
         f"partial_TP=+{PARTIAL_TP_PCT}%→{PARTIAL_SELL_PCT}%, rebuy=-{REBUY_DROP_PCT}%, "
-        f"max_hold={MAX_HOLD_DAYS}d, max_consec_loss={MAX_CONSECUTIVE_LOSSES}, "
-        f"BTC_filter=24h+SMA50)")
+        f"max_hold={MAX_HOLD_DAYS}d, max_consec_loss={MAX_CONSECUTIVE_LOSSES})")
     if PROTECTED_SYMBOLS:
         log(f"عملات محمية: {PROTECTED_SYMBOLS}")
     await client.run_until_disconnected()
