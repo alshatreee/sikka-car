@@ -37,7 +37,7 @@ NOTIFY_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 ALERT_UP_PCT = float(os.getenv("PORTFOLIO_ALERT_UP_PCT", "10.0"))
 ALERT_DOWN_PCT = float(os.getenv("PORTFOLIO_ALERT_DOWN_PCT", "10.0"))
 CHECK_INTERVAL = int(os.getenv("PORTFOLIO_CHECK_SEC", "7200"))
-DAILY_REPORT_HOUR = int(os.getenv("PORTFOLIO_REPORT_HOUR", "20"))
+REPORT_HOURS = [int(h) for h in os.getenv("PORTFOLIO_REPORT_HOURS", "14,20").split(",")]
 MIN_BALANCE_USDT = float(os.getenv("PORTFOLIO_MIN_USDT", "1.0"))
 
 _IS_TTY = sys.stdin and sys.stdin.isatty()
@@ -447,12 +447,15 @@ def main():
 
             today = time.strftime("%Y-%m-%d")
             hour = int(time.strftime("%H"))
-            if hour == DAILY_REPORT_HOUR and state.last_report_day != today:
-                report = build_report(state, holdings, usdt_balances)
-                notify(f"📋 <b>تقرير يومي</b>\n\n{report}")
-                state.last_report_day = today
-                save_state(state)
-                log("تقرير يومي أُرسل")
+            if hour in REPORT_HOURS:
+                report_key = f"{today}_{hour}"
+                if state.last_report_day != report_key:
+                    report = build_report(state, holdings, usdt_balances)
+                    label = "تقرير مسائي" if hour >= 18 else "تقرير العصر"
+                    notify(f"📋 <b>{label}</b>\n\n{report}")
+                    state.last_report_day = report_key
+                    save_state(state)
+                    log(f"{label} أُرسل")
 
         except Exception as e:
             log(f"خطأ: {e}")
