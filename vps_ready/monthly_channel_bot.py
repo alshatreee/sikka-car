@@ -496,6 +496,7 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         "tp_pct": signal.tp_pct, "opened": time.time(),
         "opened_str": time.strftime("%Y-%m-%d %H:%M:%S"),
         "reason": reason, "exchange": ex_name,
+        "swing_base": entry,
     }
     state.daily_trades += 1
     if signal.symbol not in state.entered_symbols:
@@ -590,22 +591,29 @@ async def check_positions(state: State):
         except Exception as e:
             log(f"خطأ في جلب سعر {pair}: {e}"); continue
 
-        # 1) وقف خسارة كارثي -30% (حماية من الانهيار الكامل)
+        # أهداف >30%: سوينج متحرك — +3% من آخر سعر شراء
+        high_target = pos.get("tp_pct", 0) > 30
+        base = pos.get("swing_base", pos["entry"]) if high_target else pos["entry"]
+
+        # 1) وقف خسارة كارثي (دائماً من سعر الدخول الأصلي)
         cat_sl = pos["entry"] * (1 - CATASTROPHIC_SL_PCT / 100)
         if price <= cat_sl:
             close_trade(state, pair, f"وقف كارثي -{CATASTROPHIC_SL_PCT:.0f}%", price, exchange)
             continue
 
-        # 2) إعادة شراء بعد البيع الجزئي إذا نزل السعر -10%
+        # 2) إعادة شراء بعد البيع الجزئي
         if pos.get("partial_taken"):
-            rebuy_trigger = pos["entry"] * (1 - REBUY_DROP_PCT / 100)
+            rebuy_trigger = base * (1 - REBUY_DROP_PCT / 100)
             if price <= rebuy_trigger:
                 partial_rebuy(state, pair, price, exchange)
+                if high_target:
+                    pos["swing_base"] = price
+                    save_state(state)
                 continue
 
         # 3) بيع جزئي عند ارتفاع +3%
         if not pos.get("partial_taken"):
-            partial_tp_trigger = pos["entry"] * (1 + PARTIAL_TP_PCT / 100)
+            partial_tp_trigger = base * (1 + PARTIAL_TP_PCT / 100)
             if price >= partial_tp_trigger:
                 partial_sell(state, pair, price, exchange)
                 continue
