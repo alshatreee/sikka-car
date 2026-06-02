@@ -156,6 +156,7 @@ def calc_avg_entry(exchange, symbol: str) -> float | None:
 def fetch_portfolio(exchanges: dict) -> list[dict]:
     holdings = []
     seen = set()
+    usdt_balances = {}
 
     for ex_name, exchange in exchanges.items():
         try:
@@ -163,6 +164,12 @@ def fetch_portfolio(exchanges: dict) -> list[dict]:
         except Exception as e:
             log(f"خطأ جلب رصيد {ex_name}: {e}")
             continue
+
+        # رصيد USDT النقدي
+        for stable in ("USDT", "USD", "USDC", "BUSD"):
+            usdt_amt = float(balance.get("total", {}).get(stable, 0) or 0)
+            if usdt_amt >= 1:
+                usdt_balances[ex_name] = usdt_balances.get(ex_name, 0) + usdt_amt
 
         for symbol, info in balance.get("total", {}).items():
             amount = float(info) if info else 0.0
@@ -198,7 +205,7 @@ def fetch_portfolio(exchanges: dict) -> list[dict]:
             })
 
     holdings.sort(key=lambda x: x["value"], reverse=True)
-    return holdings
+    return holdings, usdt_balances
 
 
 def update_entry_prices(exchanges: dict, state: PortfolioState, holdings: list[dict]):
@@ -217,22 +224,32 @@ def update_entry_prices(exchanges: dict, state: PortfolioState, holdings: list[d
             pass  # لا تمسح السعر المحفوظ يدوياً (مثل NIL)
 
 
-def build_report(state: PortfolioState, holdings: list[dict]) -> str:
-    if not holdings:
+def build_report(state: PortfolioState, holdings: list[dict], usdt_balances: dict) -> str:
+    if not holdings and not usdt_balances:
         return "المحفظة فارغة"
 
-    total_value = sum(h["value"] for h in holdings)
     total_pnl = 0.0
-
     by_exchange = {}
     for h in holdings:
         by_exchange.setdefault(h["exchange"], []).append(h)
 
+    # اجمع كل المنصات (عملات + USDT)
+    all_exchanges = set(list(by_exchange.keys()) + list(usdt_balances.keys()))
     lines = ["<b>📊 تقرير المحفظة</b>\n"]
+    grand_total = 0.0
 
-    for ex_name, ex_holdings in by_exchange.items():
-        ex_value = sum(h["value"] for h in ex_holdings)
-        lines.append(f"<b>━━ {ex_name} (${ex_value:.2f}) ━━</b>")
+    for ex_name in sorted(all_exchanges):
+        ex_holdings = by_exchange.get(ex_name, [])
+        ex_coins_value = sum(h["value"] for h in ex_holdings)
+        ex_usdt = usdt_balances.get(ex_name, 0)
+        ex_total = ex_coins_value + ex_usdt
+        grand_total += ex_total
+
+        lines.append(f"<b>━━ {ex_name} (${ex_total:.2f}) ━━</b>")
+
+        # رصيد USDT النقدي أولاً
+        if ex_usdt >= 1:
+            lines.append(f"💵 <b>USDT</b>: ${ex_usdt:.2f}  (نقدي جاهز)")
 
         for h in ex_holdings:
             sym = h["symbol"]
@@ -260,8 +277,8 @@ def build_report(state: PortfolioState, holdings: list[dict]) -> str:
         lines.append("")
 
     sign = "+" if total_pnl >= 0 else ""
-    lines.append(f"<b>الإجمالي: ${total_value:.2f}</b>")
-    lines.append(f"<b>الربح/الخسارة: {sign}${total_pnl:.2f}</b>")
+    lines.append(f"<b>الإجمالي: ${grand_total:.2f}</b>")
+    lines.append(f"<b>ربح/خسارة العملات: {sign}${total_pnl:.2f}</b>")
     return "\n".join(lines)
 
 
@@ -334,19 +351,21 @@ def run_check():
             log(f"[{ex_name}] رصيد USDT: ${usdt:.2f}")
         except Exception as e:
             log(f"[{ex_name}] خطأ: {e}")
-    holdings = fetch_portfolio(exchanges)
+    holdings, usdt_balances = fetch_portfolio(exchanges)
     log(f"عملات بالمحفظة: {len(holdings)}")
     for h in holdings:
         log(f"  [{h['exchange']}] {h['symbol']}: {h['amount']:.4f} (${h['value']:.2f})")
+    for ex, usdt in usdt_balances.items():
+        log(f"  [{ex}] USDT نقدي: ${usdt:.2f}")
 
 
 def run_report():
     exchanges = init_exchanges()
     state = load_state()
-    holdings = fetch_portfolio(exchanges)
+    holdings, usdt_balances = fetch_portfolio(exchanges)
     update_entry_prices(exchanges, state, holdings)
     save_state(state)
-    report = build_report(state, holdings)
+    report = build_report(state, holdings, usdt_balances)
     log(report.replace("<b>", "").replace("</b>", ""))
     notify(report)
 
@@ -368,7 +387,7 @@ def main():
     log(f"المنصات: {', '.join(exchanges.keys())}")
     state = load_state()
 
-    holdings = fetch_portfolio(exchanges)
+    holdings, usdt_balances = fetch_portfolio(exchanges)
     update_entry_prices(exchanges, state, holdings)
     save_state(state)
     log(f"عملات بالمحفظة: {len(holdings)}")
@@ -380,15 +399,17 @@ def main():
             log(f"  [{h['exchange']}] {h['symbol']}: ${h['value']:.2f} ({sign}{pnl:.1f}%)")
         else:
             log(f"  [{h['exchange']}] {h['symbol']}: ${h['value']:.2f}")
+    for ex, usdt in usdt_balances.items():
+        log(f"  [{ex}] USDT نقدي: ${usdt:.2f}")
 
-    report = build_report(state, holdings)
+    report = build_report(state, holdings, usdt_balances)
     notify(report)
     log(f"تنبيهات: ↑{ALERT_UP_PCT}% ↓{ALERT_DOWN_PCT}% | فحص كل {CHECK_INTERVAL}s")
 
     while True:
         time.sleep(CHECK_INTERVAL)
         try:
-            holdings = fetch_portfolio(exchanges)
+            holdings, usdt_balances = fetch_portfolio(exchanges)
             update_entry_prices(exchanges, state, holdings)
             check_alerts(state, holdings)
             clean_stale_entries(state, holdings)
@@ -397,7 +418,7 @@ def main():
             today = time.strftime("%Y-%m-%d")
             hour = int(time.strftime("%H"))
             if hour == DAILY_REPORT_HOUR and state.last_report_day != today:
-                report = build_report(state, holdings)
+                report = build_report(state, holdings, usdt_balances)
                 notify(f"📋 <b>تقرير يومي</b>\n\n{report}")
                 state.last_report_day = today
                 save_state(state)
