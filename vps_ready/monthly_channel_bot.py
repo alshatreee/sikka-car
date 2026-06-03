@@ -325,6 +325,7 @@ def rollover_day(s: State) -> None:
 class Signal:
     trade_num: int; symbol: str; buy_price: float; sell_price: float; tp_pct: float
     reinforcements: list[float] = field(default_factory=list)
+    targets: list[dict] = field(default_factory=list)
 
 _COMPLETED_PATTERNS = re.compile(
     r"✅|✓|☑|تم\s*تحقيق|تحقق\s*الهدف|وصل\s*الهدف|تم\s*الوصول|تم\s*البيع|أغلقت|مغلقة|closed|reached|done",
@@ -359,8 +360,9 @@ def parse_signal(text: str) -> Signal | None:
     if "الشراء والتعزيز" in text or "التعزيز الأول" in text:
         buy_p, reinf = _parse_buy_and_reinforce(text)
         sell_p, tp_pct = _parse_targets(text, buy_p)
+        all_targets = _parse_all_targets(text, buy_p)
         if buy_p > 0:
-            return Signal(trade_num, symbol, buy_p, sell_p, tp_pct, reinf)
+            return Signal(trade_num, symbol, buy_p, sell_p, tp_pct, reinf, all_targets)
 
     return None
 
@@ -386,8 +388,18 @@ def _parse_buy_and_reinforce(text: str) -> tuple[float, list[float]]:
     return buy_price, sorted(reinforcements)
 
 def _parse_targets(text: str, buy_price: float) -> tuple[float, float]:
-    """يستخرج أول هدف من 'أهداف الصفقة'."""
-    sell_price = 0.0
+    """يستخرج أعلى هدف من 'أهداف الصفقة'."""
+    all_targets = _parse_all_targets(text, buy_price)
+    if all_targets:
+        last = all_targets[-1]
+        return last["price"], last["pct"]
+    sell_price = buy_price * 1.20 if buy_price > 0 else 0
+    tp_pct = 20.0 if buy_price > 0 else 0
+    return sell_price, tp_pct
+
+def _parse_all_targets(text: str, buy_price: float) -> list[dict]:
+    """يستخرج جميع أهداف الصفقة."""
+    targets = []
     in_targets = False
     for line in text.split("\n"):
         if "أهداف الصفقة" in line:
@@ -397,13 +409,11 @@ def _parse_targets(text: str, buy_price: float) -> tuple[float, float]:
         if in_targets:
             m = re.search(r"[-–]\s*([\d.]+)\s*\(([\d.]+)%\)", line)
             if m:
-                sell_price = float(m.group(1))
-                tp_pct = float(m.group(2))
-                return sell_price, tp_pct
-    if sell_price == 0 and buy_price > 0:
-        sell_price = buy_price * 1.20
-    tp_pct = round((sell_price - buy_price) / buy_price * 100, 2) if buy_price > 0 else 0
-    return sell_price, tp_pct
+                price = float(m.group(1))
+                pct = float(m.group(2))
+                completed = "✅" in line or "✓" in line
+                targets.append({"price": price, "pct": pct, "completed": completed})
+    return targets
 
 def parse_reinforcements(text: str) -> list[float]:
     """يستخرج أسعار التعزيز — يعمل مع الصيغتين."""
@@ -672,6 +682,46 @@ def partial_rebuy(state, pair: str, price: float, exchange):
            f"${partial_usdt:.2f} → {rebuy_qty:.6f} | إجمالي: {new_qty:.6f}")
     log(msg); notify(msg)
 
+TARGET_REBUY_DROP_PCT = float(os.getenv("MONTHLY_TARGET_REBUY_DROP", "10.0"))
+
+def target_sell(state, pair: str, price: float, exchange, target: dict, sell_pct: float):
+    """بيع نسبة من الكمية عند وصول هدف معين (أهداف متعددة)."""
+    pos = state.open_positions.get(pair)
+    if not pos:
+        return
+    sell_ratio = min(sell_pct, 100) / 100
+    sell_qty = pos["qty"] * sell_ratio
+    remaining_qty = pos["qty"] - sell_qty
+
+    if remaining_qty * price < MIN_TRADE_USDT:
+        close_trade(state, pair, f"هدف ({target['pct']}%)", price, exchange)
+        return
+
+    if not PAPER_MODE:
+        order = spot_sell(exchange, pair, sell_qty)
+        if not order:
+            return
+        fill_price = _safe_float(order.get("average"), order.get("price"), default=price)
+        partial_usdt = fill_price * _safe_float(order.get("filled"), order.get("amount"), default=sell_qty)
+    else:
+        partial_usdt = price * sell_qty
+
+    pos["qty"] = remaining_qty
+    pos["partial_taken"] = True
+    pos["partial_usdt"] = round(pos.get("partial_usdt", 0) + partial_usdt, 4)
+    pos["last_sell_price"] = round(price, 8)
+    target["hit"] = True
+    pos["targets_hit"] = pos.get("targets_hit", 0) + 1
+    save_state(state)
+
+    pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
+    hit_count = pos["targets_hit"]
+    total_targets = len(pos.get("targets", []))
+    msg = (f"🎯 هدف {hit_count}/{total_targets}: {pair}\n"
+           f"بيع {sell_pct:.0f}% @ {price} (+{pnl_pct:.1f}%)\n"
+           f"محفوظ: ${partial_usdt:.2f} | متبقي: {remaining_qty:.6f}")
+    log(msg); notify(msg)
+
 # ---------- ATR & dynamic sizing ----------
 _atr_cache: dict[str, tuple[float, float]] = {}  # pair -> (timestamp, atr)
 
@@ -754,6 +804,11 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
     cat_sl = entry * (1 - CATASTROPHIC_SL_PCT / 100)
     effective_sl = max(atr_sl, cat_sl) if atr_sl else cat_sl
 
+    targets_list = []
+    if signal.targets:
+        for t in signal.targets:
+            targets_list.append({"price": t["price"], "pct": t["pct"], "hit": t.get("completed", False)})
+
     state.open_positions[pair] = {
         "trade_num": signal.trade_num, "symbol": signal.symbol, "pair": pair,
         "entry": entry, "qty": qty, "tp": signal.sell_price,
@@ -765,6 +820,8 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         "phase2_size": phase2_size,
         "phase2_done": phase2_size <= 0,
         "atr_sl": atr_sl,
+        "targets": targets_list,
+        "targets_hit": 0,
     }
     state.daily_trades += 1
     if signal.symbol not in state.entered_symbols:
@@ -902,10 +959,11 @@ async def check_positions(state: State):
                     price, exchange)
                 continue
 
-        # 3) إعادة شراء بعد البيع الجزئي — النزول من سعر البيع الأخير
+        # 3) إعادة شراء بعد البيع على هدف — النزول من سعر البيع
         if pos.get("partial_taken"):
             last_sell = pos.get("last_sell_price", base)
-            rebuy_trigger = last_sell * (1 - REBUY_DROP_PCT / 100)
+            drop_pct = TARGET_REBUY_DROP_PCT if pos.get("targets") else REBUY_DROP_PCT
+            rebuy_trigger = last_sell * (1 - drop_pct / 100)
             if price <= rebuy_trigger:
                 partial_rebuy(state, pair, price, exchange)
                 if high_target:
@@ -913,17 +971,32 @@ async def check_positions(state: State):
                     save_state(state)
                 continue
 
-        # 4) بيع جزئي عند ارتفاع +3%
-        if not pos.get("partial_taken"):
-            partial_tp_trigger = base * (1 + PARTIAL_TP_PCT / 100)
-            if price >= partial_tp_trigger:
-                partial_sell(state, pair, price, exchange)
+        # 4) بيع على الأهداف (متعددة أو واحد)
+        targets = pos.get("targets", [])
+        if len(targets) > 1:
+            targets_hit = pos.get("targets_hit", 0)
+            remaining_targets = [t for i, t in enumerate(targets) if i >= targets_hit and not t.get("hit")]
+            if remaining_targets:
+                next_target = remaining_targets[0]
+                is_last = len(remaining_targets) == 1
+                if price >= next_target["price"]:
+                    if is_last:
+                        close_trade(state, pair, f"هدف أخير ({next_target['pct']}%)", price, exchange)
+                    else:
+                        sell_pct_per_target = 100 / len(targets)
+                        target_sell(state, pair, price, exchange, next_target, sell_pct_per_target)
+                    continue
+            elif not pos.get("partial_taken"):
+                if price >= pos["tp"]:
+                    close_trade(state, pair, "هدف ربح", price, exchange)
+                    continue
+        else:
+            if price >= pos["tp"]:
+                close_trade(state, pair, "هدف ربح", price, exchange)
                 continue
 
-        # 5) هدف ربح كامل
-        if price >= pos["tp"]:
-            close_trade(state, pair, "هدف ربح", price, exchange)
-        elif MAX_HOLD_DAYS > 0 and (time.time() - pos["opened"]) / 86400 >= MAX_HOLD_DAYS:
+        # 5) مدة قصوى
+        if MAX_HOLD_DAYS > 0 and (time.time() - pos["opened"]) / 86400 >= MAX_HOLD_DAYS:
             close_trade(state, pair, f"مدة قصوى ({MAX_HOLD_DAYS} يوم)", price, exchange)
 
 # ---------- phase 2 entry ----------
