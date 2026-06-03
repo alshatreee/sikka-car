@@ -21,8 +21,9 @@ from dotenv import load_dotenv
 # ---------- paths ----------
 BASE_DIR = Path(r"C:\Users\xman9\Desktop") if os.name == "nt" else Path("/root/bots")
 BASE_DIR.mkdir(parents=True, exist_ok=True)
-ENV_FILE, STATE_FILE, LOG_FILE = (
-    BASE_DIR / ".env_monthly", BASE_DIR / "monthly_state.json", BASE_DIR / "monthly.log")
+ENV_FILE, STATE_FILE, LOG_FILE, TRACKER_FILE = (
+    BASE_DIR / ".env_monthly", BASE_DIR / "monthly_state.json", BASE_DIR / "monthly.log",
+    BASE_DIR / "signal_tracker.json")
 load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
 
 # ---------- config ----------
@@ -125,6 +126,92 @@ def load_state() -> State:
 
 def save_state(s: State) -> None:
     STATE_FILE.write_text(json.dumps(asdict(s), indent=2, ensure_ascii=False))
+
+# ---------- signal tracker (self-learning phase 1) ----------
+_TRACK_CHECKPOINTS = [30, 60, 120, 240, 1440]  # minutes
+
+def _load_tracker() -> list[dict]:
+    if TRACKER_FILE.exists():
+        try:
+            return json.loads(TRACKER_FILE.read_text())
+        except Exception:
+            pass
+    return []
+
+def _save_tracker(data: list[dict]) -> None:
+    TRACKER_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+
+def tracker_add(symbol: str, pair: str, signal_price: float, entry_price: float, ex_name: str):
+    data = _load_tracker()
+    data.append({
+        "symbol": symbol, "pair": pair, "exchange": ex_name,
+        "signal_price": signal_price, "entry_price": entry_price,
+        "signal_time": time.time(), "signal_str": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "checkpoints": {},
+    })
+    _save_tracker(data)
+
+def tracker_update():
+    data = _load_tracker()
+    if not data:
+        return
+    now = time.time()
+    changed = False
+    for rec in data:
+        if not rec.get("pair"):
+            continue
+        for cp_min in _TRACK_CHECKPOINTS:
+            cp_key = f"{cp_min}m"
+            if cp_key in rec.get("checkpoints", {}):
+                continue
+            elapsed_min = (now - rec["signal_time"]) / 60
+            if elapsed_min < cp_min:
+                continue
+            ex = _exchanges.get(rec.get("exchange"))
+            if not ex:
+                continue
+            try:
+                ticker = ex.fetch_ticker(rec["pair"])
+                price = float(ticker.get("last", 0))
+                if price <= 0:
+                    continue
+                diff_pct = round((price - rec["signal_price"]) / rec["signal_price"] * 100, 2)
+                rec.setdefault("checkpoints", {})[cp_key] = {
+                    "price": price, "diff_pct": diff_pct,
+                    "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                changed = True
+            except Exception:
+                continue
+    if changed:
+        _save_tracker(data)
+
+def tracker_report() -> str:
+    data = _load_tracker()
+    if not data:
+        return ""
+    complete = [r for r in data if len(r.get("checkpoints", {})) >= len(_TRACK_CHECKPOINTS)]
+    if not complete:
+        return ""
+    avg = {}
+    for cp_min in _TRACK_CHECKPOINTS:
+        cp_key = f"{cp_min}m"
+        vals = [r["checkpoints"][cp_key]["diff_pct"] for r in complete if cp_key in r.get("checkpoints", {})]
+        if vals:
+            avg[cp_key] = round(sum(vals) / len(vals), 2)
+    if not avg:
+        return ""
+    lines = [f"📊 تحليل ذاتي ({len(complete)} توصية مكتملة):"]
+    labels = {"30m": "30 دقيقة", "60m": "ساعة", "120m": "ساعتين", "240m": "4 ساعات", "1440m": "24 ساعة"}
+    for k, v in avg.items():
+        sign = "+" if v >= 0 else ""
+        lines.append(f"  بعد {labels.get(k, k)}: {sign}{v}%")
+    dip_30 = avg.get("30m", 0)
+    dip_60 = avg.get("60m", 0)
+    rise_240 = avg.get("240m", 0)
+    if dip_30 < -1 and rise_240 > dip_30:
+        lines.append(f"  💡 نمط: انخفاض {dip_30}% ثم ارتداد — الدخول المتأخر أفضل")
+    return "\n".join(lines)
 
 def rollover_day(s: State) -> None:
     today = time.strftime("%Y-%m-%d")
@@ -567,6 +654,7 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
     if signal.symbol not in state.entered_symbols:
         state.entered_symbols.append(signal.symbol)
     save_state(state)
+    tracker_add(signal.symbol, pair, signal.buy_price, entry, ex_name)
 
     mode = "ورقي" if PAPER_MODE else "حقيقي"
     sl_info = f"ATR={atr_sl:.4f}" if atr_sl else f"ثابت={cat_sl:.4f}"
@@ -1092,6 +1180,7 @@ async def main():
                 if state.open_positions:
                     await check_positions(state)
                     await check_phase2(state)
+                tracker_update()
             except Exception as e:
                 log(f"خطأ في فحص المراكز: {e}")
 
@@ -1106,8 +1195,19 @@ async def main():
             except Exception as e:
                 log(f"خطأ في فحص التعزيزات: {e}")
 
+    async def tracker_reporter():
+        while True:
+            await asyncio.sleep(86400)
+            try:
+                report = tracker_report()
+                if report:
+                    log(report); notify(report)
+            except Exception:
+                pass
+
     asyncio.create_task(position_checker())
     asyncio.create_task(reinforcement_checker())
+    asyncio.create_task(tracker_reporter())
     log(f"Listening... (cap=${CAPITAL}, "
         f"sizing=dynamic(×0.7-×1.5), phase={PHASE1_RATIO:.0%}+{1-PHASE1_RATIO:.0%}@{PHASE2_DELAY_MIN}min, "
         f"max_open={MAX_CONCURRENT}, "
@@ -1125,5 +1225,16 @@ if __name__ == "__main__":
         report = compute_stats(state.trade_history)
         clean = report.replace("<b>","").replace("</b>","")
         print(clean)
+        sys.exit(0)
+    if "--tracker" in sys.argv:
+        data = _load_tracker()
+        print(f"توصيات متتبعة: {len(data)}")
+        for r in data:
+            cps = r.get("checkpoints", {})
+            cp_str = " | ".join(f"{k}: {v['diff_pct']:+.1f}%" for k, v in sorted(cps.items()))
+            print(f"  {r['symbol']} @ ${r['signal_price']} ({r['signal_str']}) — {cp_str or 'قيد التتبع'}")
+        report = tracker_report()
+        if report:
+            print(f"\n{report}")
         sys.exit(0)
     asyncio.run(main())
