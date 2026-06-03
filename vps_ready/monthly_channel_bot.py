@@ -614,6 +614,15 @@ def partial_rebuy(state, pair: str, price: float, exchange):
     if not PAPER_MODE:
         order = spot_buy(exchange, pair, partial_usdt)
         if not order:
+            fails = pos.get("rebuy_fails", 0) + 1
+            pos["rebuy_fails"] = fails
+            save_state(state)
+            if fails >= 3:
+                pos["partial_taken"] = False
+                pos["partial_usdt"] = 0
+                save_state(state)
+                msg = f"⚠️ إعادة شراء {pair} فشلت {fails} مرات — تم إلغاء الإعادة. تحقق من الرصيد."
+                log(msg); notify(msg)
             return
         rebuy_qty = _safe_float(order.get("filled"), order.get("amount"), default=rebuy_qty)
 
@@ -626,6 +635,7 @@ def partial_rebuy(state, pair: str, price: float, exchange):
     pos["qty"] = new_qty
     pos["partial_taken"] = False
     pos["partial_usdt"] = 0
+    pos.pop("rebuy_fails", None)
     save_state(state)
 
     drop_pct = (price - pos["entry"]) / pos["entry"] * 100
