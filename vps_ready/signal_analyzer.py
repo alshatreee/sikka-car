@@ -397,6 +397,124 @@ def send_full_report(df_results, recommendations):
     log("تم إرسال التقرير عبر تيليجرام")
 
 
+# ─── تحليل استراتيجية السوينج ───
+
+def analyze_swing_strategy(exchanges: dict, sell_pct: float = 3.0, rebuy_drop_pct: float = 5.0,
+                            max_cycles: int = 10, days: int = 14):
+    """يحلل استراتيجية: بيع عند +sell_pct% → إعادة شراء عند -rebuy_drop_pct% من سعر البيع → تكرار
+    ويقارنها بالاحتفاظ (HODL)"""
+    if not TRACKER_FILE.exists():
+        log("لا توجد بيانات تتبع"); return None
+
+    tracker = json.loads(TRACKER_FILE.read_text())
+    _STABLECOINS = {"USDC", "USDT", "BUSD", "DAI", "TUSD", "FDUSD"}
+    tracker = [r for r in tracker if r.get("symbol", "").upper() not in _STABLECOINS and r.get("pair")]
+
+    if not tracker:
+        log("لا توجد بيانات كافية"); return None
+
+    results = []
+    for rec in tracker:
+        pair = rec["pair"]
+        df = fetch_ohlcv(exchanges, pair, rec.get("exchange", ""), rec["signal_time"], days=days)
+        if df.empty or len(df) < 20:
+            continue
+
+        closes = df["close"].values
+        entry_price = rec.get("entry_price", rec["signal_price"])
+
+        qty = 1.0
+        cash = 0.0
+        buy_price = entry_price
+        cycles = 0
+        cycle_details = []
+        holding = True
+
+        for price in closes:
+            if holding:
+                sell_trigger = buy_price * (1 + sell_pct / 100)
+                if price >= sell_trigger:
+                    cash = qty * price
+                    sell_price = price
+                    holding = False
+                    pnl = (price - buy_price) / buy_price * 100
+                    cycle_details.append({"buy": round(buy_price, 6), "sell": round(price, 6), "pnl_pct": round(pnl, 2)})
+            else:
+                rebuy_trigger = sell_price * (1 - rebuy_drop_pct / 100)
+                if price <= rebuy_trigger:
+                    qty = cash / price
+                    buy_price = price
+                    cash = 0.0
+                    holding = True
+                    cycles += 1
+                    if cycles >= max_cycles:
+                        break
+
+        if holding:
+            final_value = qty * closes[-1]
+        else:
+            final_value = cash
+
+        initial_value = entry_price
+        swing_return = (final_value - initial_value) / initial_value * 100
+        hodl_return = (closes[-1] - entry_price) / entry_price * 100
+
+        results.append({
+            "symbol": rec["symbol"],
+            "source": rec.get("source", "bot"),
+            "entry": entry_price,
+            "cycles": cycles,
+            "swing_return_pct": round(swing_return, 2),
+            "hodl_return_pct": round(hodl_return, 2),
+            "advantage_pct": round(swing_return - hodl_return, 2),
+            "details": cycle_details,
+        })
+
+    if not results:
+        log("لا نتائج"); return None
+
+    df_r = pd.DataFrame(results)
+    avg_swing = df_r["swing_return_pct"].mean()
+    avg_hodl = df_r["hodl_return_pct"].mean()
+    avg_cycles = df_r["cycles"].mean()
+    avg_advantage = df_r["advantage_pct"].mean()
+    coins_with_cycles = len(df_r[df_r["cycles"] >= 2])
+
+    log(f"\n═══ تحليل السوينج: بيع +{sell_pct}% → شراء -{rebuy_drop_pct}% ═══")
+    log(f"عدد العملات: {len(df_r)}")
+    log(f"متوسط الدورات (بيع+شراء): {avg_cycles:.1f}")
+    log(f"عملات حققت دورتين+: {coins_with_cycles}/{len(df_r)}")
+    log(f"عائد السوينج: {avg_swing:+.2f}%")
+    log(f"عائد الاحتفاظ (HODL): {avg_hodl:+.2f}%")
+    log(f"ميزة السوينج: {avg_advantage:+.2f}%")
+
+    for _, r in df_r.iterrows():
+        src = "🤖" if r["source"] == "bot" else "👤"
+        winner = "✅" if r["advantage_pct"] > 0 else "❌"
+        log(f"  {src} {r['symbol']}: {r['cycles']} دورات | "
+            f"سوينج {r['swing_return_pct']:+.1f}% vs HODL {r['hodl_return_pct']:+.1f}% {winner}")
+
+    report_lines = [f"<b>🔄 تحليل السوينج: بيع +{sell_pct}% → شراء -{rebuy_drop_pct}%</b>\n"]
+    report_lines.append(f"عملات محللة: {len(df_r)}")
+    report_lines.append(f"متوسط الدورات: {avg_cycles:.1f}")
+    report_lines.append(f"عملات حققت دورتين+: {coins_with_cycles}/{len(df_r)}")
+    report_lines.append(f"عائد السوينج: {avg_swing:+.1f}%")
+    report_lines.append(f"عائد الاحتفاظ HODL: {avg_hodl:+.1f}%")
+    verdict = f"✅ السوينج أفضل بـ {avg_advantage:+.1f}%" if avg_advantage > 0 else f"❌ الاحتفاظ أفضل بـ {abs(avg_advantage):.1f}%"
+    report_lines.append(f"\n💡 النتيجة: {verdict}")
+
+    report_lines.append("\n<b>تفاصيل:</b>")
+    for _, r in df_r.iterrows():
+        src = "🤖" if r["source"] == "bot" else "👤"
+        winner = "✅" if r["advantage_pct"] > 0 else "❌"
+        report_lines.append(
+            f"{src} {r['symbol']}: {r['cycles']} دورات | "
+            f"سوينج {r['swing_return_pct']:+.1f}% vs HODL {r['hodl_return_pct']:+.1f}% {winner}")
+
+    notify("\n".join(report_lines))
+    return df_r
+
+
 # ─── main ───
 
 def main():
@@ -415,6 +533,10 @@ def main():
     if "--analyze" in args or do_all:
         log("\n── VectorBT: تحليل التوقيت ──")
         df_results = vbt_analyze_signals(exchanges)
+
+    if "--swing" in args or do_all:
+        log("\n── تحليل استراتيجية السوينج ──")
+        analyze_swing_strategy(exchanges)
 
     if "--learn" in args or do_all:
         log("\n── ML: تدريب النموذج ──")
@@ -437,6 +559,7 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("الاستخدام:")
         print("  python3 signal_analyzer.py --analyze   # تحليل VectorBT")
+        print("  python3 signal_analyzer.py --swing     # تحليل السوينج")
         print("  python3 signal_analyzer.py --learn     # تدريب ML")
         print("  python3 signal_analyzer.py --report    # تقرير QuantStats")
         print("  python3 signal_analyzer.py --all       # الكل")
