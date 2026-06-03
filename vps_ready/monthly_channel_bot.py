@@ -48,7 +48,7 @@ TRADE_PCT    = float(os.getenv("MONTHLY_TRADE_PCT", "10"))
 TRADE_SIZE   = CAPITAL * TRADE_PCT / 100
 SL_PCT       = float(os.getenv("MONTHLY_SL_PCT", "5.0"))
 CATASTROPHIC_SL_PCT = float(os.getenv("MONTHLY_CATASTROPHIC_SL", "20.0"))
-MAX_HOLD_DAYS = int(os.getenv("MONTHLY_MAX_HOLD_DAYS", "45"))
+MAX_HOLD_DAYS = int(os.getenv("MONTHLY_MAX_HOLD_DAYS", "0"))
 MAX_DAILY_TRADES = 10
 MAX_OPEN = 10
 MAX_DAILY_LOSS_PCT = float(os.getenv("MONTHLY_MAX_LOSS_PCT", "5.0"))
@@ -885,7 +885,7 @@ async def check_positions(state: State):
         # 5) هدف ربح كامل
         if price >= pos["tp"]:
             close_trade(state, pair, "هدف ربح", price, exchange)
-        elif (time.time() - pos["opened"]) / 86400 >= MAX_HOLD_DAYS:
+        elif MAX_HOLD_DAYS > 0 and (time.time() - pos["opened"]) / 86400 >= MAX_HOLD_DAYS:
             close_trade(state, pair, f"مدة قصوى ({MAX_HOLD_DAYS} يوم)", price, exchange)
 
 # ---------- phase 2 entry ----------
