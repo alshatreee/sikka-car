@@ -655,7 +655,7 @@ def partial_rebuy(state, pair: str, price: float, exchange):
             fails = pos.get("rebuy_fails", 0) + 1
             pos["rebuy_fails"] = fails
             save_state(state)
-            if fails >= 3:
+            if fails >= 2:
                 pos["partial_taken"] = False
                 pos["partial_usdt"] = 0
                 save_state(state)
@@ -1541,5 +1541,39 @@ if __name__ == "__main__":
         report = tracker_report()
         if report:
             print(f"\n{report}")
+        sys.exit(0)
+    if "--set-targets" in sys.argv:
+        idx = sys.argv.index("--set-targets")
+        if idx + 2 >= len(sys.argv):
+            print("الاستخدام: --set-targets SYMBOL سعر1,سعر2,سعر3...")
+            print("مثال: --set-targets NEAR 1.40,1.70,2.26,3.00,7.00,12.8")
+            sys.exit(1)
+        symbol = sys.argv[idx + 1].upper()
+        prices = [float(p) for p in sys.argv[idx + 2].split(",")]
+        state = load_state()
+        found = False
+        for pair, pos in state.open_positions.items():
+            if pos.get("symbol", pair.split("/")[0]).upper() == symbol:
+                entry = pos["entry"]
+                targets = []
+                for p in prices:
+                    pct = round((p - entry) / entry * 100, 2)
+                    targets.append({"price": p, "pct": pct, "hit": False})
+                pos["targets"] = targets
+                pos["targets_hit"] = 0
+                pos["tp"] = prices[-1]
+                pos["tp_pct"] = round((prices[-1] - entry) / entry * 100, 2)
+                save_state(state)
+                print(f"✅ {pair} — تم تعيين {len(targets)} أهداف:")
+                for t in targets:
+                    print(f"  {t['price']} ({t['pct']:+.1f}%)")
+                found = True
+                break
+        if not found:
+            print(f"❌ {symbol} غير موجود في المراكز المفتوحة")
+            print("المراكز الحالية:")
+            for pair, pos in state.open_positions.items():
+                t_count = len(pos.get("targets", []))
+                print(f"  {pos.get('symbol', '?')} ({pair}) — أهداف: {t_count or 'لا يوجد'}")
         sys.exit(0)
     asyncio.run(main())
