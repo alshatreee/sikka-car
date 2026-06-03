@@ -592,6 +592,7 @@ def partial_sell(state, pair: str, price: float, exchange):
     pos["qty"] = remaining_qty
     pos["partial_taken"] = True
     pos["partial_usdt"] = round(partial_usdt, 4)
+    pos["last_sell_price"] = round(price, 8)
     save_state(state)
 
     pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
@@ -863,9 +864,10 @@ async def check_positions(state: State):
                     price, exchange)
                 continue
 
-        # 3) إعادة شراء بعد البيع الجزئي
+        # 3) إعادة شراء بعد البيع الجزئي — النزول من سعر البيع الأخير
         if pos.get("partial_taken"):
-            rebuy_trigger = base * (1 - REBUY_DROP_PCT / 100)
+            last_sell = pos.get("last_sell_price", base)
+            rebuy_trigger = last_sell * (1 - REBUY_DROP_PCT / 100)
             if price <= rebuy_trigger:
                 partial_rebuy(state, pair, price, exchange)
                 if high_target:
