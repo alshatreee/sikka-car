@@ -38,6 +38,8 @@ BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "true").lower() == "true"
 KUCOIN_KEY    = os.getenv("KUCOIN_API_KEY", "")
 KUCOIN_SECRET = os.getenv("KUCOIN_API_SECRET", "")
 KUCOIN_PASS   = os.getenv("KUCOIN_PASSPHRASE", "")
+GATE_KEY      = os.getenv("GATE_API_KEY", "")
+GATE_SECRET   = os.getenv("GATE_API_SECRET", "")
 NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT  = os.getenv("TELEGRAM_CHAT_ID", "")
 
@@ -141,15 +143,72 @@ def _load_tracker() -> list[dict]:
 def _save_tracker(data: list[dict]) -> None:
     TRACKER_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False))
 
-def tracker_add(symbol: str, pair: str, signal_price: float, entry_price: float, ex_name: str):
+def tracker_add(symbol: str, pair: str, signal_price: float, entry_price: float,
+                ex_name: str, source: str = "bot"):
     data = _load_tracker()
     data.append({
         "symbol": symbol, "pair": pair, "exchange": ex_name,
         "signal_price": signal_price, "entry_price": entry_price,
         "signal_time": time.time(), "signal_str": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "source": source,
         "checkpoints": {},
     })
     _save_tracker(data)
+
+_MANUAL_SCAN_FILE = BASE_DIR / "manual_trades_seen.json"
+
+def _load_seen_trades() -> set:
+    if _MANUAL_SCAN_FILE.exists():
+        try:
+            return set(json.loads(_MANUAL_SCAN_FILE.read_text()))
+        except Exception:
+            pass
+    return set()
+
+def _save_seen_trades(seen: set) -> None:
+    _MANUAL_SCAN_FILE.write_text(json.dumps(list(seen)[-2000:]))
+
+def scan_manual_trades():
+    seen = _load_seen_trades()
+    state = load_state()
+    bot_pairs = set(state.open_positions.keys())
+    new_found = 0
+    for ex_name, ex in _exchanges.items():
+        try:
+            since_ms = int((time.time() - 86400 * 7) * 1000)
+            trades = ex.fetch_my_trades(None, since=since_ms, limit=100)
+        except Exception:
+            try:
+                trades = ex.fetch_my_trades(None, limit=50)
+            except Exception:
+                continue
+        buys = {}
+        for t in trades:
+            if t.get("side") != "buy":
+                continue
+            tid = f"{ex_name}_{t.get('id', t.get('timestamp', ''))}"
+            if tid in seen:
+                continue
+            seen.add(tid)
+            pair = t.get("symbol", "")
+            if not pair or "/USDT" not in pair:
+                continue
+            if pair in bot_pairs:
+                continue
+            if pair not in buys:
+                buys[pair] = {"qty": 0, "cost": 0, "ts": t["timestamp"] / 1000}
+            buys[pair]["qty"] += float(t.get("amount", 0))
+            buys[pair]["cost"] += float(t.get("cost", 0))
+        for pair, info in buys.items():
+            if info["cost"] < 5:
+                continue
+            avg_price = info["cost"] / info["qty"] if info["qty"] > 0 else 0
+            symbol = pair.split("/")[0]
+            tracker_add(symbol, pair, avg_price, avg_price, ex_name, source="manual")
+            new_found += 1
+            log(f"📝 شراء يدوي مكتشف: {pair} [{ex_name}] @ ${avg_price:.4f} (${info['cost']:.0f})")
+    _save_seen_trades(seen)
+    return new_found
 
 def tracker_update():
     data = _load_tracker()
@@ -169,6 +228,10 @@ def tracker_update():
                 continue
             ex = _exchanges.get(rec.get("exchange"))
             if not ex:
+                for e in _exchanges.values():
+                    if rec["pair"] in getattr(e, "markets", {}):
+                        ex = e; break
+            if not ex:
                 continue
             try:
                 ticker = ex.fetch_ticker(rec["pair"])
@@ -186,6 +249,15 @@ def tracker_update():
     if changed:
         _save_tracker(data)
 
+def _calc_avg_checkpoints(records: list[dict]) -> dict:
+    avg = {}
+    for cp_min in _TRACK_CHECKPOINTS:
+        cp_key = f"{cp_min}m"
+        vals = [r["checkpoints"][cp_key]["diff_pct"] for r in records if cp_key in r.get("checkpoints", {})]
+        if vals:
+            avg[cp_key] = round(sum(vals) / len(vals), 2)
+    return avg
+
 def tracker_report() -> str:
     data = _load_tracker()
     if not data:
@@ -193,25 +265,25 @@ def tracker_report() -> str:
     complete = [r for r in data if len(r.get("checkpoints", {})) >= len(_TRACK_CHECKPOINTS)]
     if not complete:
         return ""
-    avg = {}
-    for cp_min in _TRACK_CHECKPOINTS:
-        cp_key = f"{cp_min}m"
-        vals = [r["checkpoints"][cp_key]["diff_pct"] for r in complete if cp_key in r.get("checkpoints", {})]
-        if vals:
-            avg[cp_key] = round(sum(vals) / len(vals), 2)
-    if not avg:
-        return ""
-    lines = [f"📊 تحليل ذاتي ({len(complete)} توصية مكتملة):"]
     labels = {"30m": "30 دقيقة", "60m": "ساعة", "120m": "ساعتين", "240m": "4 ساعات", "1440m": "24 ساعة"}
-    for k, v in avg.items():
-        sign = "+" if v >= 0 else ""
-        lines.append(f"  بعد {labels.get(k, k)}: {sign}{v}%")
-    dip_30 = avg.get("30m", 0)
-    dip_60 = avg.get("60m", 0)
-    rise_240 = avg.get("240m", 0)
-    if dip_30 < -1 and rise_240 > dip_30:
-        lines.append(f"  💡 نمط: انخفاض {dip_30}% ثم ارتداد — الدخول المتأخر أفضل")
-    return "\n".join(lines)
+    lines = []
+    bot_recs = [r for r in complete if r.get("source", "bot") == "bot"]
+    manual_recs = [r for r in complete if r.get("source") == "manual"]
+    for group_name, recs in [("توصيات البوت", bot_recs), ("شراء يدوي", manual_recs), ("الكل", complete)]:
+        if not recs:
+            continue
+        avg = _calc_avg_checkpoints(recs)
+        if not avg:
+            continue
+        lines.append(f"\n📊 {group_name} ({len(recs)} صفقة):")
+        for k, v in avg.items():
+            sign = "+" if v >= 0 else ""
+            lines.append(f"  بعد {labels.get(k, k)}: {sign}{v}%")
+        dip_30 = avg.get("30m", 0)
+        rise_240 = avg.get("240m", 0)
+        if dip_30 < -1 and rise_240 > dip_30:
+            lines.append(f"  💡 نمط: انخفاض {dip_30}% ثم ارتداد — الدخول المتأخر أفضل")
+    return "\n".join(lines) if lines else ""
 
 def rollover_day(s: State) -> None:
     today = time.strftime("%Y-%m-%d")
@@ -341,8 +413,13 @@ def get_kucoin_exchange():
                          "password": KUCOIN_PASS,
                          "options": {"defaultType": "spot"}})
 
+def get_gate_exchange():
+    import ccxt
+    return ccxt.gateio({"apiKey": GATE_KEY, "secret": GATE_SECRET,
+                         "options": {"defaultType": "spot"}})
+
 _exchanges: dict = {}
-_EXCHANGE_PRIORITY = ["bybit", "kucoin"]
+_EXCHANGE_PRIORITY = ["bybit", "kucoin", "gateio"]
 
 def find_pair_exchange(symbol: str):
     for name in _EXCHANGE_PRIORITY:
@@ -1115,6 +1192,14 @@ async def main():
         except Exception as e:
             log(f"خطأ KuCoin: {e}")
 
+    if GATE_KEY:
+        try:
+            gate = get_gate_exchange(); gate.load_markets()
+            _exchanges["gateio"] = gate
+            log("Gate.io متصل")
+        except Exception as e:
+            log(f"خطأ Gate: {e}")
+
     if not _exchanges:
         log("خطأ: لا منصة متصلة!"); return
     log(f"المنصات: {', '.join(_exchanges.keys())}")
@@ -1195,6 +1280,15 @@ async def main():
             except Exception as e:
                 log(f"خطأ في فحص التعزيزات: {e}")
 
+    async def manual_trade_scanner():
+        await asyncio.sleep(60)
+        while True:
+            try:
+                scan_manual_trades()
+            except Exception as e:
+                log(f"خطأ مسح يدوي: {e}")
+            await asyncio.sleep(3600)
+
     async def tracker_reporter():
         while True:
             await asyncio.sleep(86400)
@@ -1207,6 +1301,7 @@ async def main():
 
     asyncio.create_task(position_checker())
     asyncio.create_task(reinforcement_checker())
+    asyncio.create_task(manual_trade_scanner())
     asyncio.create_task(tracker_reporter())
     log(f"Listening... (cap=${CAPITAL}, "
         f"sizing=dynamic(×0.7-×1.5), phase={PHASE1_RATIO:.0%}+{1-PHASE1_RATIO:.0%}@{PHASE2_DELAY_MIN}min, "
@@ -1228,11 +1323,14 @@ if __name__ == "__main__":
         sys.exit(0)
     if "--tracker" in sys.argv:
         data = _load_tracker()
-        print(f"توصيات متتبعة: {len(data)}")
+        bot_count = sum(1 for r in data if r.get("source", "bot") == "bot")
+        manual_count = sum(1 for r in data if r.get("source") == "manual")
+        print(f"توصيات متتبعة: {len(data)} (بوت: {bot_count} | يدوي: {manual_count})")
         for r in data:
             cps = r.get("checkpoints", {})
             cp_str = " | ".join(f"{k}: {v['diff_pct']:+.1f}%" for k, v in sorted(cps.items()))
-            print(f"  {r['symbol']} @ ${r['signal_price']} ({r['signal_str']}) — {cp_str or 'قيد التتبع'}")
+            src = "🤖" if r.get("source", "bot") == "bot" else "👤"
+            print(f"  {src} {r['symbol']} [{r.get('exchange','')}] @ ${r['signal_price']} ({r['signal_str']}) — {cp_str or 'قيد التتبع'}")
         report = tracker_report()
         if report:
             print(f"\n{report}")
@@ -1253,6 +1351,12 @@ if __name__ == "__main__":
                 exchanges["kucoin"] = ex; print("KuCoin متصل")
             except Exception as e:
                 print(f"خطأ KuCoin: {e}")
+        if GATE_KEY:
+            try:
+                ex = get_gate_exchange(); ex.load_markets()
+                exchanges["gateio"] = ex; print("Gate.io متصل")
+            except Exception as e:
+                print(f"خطأ Gate: {e}")
         state = load_state()
         all_trades = []
         for t in state.trade_history:
