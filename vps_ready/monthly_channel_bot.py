@@ -1237,4 +1237,90 @@ if __name__ == "__main__":
         if report:
             print(f"\n{report}")
         sys.exit(0)
+    if "--backfill" in sys.argv:
+        import ccxt
+        print("جاري تحليل الصفقات السابقة من بيانات المنصة...")
+        exchanges = {}
+        if BYBIT_KEY:
+            try:
+                ex = get_exchange(); ex.load_markets()
+                exchanges["bybit"] = ex; print("Bybit متصل")
+            except Exception as e:
+                print(f"خطأ Bybit: {e}")
+        if KUCOIN_KEY:
+            try:
+                ex = get_kucoin_exchange(); ex.load_markets()
+                exchanges["kucoin"] = ex; print("KuCoin متصل")
+            except Exception as e:
+                print(f"خطأ KuCoin: {e}")
+        state = load_state()
+        all_trades = []
+        for t in state.trade_history:
+            all_trades.append({
+                "symbol": t["pair"].split("/")[0], "pair": t["pair"],
+                "entry_price": t["entry"], "closed_price": t.get("exit"),
+                "opened": t.get("opened", 0),
+                "opened_str": t.get("opened_str", t.get("closed", "")),
+                "exchange": t.get("exchange", "bybit"),
+            })
+        for pair, pos in state.open_positions.items():
+            all_trades.append({
+                "symbol": pos.get("symbol", pair.split("/")[0]), "pair": pair,
+                "entry_price": pos["entry"], "closed_price": None,
+                "opened": pos.get("opened", 0),
+                "opened_str": pos.get("opened_str", ""),
+                "exchange": pos.get("exchange", "bybit"),
+            })
+        data = _load_tracker()
+        existing_keys = {(r["symbol"], r.get("signal_str", "")) for r in data}
+        added = 0
+        for trade in all_trades:
+            pair = trade["pair"]
+            ex_name = trade["exchange"]
+            ex = exchanges.get(ex_name)
+            if not ex:
+                ex = next(iter(exchanges.values()), None)
+            if not ex or pair not in ex.markets:
+                print(f"  {pair} — غير موجود في المنصة"); continue
+            entry_ts = trade["opened"]
+            if not entry_ts:
+                print(f"  {pair} — بدون وقت دخول"); continue
+            entry_str = trade["opened_str"]
+            if (trade["symbol"], entry_str) in existing_keys:
+                print(f"  {pair} — موجود بالفعل"); continue
+            print(f"  {pair} — جاري جلب البيانات...", end=" ")
+            try:
+                since_ms = int(entry_ts * 1000)
+                candles = ex.fetch_ohlcv(pair, "15m", since=since_ms, limit=200)
+                if not candles:
+                    print("لا توجد بيانات"); continue
+            except Exception as e:
+                print(f"خطأ: {e}"); continue
+            entry_price = trade["entry_price"]
+            rec = {
+                "symbol": trade["symbol"], "pair": pair, "exchange": ex_name,
+                "signal_price": entry_price, "entry_price": entry_price,
+                "signal_time": entry_ts, "signal_str": entry_str,
+                "checkpoints": {},
+            }
+            for cp_min in _TRACK_CHECKPOINTS:
+                target_ts = entry_ts + cp_min * 60
+                best = min(candles, key=lambda c: abs(c[0]/1000 - target_ts))
+                if abs(best[0]/1000 - target_ts) < cp_min * 60 * 0.5:
+                    price = best[4]
+                    diff_pct = round((price - entry_price) / entry_price * 100, 2)
+                    rec["checkpoints"][f"{cp_min}m"] = {
+                        "price": price, "diff_pct": diff_pct,
+                        "time": time.strftime("%Y-%m-%d %H:%M", time.gmtime(best[0]/1000)),
+                    }
+            data.append(rec)
+            added += 1
+            cp_str = " | ".join(f"{k}: {v['diff_pct']:+.1f}%" for k, v in sorted(rec["checkpoints"].items()))
+            print(f"✓ {cp_str}")
+        _save_tracker(data)
+        print(f"\nتم إضافة {added} صفقة")
+        report = tracker_report()
+        if report:
+            print(f"\n{report}")
+        sys.exit(0)
     asyncio.run(main())
