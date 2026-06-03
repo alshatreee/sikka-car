@@ -131,6 +131,19 @@ def vbt_analyze_signals(exchanges: dict):
         log("لا توجد بيانات تتبع"); return None
 
     tracker = json.loads(TRACKER_FILE.read_text())
+
+    _STABLECOINS = {"USDC", "USDT", "BUSD", "DAI", "TUSD", "FDUSD"}
+    tracker = [r for r in tracker if r.get("symbol", "").upper() not in _STABLECOINS]
+
+    seen_keys = set()
+    unique_tracker = []
+    for r in tracker:
+        key = (r.get("symbol", ""), r.get("exchange", ""), round(r.get("signal_time", 0), -2))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unique_tracker.append(r)
+    tracker = unique_tracker
+
     if len(tracker) < 2:
         log(f"بيانات غير كافية ({len(tracker)} توصية — نحتاج 2+)"); return None
 

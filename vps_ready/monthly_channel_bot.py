@@ -24,6 +24,7 @@ BASE_DIR.mkdir(parents=True, exist_ok=True)
 ENV_FILE, STATE_FILE, LOG_FILE, TRACKER_FILE = (
     BASE_DIR / ".env_monthly", BASE_DIR / "monthly_state.json", BASE_DIR / "monthly.log",
     BASE_DIR / "signal_tracker.json")
+ML_RECOMMENDATIONS_FILE = BASE_DIR / "ml_recommendations.json"
 load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
 
 # ---------- config ----------
@@ -47,7 +48,7 @@ CAPITAL      = float(os.getenv("MONTHLY_CAPITAL", "1000"))
 TRADE_PCT    = float(os.getenv("MONTHLY_TRADE_PCT", "10"))
 TRADE_SIZE   = CAPITAL * TRADE_PCT / 100
 SL_PCT       = float(os.getenv("MONTHLY_SL_PCT", "5.0"))
-CATASTROPHIC_SL_PCT = float(os.getenv("MONTHLY_CATASTROPHIC_SL", "20.0"))
+CATASTROPHIC_SL_PCT = float(os.getenv("MONTHLY_CATASTROPHIC_SL", "10.0"))
 MAX_HOLD_DAYS = int(os.getenv("MONTHLY_MAX_HOLD_DAYS", "0"))
 MAX_DAILY_TRADES = 10
 MAX_OPEN = 10
@@ -66,8 +67,8 @@ MAX_CONSECUTIVE_LOSSES = int(os.getenv("MONTHLY_MAX_CONSEC_LOSSES", "3"))
 TRAILING_STOP_ACTIVATE_PCT = float(os.getenv("MONTHLY_TRAIL_ACTIVATE", "999"))
 TRAILING_STOP_DISTANCE_PCT = float(os.getenv("MONTHLY_TRAIL_DISTANCE", "3.0"))
 MAX_CONCURRENT = int(os.getenv("MONTHLY_MAX_CONCURRENT", "5"))
-PHASE1_RATIO = float(os.getenv("MONTHLY_PHASE1_RATIO", "0.6"))
-PHASE2_DELAY_MIN = int(os.getenv("MONTHLY_PHASE2_DELAY", "60"))
+PHASE1_RATIO = float(os.getenv("MONTHLY_PHASE1_RATIO", "0.4"))
+PHASE2_DELAY_MIN = int(os.getenv("MONTHLY_PHASE2_DELAY", "120"))
 ATR_PERIOD = int(os.getenv("MONTHLY_ATR_PERIOD", "14"))
 ATR_SL_MULTIPLIER = float(os.getenv("MONTHLY_ATR_SL_MULT", "2.0"))
 CHECK_INTERVAL = 300
@@ -128,6 +129,30 @@ def load_state() -> State:
 
 def save_state(s: State) -> None:
     STATE_FILE.write_text(json.dumps(asdict(s), indent=2, ensure_ascii=False))
+
+# ---------- ML recommendations ----------
+_ml_recs_cache: dict = {}
+_ml_recs_ts: float = 0
+
+def _load_ml_recommendations() -> dict:
+    global _ml_recs_cache, _ml_recs_ts
+    if time.time() - _ml_recs_ts < 3600 and _ml_recs_cache:
+        return _ml_recs_cache
+    if ML_RECOMMENDATIONS_FILE.exists():
+        try:
+            _ml_recs_cache = json.loads(ML_RECOMMENDATIONS_FILE.read_text())
+            _ml_recs_ts = time.time()
+        except Exception:
+            pass
+    return _ml_recs_cache
+
+def get_smart_phase2_delay(symbol: str) -> int:
+    recs = _load_ml_recommendations()
+    per_sym = recs.get("per_symbol", {}).get(symbol, {})
+    optimal = per_sym.get("optimal_delay_min")
+    if optimal and optimal > PHASE2_DELAY_MIN:
+        return min(int(optimal), 360)
+    return PHASE2_DELAY_MIN
 
 # ---------- signal tracker (self-learning phase 1) ----------
 _TRACK_CHECKPOINTS = [30, 60, 120, 240, 1440]  # minutes
@@ -192,6 +217,9 @@ def scan_manual_trades():
             seen.add(tid)
             pair = t.get("symbol", "")
             if not pair or "/USDT" not in pair:
+                continue
+            base_sym = pair.split("/")[0].upper()
+            if base_sym in ("USDC", "USDT", "BUSD", "DAI", "TUSD", "FDUSD"):
                 continue
             if pair in bot_pairs:
                 continue
@@ -908,8 +936,10 @@ async def check_phase2(state: State):
         if phase2_size < MIN_TRADE_USDT:
             pos["phase2_done"] = True; save_state(state); continue
 
+        symbol = pos.get("symbol", pair.split("/")[0])
+        smart_delay = get_smart_phase2_delay(symbol)
         elapsed_min = (time.time() - pos["opened"]) / 60
-        if elapsed_min < PHASE2_DELAY_MIN:
+        if elapsed_min < smart_delay:
             continue
 
         ex_name = pos.get("exchange", "bybit")
