@@ -619,7 +619,7 @@ def partial_rebuy(state, pair: str, price: float, exchange):
 
     new_qty = pos["qty"] + rebuy_qty
 
-    if not PAPER_MODE:
+    if not PAPER_MODE and pos.get("sl"):
         new_sl_oid = place_stop_loss(exchange, pair, new_qty, pos["sl"])
         pos["sl_order_id"] = new_sl_oid
 
