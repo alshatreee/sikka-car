@@ -1576,4 +1576,51 @@ if __name__ == "__main__":
                 t_count = len(pos.get("targets", []))
                 print(f"  {pos.get('symbol', '?')} ({pair}) — أهداف: {t_count or 'لا يوجد'}")
         sys.exit(0)
-    asyncio.run(main())
+    if "--sell" in sys.argv:
+        idx = sys.argv.index("--sell")
+        if idx + 1 >= len(sys.argv):
+            print("الاستخدام: --sell SYMBOL")
+            sys.exit(1)
+        symbol = sys.argv[idx + 1].upper()
+        state = load_state()
+        found = False
+        for pair, pos in list(state.open_positions.items()):
+            if pos.get("symbol", pair.split("/")[0]).upper() == symbol:
+                ex_name = pos.get("exchange", "bybit")
+                import ccxt
+                if ex_name == "bybit":
+                    ex = get_exchange(); ex.load_markets()
+                elif ex_name == "kucoin":
+                    ex = get_kucoin_exchange(); ex.load_markets()
+                elif ex_name == "gateio":
+                    ex = get_gate_exchange(); ex.load_markets()
+                else:
+                    print(f"❌ منصة غير معروفة: {ex_name}"); sys.exit(1)
+                price = float(ex.fetch_ticker(pair).get("last", 0))
+                if price <= 0:
+                    print(f"❌ تعذر جلب سعر {pair}"); sys.exit(1)
+                print(f"بيع {pair} @ {price} على {ex_name}...")
+                order = spot_sell(ex, pair, pos["qty"])
+                if order:
+                    pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
+                    pnl = (price - pos["entry"]) * pos["qty"]
+                    state.trade_history.append({
+                        "pair": pair, "entry": pos["entry"], "exit": price,
+                        "pnl": round(pnl, 4), "pnl_pct": round(pnl_pct, 2),
+                        "reason": "بيع يدوي (CLI)", "exchange": ex_name,
+                        "opened_str": pos.get("opened_str", ""),
+                        "closed": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    })
+                    del state.open_positions[pair]
+                    save_state(state)
+                    sign = "+" if pnl >= 0 else ""
+                    print(f"✅ تم بيع {pair} @ {price} | ربح: {sign}{pnl_pct:.1f}% (${sign}{pnl:.2f})")
+                    msg = f"بيع يدوي: {pair}\nسعر: {price} ({sign}{pnl_pct:.1f}%)\nربح: ${sign}{pnl:.2f}"
+                    notify(msg)
+                else:
+                    print(f"❌ فشل بيع {pair}")
+                found = True
+                break
+        if not found:
+            print(f"❌ {symbol} غير موجود في المراكز المفتوحة")
+        sys.exit(0)
