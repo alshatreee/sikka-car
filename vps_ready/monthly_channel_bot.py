@@ -157,6 +157,8 @@ def get_smart_phase2_delay(symbol: str) -> int:
 # ---------- signal tracker (self-learning phase 1) ----------
 _TRACK_CHECKPOINTS = [30, 60, 120, 240, 1440]  # minutes
 
+_STABLECOINS = {"USDC", "USDT", "BUSD", "DAI", "TUSD", "FDUSD"}
+
 def _load_tracker() -> list[dict]:
     if TRACKER_FILE.exists():
         try:
@@ -164,6 +166,17 @@ def _load_tracker() -> list[dict]:
         except Exception:
             pass
     return []
+
+def _clean_tracker(data: list[dict]) -> list[dict]:
+    cleaned = [r for r in data if r.get("symbol", "").upper() not in _STABLECOINS]
+    seen = set()
+    unique = []
+    for r in cleaned:
+        key = (r.get("symbol", ""), r.get("exchange", ""), r.get("signal_str", ""))
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+    return unique
 
 def _save_tracker(data: list[dict]) -> None:
     TRACKER_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False))
@@ -219,7 +232,7 @@ def scan_manual_trades():
             if not pair or "/USDT" not in pair:
                 continue
             base_sym = pair.split("/")[0].upper()
-            if base_sym in ("USDC", "USDT", "BUSD", "DAI", "TUSD", "FDUSD"):
+            if base_sym in _STABLECOINS:
                 continue
             if pair in bot_pairs:
                 continue
@@ -1435,6 +1448,14 @@ if __name__ == "__main__":
         report = compute_stats(state.trade_history)
         clean = report.replace("<b>","").replace("</b>","")
         print(clean)
+        sys.exit(0)
+    if "--clean-tracker" in sys.argv:
+        data = _load_tracker()
+        before = len(data)
+        data = _clean_tracker(data)
+        after = len(data)
+        _save_tracker(data)
+        print(f"✅ تنظيف التراكر: {before} → {after} (حذف {before - after})")
         sys.exit(0)
     if "--tracker" in sys.argv:
         data = _load_tracker()
