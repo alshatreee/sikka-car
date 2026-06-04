@@ -168,14 +168,18 @@ def _load_tracker() -> list[dict]:
     return []
 
 def _clean_tracker(data: list[dict]) -> list[dict]:
+    """حذف العملات المستقرة والتكرارات — يحتفظ بأقدم سجل لكل (عملة، منصة)."""
     cleaned = [r for r in data if r.get("symbol", "").upper() not in _STABLECOINS]
-    seen = set()
+    seen_keys = set()
     unique = []
     for r in cleaned:
-        key = (r.get("symbol", ""), r.get("exchange", ""))
-        if key not in seen:
-            seen.add(key)
-            unique.append(r)
+        sym = r.get("symbol", "").upper()
+        ex = r.get("exchange", "")
+        key = (sym, ex)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        unique.append(r)
     return unique
 
 def _save_tracker(data: list[dict]) -> None:
