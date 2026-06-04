@@ -1649,3 +1649,4 @@ if __name__ == "__main__":
         if not found:
             print(f"❌ {symbol} غير موجود في المراكز المفتوحة")
         sys.exit(0)
+    asyncio.run(main())
