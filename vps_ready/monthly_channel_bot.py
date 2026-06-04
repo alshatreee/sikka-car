@@ -172,7 +172,7 @@ def _clean_tracker(data: list[dict]) -> list[dict]:
     seen = set()
     unique = []
     for r in cleaned:
-        key = (r.get("symbol", ""), r.get("exchange", ""), r.get("signal_str", ""))
+        key = (r.get("symbol", ""), r.get("exchange", ""))
         if key not in seen:
             seen.add(key)
             unique.append(r)
