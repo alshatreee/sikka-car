@@ -69,6 +69,13 @@ TRAILING_STOP_DISTANCE_PCT = float(os.getenv("MONTHLY_TRAIL_DISTANCE", "3.0"))
 MAX_CONCURRENT = int(os.getenv("MONTHLY_MAX_CONCURRENT", "5"))
 PHASE1_RATIO = float(os.getenv("MONTHLY_PHASE1_RATIO", "0.4"))
 PHASE2_DELAY_MIN = int(os.getenv("MONTHLY_PHASE2_DELAY", "120"))
+ENTRY_PHASES = [
+    {"ratio": 0.25, "delay_min": 0},
+    {"ratio": 0.25, "delay_min": 60},
+    {"ratio": 0.25, "delay_min": 150},
+    {"ratio": 0.25, "delay_min": 300},
+]
+PHASE_CANCEL_RISE_PCT = float(os.getenv("MONTHLY_PHASE_CANCEL_RISE", "5.0"))
 ATR_PERIOD = int(os.getenv("MONTHLY_ATR_PERIOD", "14"))
 ATR_SL_MULTIPLIER = float(os.getenv("MONTHLY_ATR_SL_MULT", "2.0"))
 CHECK_INTERVAL = 300
@@ -803,8 +810,15 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
     if trade_size < MIN_TRADE_USDT:
         log(f"رصيد غير كافٍ: ${trade_size:.2f} < ${MIN_TRADE_USDT}"); return False
 
-    phase1_size = round(trade_size * PHASE1_RATIO, 2)
-    phase2_size = round(trade_size - phase1_size, 2)
+    phase1_ratio = ENTRY_PHASES[0]["ratio"] if ENTRY_PHASES else 0.25
+    phase1_size = round(trade_size * phase1_ratio, 2)
+    remaining_phases = []
+    for i, ph in enumerate(ENTRY_PHASES[1:], start=2):
+        remaining_phases.append({
+            "num": i, "ratio": ph["ratio"],
+            "size": round(trade_size * ph["ratio"], 2),
+            "delay_min": ph["delay_min"], "done": False,
+        })
 
     entry, qty = signal.buy_price, phase1_size / signal.buy_price
 
@@ -836,8 +850,7 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         "reason": reason, "exchange": ex_name,
         "swing_base": entry,
         "total_size": trade_size,
-        "phase2_size": phase2_size,
-        "phase2_done": phase2_size <= 0,
+        "phases": remaining_phases,
         "atr_sl": atr_sl,
         "targets": targets_list,
         "targets_hit": 0,
@@ -850,7 +863,8 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
 
     mode = "ورقي" if PAPER_MODE else "حقيقي"
     sl_info = f"ATR={atr_sl:.4f}" if atr_sl else f"ثابت={cat_sl:.4f}"
-    sz_info = f"${phase1_size:.0f}(60%)+${phase2_size:.0f}(40%)" if phase2_size > 0 else f"${trade_size:.0f}"
+    n_phases = 1 + len(remaining_phases)
+    sz_info = f"دفعة 1/{n_phases} ${phase1_size:.0f} من ${trade_size:.0f}"
     msg = (f"صفقة [{mode}] — {reason}\n#{signal.trade_num} | {pair} [{ex_name}]\n"
            f"دخول: {entry} | هدف: {signal.sell_price} ({signal.tp_pct}%)\n"
            f"حجم: {sz_info} | وقف: {sl_info}")
@@ -1022,22 +1036,33 @@ async def check_positions(state: State):
 async def check_phase2(state: State):
     for pair in list(state.open_positions):
         pos = state.open_positions.get(pair)
-        if not pos or pos.get("phase2_done", True):
+        if not pos:
             continue
-        phase2_size = pos.get("phase2_size", 0)
-        if phase2_size < MIN_TRADE_USDT:
-            pos["phase2_done"] = True; save_state(state); continue
 
-        symbol = pos.get("symbol", pair.split("/")[0])
-        smart_delay = get_smart_phase2_delay(symbol)
+        # --- backward compat: old phase2_size/phase2_done positions ---
+        if "phase2_size" in pos and "phases" not in pos:
+            if pos.get("phase2_done", True):
+                continue
+            ps = pos.get("phase2_size", 0)
+            if ps >= MIN_TRADE_USDT:
+                pos["phases"] = [{"num": 2, "ratio": 0, "size": ps,
+                                  "delay_min": PHASE2_DELAY_MIN, "done": False}]
+            else:
+                pos["phase2_done"] = True
+                save_state(state)
+                continue
+
+        phases = pos.get("phases", [])
+        pending = [p for p in phases if not p.get("done")]
+        if not pending:
+            continue
+
         elapsed_min = (time.time() - pos["opened"]) / 60
-        if elapsed_min < smart_delay:
-            continue
-
         ex_name = pos.get("exchange", "bybit")
         exchange = _exchanges.get(ex_name)
         if not exchange:
             continue
+
         try:
             price = _safe_float(exchange.fetch_ticker(pair).get("last"))
             if not price:
@@ -1045,43 +1070,59 @@ async def check_phase2(state: State):
         except Exception:
             continue
 
-        if price > pos["entry"] * 1.03:
-            pos["phase2_done"] = True; save_state(state)
-            log(f"المرحلة 2 ألغيت: {pair} — السعر ارتفع +3% فوق الدخول")
-            continue
+        for phase in pending:
+            if elapsed_min < phase["delay_min"]:
+                break
 
-        if not PAPER_MODE:
-            order = spot_buy(exchange, pair, phase2_size)
-            if not order:
+            phase_size = phase.get("size", 0)
+            if phase_size < MIN_TRADE_USDT:
+                phase["done"] = True
+                save_state(state)
                 continue
-            try:
-                p2_qty = float(order.get("filled") or order.get("amount") or phase2_size / price)
-                p2_price = float(order.get("average") or order.get("price") or price)
-            except (TypeError, ValueError):
-                p2_qty = phase2_size / price
-                p2_price = price
-        else:
-            p2_qty = phase2_size / price
-            p2_price = price
 
-        old_qty = pos["qty"]
-        old_entry = pos["entry"]
-        new_qty = old_qty + p2_qty
-        new_entry = (old_entry * old_qty + p2_price * p2_qty) / new_qty
-        pos["qty"] = new_qty
-        pos["entry"] = round(new_entry, 8)
-        pos["swing_base"] = new_entry
-        pos["phase2_done"] = True
+            if price > pos["entry"] * (1 + PHASE_CANCEL_RISE_PCT / 100):
+                phase["done"] = True
+                save_state(state)
+                total_phases = 1 + len(phases)
+                log(f"دفعة {phase['num']}/{total_phases} ألغيت: {pair} — السعر ارتفع +{PHASE_CANCEL_RISE_PCT}% فوق الدخول")
+                continue
 
-        atr = calc_atr(exchange, pair)
-        if atr:
-            pos["atr_sl"] = round(new_entry - atr * ATR_SL_MULTIPLIER, 8)
+            if not PAPER_MODE:
+                order = spot_buy(exchange, pair, phase_size)
+                if not order:
+                    break
+                try:
+                    p_qty = float(order.get("filled") or order.get("amount") or phase_size / price)
+                    p_price = float(order.get("average") or order.get("price") or price)
+                except (TypeError, ValueError):
+                    p_qty = phase_size / price
+                    p_price = price
+            else:
+                p_qty = phase_size / price
+                p_price = price
 
-        save_state(state)
-        msg = (f"المرحلة 2: {pair}\n"
-               f"شراء إضافي ${phase2_size:.0f} @ {p2_price:.4f}\n"
-               f"متوسط جديد: {new_entry:.4f} | إجمالي: {new_qty:.6f}")
-        log(msg); notify(msg)
+            old_qty = pos["qty"]
+            old_entry = pos["entry"]
+            new_qty = old_qty + p_qty
+            new_entry = (old_entry * old_qty + p_price * p_qty) / new_qty
+            pos["qty"] = new_qty
+            pos["entry"] = round(new_entry, 8)
+            pos["swing_base"] = new_entry
+            phase["done"] = True
+
+            if "phase2_done" in pos:
+                pos["phase2_done"] = True
+
+            atr = calc_atr(exchange, pair)
+            if atr:
+                pos["atr_sl"] = round(new_entry - atr * ATR_SL_MULTIPLIER, 8)
+
+            save_state(state)
+            total_phases = 1 + len(phases)
+            msg = (f"دفعة {phase['num']}/{total_phases}: {pair}\n"
+                   f"شراء إضافي ${phase_size:.0f} @ {p_price:.4f}\n"
+                   f"متوسط جديد: {new_entry:.4f} | إجمالي: {new_qty:.6f}")
+            log(msg); notify(msg)
 
 # ---------- history scanner ----------
 async def scan_history(client, state: State):
@@ -1475,7 +1516,7 @@ async def main():
     asyncio.create_task(manual_trade_scanner())
     asyncio.create_task(tracker_reporter())
     log(f"Listening... (cap=${CAPITAL}, "
-        f"sizing=dynamic(×0.7-×1.5), phase={PHASE1_RATIO:.0%}+{1-PHASE1_RATIO:.0%}@{PHASE2_DELAY_MIN}min, "
+        f"sizing=dynamic(×0.7-×1.5), phases={len(ENTRY_PHASES)}×{ENTRY_PHASES[0]['ratio']:.0%}@{[p['delay_min'] for p in ENTRY_PHASES]}min, "
         f"max_open={MAX_CONCURRENT}, "
         f"SL=ATR×{ATR_SL_MULTIPLIER}/كارثي-{CATASTROPHIC_SL_PCT}%, "
         f"trailing=+{TRAILING_STOP_ACTIVATE_PCT}%→-{TRAILING_STOP_DISTANCE_PCT}%, "
