@@ -71,9 +71,9 @@ PHASE1_RATIO = float(os.getenv("MONTHLY_PHASE1_RATIO", "0.4"))
 PHASE2_DELAY_MIN = int(os.getenv("MONTHLY_PHASE2_DELAY", "120"))
 ENTRY_PHASES = [
     {"ratio": 0.25, "delay_min": 0},
-    {"ratio": 0.25, "delay_min": 60},
-    {"ratio": 0.25, "delay_min": 150},
+    {"ratio": 0.25, "delay_min": 120},
     {"ratio": 0.25, "delay_min": 300},
+    {"ratio": 0.25, "delay_min": 600},
 ]
 PHASE_CANCEL_RISE_PCT = float(os.getenv("MONTHLY_PHASE_CANCEL_RISE", "5.0"))
 ATR_PERIOD = int(os.getenv("MONTHLY_ATR_PERIOD", "14"))
