@@ -918,6 +918,78 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
            f"ربح: {sign}${pnl:.2f} ({sign}{pnl_pct:.1f}%)")
     log(msg); notify(msg)
 
+    if pnl > MIN_TRADE_USDT and state.open_positions:
+        reinvest_profit(state, pnl, pair)
+
+
+def reinvest_profit(state: State, profit: float, closed_pair: str):
+    """بعد ربح — يعزز أكثر عملة نازلة من المراكز المفتوحة."""
+    worst_pair, worst_drop, worst_pos = None, 0, None
+    for p, pos in state.open_positions.items():
+        if p == closed_pair:
+            continue
+        ex = _exchanges.get(pos.get("exchange", "bybit"))
+        if not ex:
+            continue
+        try:
+            price = _safe_float(ex.fetch_ticker(p).get("last"))
+            if not price:
+                continue
+        except Exception:
+            continue
+        drop = (price - pos["entry"]) / pos["entry"] * 100
+        if drop < worst_drop:
+            worst_drop = drop
+            worst_pair = p
+            worst_pos = pos
+
+    if not worst_pair or worst_drop >= 0:
+        log("لا توجد عملة نازلة للتعزيز من الأرباح")
+        return
+
+    ex_name = worst_pos.get("exchange", "bybit")
+    exchange = _exchanges.get(ex_name)
+    reinvest_amt = round(min(profit, BYBIT_TRADE_SIZE if ex_name == "bybit" else KUCOIN_TRADE_SIZE), 2)
+    if reinvest_amt < MIN_TRADE_USDT:
+        return
+
+    try:
+        cur_price = _safe_float(exchange.fetch_ticker(worst_pair).get("last"))
+        if not cur_price:
+            return
+    except Exception:
+        return
+
+    if not PAPER_MODE:
+        order = spot_buy(exchange, worst_pair, reinvest_amt)
+        if not order:
+            log(f"فشل تعزيز {worst_pair} من الأرباح")
+            return
+        try:
+            r_qty = float(order.get("filled") or order.get("amount") or reinvest_amt / cur_price)
+            r_price = float(order.get("average") or order.get("price") or cur_price)
+        except (TypeError, ValueError):
+            r_qty = reinvest_amt / cur_price
+            r_price = cur_price
+    else:
+        r_qty = reinvest_amt / cur_price
+        r_price = cur_price
+
+    old_qty = worst_pos["qty"]
+    old_entry = worst_pos["entry"]
+    new_qty = old_qty + r_qty
+    new_entry = (old_entry * old_qty + r_price * r_qty) / new_qty
+    worst_pos["qty"] = new_qty
+    worst_pos["entry"] = round(new_entry, 8)
+    worst_pos["swing_base"] = new_entry
+    save_state(state)
+
+    msg = (f"تعزيز من أرباح: {worst_pair} (نازل {worst_drop:.1f}%)\n"
+           f"شراء ${reinvest_amt:.0f} @ {r_price:.4f}\n"
+           f"متوسط جديد: {new_entry:.4f} | إجمالي: {new_qty:.6f}")
+    log(msg); notify(msg)
+
+
 def compute_stats(history: list[dict]) -> str:
     """إحصائيات الأداء: نسبة الربح، التوقع الرياضي، الإجمالي"""
     if len(history) < 3:
