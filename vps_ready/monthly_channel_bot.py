@@ -956,14 +956,14 @@ async def check_positions(state: State):
         high_target = pos.get("tp_pct", 0) > 30
         base = pos.get("swing_base", pos["entry"]) if high_target else pos["entry"]
 
-        # 1) وقف خسارة (ATR ذكي أو كارثي ثابت)
-        atr_sl = pos.get("atr_sl")
-        cat_sl = pos["entry"] * (1 - CATASTROPHIC_SL_PCT / 100)
-        effective_sl = max(atr_sl, cat_sl) if atr_sl else cat_sl
-        if price <= effective_sl:
-            sl_type = "ATR" if atr_sl and effective_sl == atr_sl else f"كارثي -{CATASTROPHIC_SL_PCT:.0f}%"
-            close_trade(state, pair, f"وقف {sl_type}", price, exchange)
-            continue
+        # 1) وقف خسارة — معطل حالياً
+        # atr_sl = pos.get("atr_sl")
+        # cat_sl = pos["entry"] * (1 - CATASTROPHIC_SL_PCT / 100)
+        # effective_sl = max(atr_sl, cat_sl) if atr_sl else cat_sl
+        # if price <= effective_sl:
+        #     sl_type = "ATR" if atr_sl and effective_sl == atr_sl else f"كارثي -{CATASTROPHIC_SL_PCT:.0f}%"
+        #     close_trade(state, pair, f"وقف {sl_type}", price, exchange)
+        #     continue
 
         # 2) وقف متحرك — يتفعل بعد ربح +TRAILING_STOP_ACTIVATE_PCT%
         gain_from_entry = (highest - pos["entry"]) / pos["entry"] * 100
