@@ -77,6 +77,8 @@ PAPER_MODE = "--live" not in sys.argv
 HISTORY_DAYS   = int(os.getenv("MONTHLY_HISTORY_DAYS", "30"))
 REINFORCE_PCT  = float(os.getenv("MONTHLY_REINFORCE_PCT", "2.0"))
 REINFORCE_CHECK_SEC = int(os.getenv("MONTHLY_REINFORCE_SEC", "600"))
+SMART_ENTRY_WAIT_MIN = int(os.getenv("MONTHLY_SMART_ENTRY_WAIT", "60"))
+SMART_ENTRY_BOUNCE_PCT = float(os.getenv("MONTHLY_SMART_BOUNCE", "1.0"))
 
 # ---------- logging / notify ----------
 _IS_TTY = sys.stdin and sys.stdin.isatty()
@@ -1112,6 +1114,7 @@ async def scan_history(client, state: State):
                             "key": sig_key, "symbol": signal.symbol,
                             "buy_price": signal.buy_price, "sell_price": signal.sell_price,
                             "tp_pct": signal.tp_pct, "trade_num": signal.trade_num,
+                            "targets": [{"price": t["price"], "pct": t["pct"]} for t in signal.targets] if signal.targets else [],
                             "date": msg.date.strftime("%Y-%m-%d") if msg.date else "",
                         })
                 if signal.reinforcements:
@@ -1184,15 +1187,42 @@ async def check_pending_signals(state: State):
             continue
 
         diff_pct = (price - buy_price) / buy_price * 100
-        if -REINFORCE_PCT <= diff_pct <= REINFORCE_PCT:
+        if price <= buy_price * (1 + REINFORCE_PCT / 100):
+            if "watch_start" not in sig_data:
+                sig_data["watch_start"] = time.time()
+                sig_data["lowest_seen"] = price
+                save_state(state)
+                log(f"مراقبة: {symbol} @ ${price:.4f} (هدف شراء: ${buy_price}) — ننتظر سعر أفضل")
+                continue
+
+            if price < sig_data.get("lowest_seen", price):
+                sig_data["lowest_seen"] = price
+                save_state(state)
+
+            lowest = sig_data["lowest_seen"]
+            elapsed_min = (time.time() - sig_data["watch_start"]) / 60
+            bounced = lowest > 0 and price > lowest * (1 + SMART_ENTRY_BOUNCE_PCT / 100)
+            timed_out = elapsed_min >= SMART_ENTRY_WAIT_MIN
+
+            if not (bounced and elapsed_min >= 10) and not timed_out:
+                continue
+
+            entry_reason = "ارتداد" if bounced else "انتهاء الانتظار"
+            saving = round((buy_price - price) / buy_price * 100, 1)
+
+            sig_targets = sig_data.get("targets", [])
+            sell_price = sig_data.get("sell_price", buy_price * 1.15)
+            tp_pct = sig_data.get("tp_pct", 15)
+
             sig = Signal(
                 trade_num=sig_data.get("trade_num", 0),
                 symbol=symbol,
                 buy_price=price,
-                sell_price=sig_data.get("sell_price", buy_price * 1.15),
-                tp_pct=sig_data.get("tp_pct", 15),
+                sell_price=sell_price,
+                tp_pct=tp_pct,
+                targets=[{"price": t["price"], "pct": t["pct"], "completed": False} for t in sig_targets] if sig_targets else [],
             )
-            log(f"توصية معلّقة! {symbol} @ ${price:.4f} قريب من ${buy_price} (فرق {diff_pct:+.1f}%)")
+            log(f"شراء ذكي: {symbol} @ ${price:.4f} ({entry_reason} | أقل سعر: ${lowest:.4f} | توفير: {saving:+.1f}%)")
             if open_trade(state, sig, reason=f"توصية معلّقة #{sig_data.get('trade_num',0)}"):
                 state.pending_signals.remove(sig_data)
                 state.executed_signals.append(sig_data["key"])
