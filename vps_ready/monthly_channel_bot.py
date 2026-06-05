@@ -1122,6 +1122,7 @@ async def scan_history(client, state: State):
                         entry = {"price": rp, "buy_price": signal.buy_price,
                                  "sell_price": signal.sell_price, "tp_pct": signal.tp_pct,
                                  "trade_num": signal.trade_num,
+                                 "targets": [{"price": t["price"], "pct": t["pct"]} for t in signal.targets] if signal.targets else [],
                                  "date": msg.date.strftime("%Y-%m-%d") if msg.date else ""}
                         if not any(abs(e["price"] - rp) < 0.000001 for e in state.reinforcements[signal.symbol]):
                             state.reinforcements[signal.symbol].append(entry)
@@ -1234,12 +1235,17 @@ async def check_reinforcements(state: State):
                 if key in state.reinforced_keys:
                     continue
 
-                sell_price = entry.get("sell_price", 0)
-                if sell_price <= 0:
-                    sell_price = reinf_price * 1.15
-                tp_pct = entry.get("tp_pct", 0)
-                if tp_pct <= 0:
-                    tp_pct = round((sell_price - reinf_price) / reinf_price * 100, 2)
+                entry_targets = entry.get("targets", [])
+                if entry_targets:
+                    sell_price = entry_targets[-1]["price"]
+                    tp_pct = round((sell_price - price) / price * 100, 2)
+                else:
+                    sell_price = entry.get("sell_price", 0)
+                    if sell_price <= 0:
+                        sell_price = reinf_price * 1.15
+                    tp_pct = entry.get("tp_pct", 0)
+                    if tp_pct <= 0:
+                        tp_pct = round((sell_price - reinf_price) / reinf_price * 100, 2)
 
                 sig = Signal(
                     trade_num=entry.get("trade_num", 0),
@@ -1247,6 +1253,7 @@ async def check_reinforcements(state: State):
                     buy_price=price,
                     sell_price=sell_price,
                     tp_pct=tp_pct,
+                    targets=entry_targets,
                 )
                 log(f"تعزيز! {symbol} @ ${price} قريب من ${reinf_price} (فرق {diff_pct:.1f}%)")
                 if open_trade(state, sig, reason=f"تعزيز @ {reinf_price}"):
@@ -1373,7 +1380,9 @@ async def main():
             for rp in signal.reinforcements:
                 entry = {"price": rp, "buy_price": signal.buy_price,
                          "sell_price": signal.sell_price, "tp_pct": signal.tp_pct,
-                         "trade_num": signal.trade_num, "date": time.strftime("%Y-%m-%d")}
+                         "trade_num": signal.trade_num,
+                         "targets": [{"price": t["price"], "pct": t["pct"]} for t in signal.targets] if signal.targets else [],
+                         "date": time.strftime("%Y-%m-%d")}
                 if not any(abs(e["price"] - rp) < 0.000001 for e in state.reinforcements[signal.symbol]):
                     state.reinforcements[signal.symbol].append(entry)
             log(f"  تعزيزات {signal.symbol}: {signal.reinforcements}")
