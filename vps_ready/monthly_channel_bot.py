@@ -491,7 +491,8 @@ def get_gate_exchange():
                          "options": {"defaultType": "spot"}})
 
 _exchanges: dict = {}
-_EXCHANGE_PRIORITY = ["bybit", "kucoin", "gateio"]
+_EXCHANGE_PRIORITY = ["bybit", "kucoin"]
+_disabled_exchanges: set = {"gateio"}
 
 def find_pair_exchange(symbol: str):
     for name in _EXCHANGE_PRIORITY:
@@ -529,6 +530,9 @@ def _safe_float(*values, default=0.0) -> float:
 
 def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
     """شراء بأمر محدود (0.5% فوق السوق) مع احتياط سوق إذا لم يُنفَّذ خلال 30 ثانية"""
+    ex_id = getattr(exchange, 'id', '')
+    if ex_id in _disabled_exchanges:
+        return None
     try:
         price = _safe_float(exchange.fetch_ticker(pair).get("last"))
         if not price:
@@ -566,7 +570,13 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
             order = exchange.create_market_buy_order(pair, qty)
         return order
     except Exception as e:
-        log(f"خطأ في الشراء: {pair} — {e}"); return None
+        err = str(e)
+        log(f"خطأ في الشراء: {pair} — {e}")
+        if "permission" in err.lower() or "FORBIDDEN" in err:
+            _disabled_exchanges.add(ex_id)
+            log(f"تعطيل الشراء من {ex_id} — صلاحيات ناقصة")
+            notify(f"⚠️ تعطيل الشراء من {ex_id} — مفتاح API بدون صلاحية spot write")
+        return None
 
 def spot_sell(exchange, pair: str, qty: float) -> dict | None:
     try:
