@@ -87,6 +87,13 @@ REINFORCE_CHECK_SEC = int(os.getenv("MONTHLY_REINFORCE_SEC", "600"))
 SMART_ENTRY_WAIT_MIN = int(os.getenv("MONTHLY_SMART_ENTRY_WAIT", "60"))
 SMART_ENTRY_BOUNCE_PCT = float(os.getenv("MONTHLY_SMART_BOUNCE", "1.0"))
 
+# ---------- قنوات المراقبة اليومية ----------
+WATCH_CHANNELS = [
+    "cryptomena1", "arabcharts", "crypto_q88",
+    "ahmadchats", "Naif_Alert", "vipdrprofit",
+]
+DAILY_SUMMARY_HOUR = int(os.getenv("MONTHLY_SUMMARY_HOUR", "21"))
+
 # ---------- logging / notify ----------
 _IS_TTY = sys.stdin and sys.stdin.isatty()
 
@@ -1468,6 +1475,98 @@ def run_check():
         log("اختبار التحليل: فشل!")
     log("=== انتهى الفحص ===")
 
+# ---------- ملخص القنوات اليومي ----------
+_COIN_RE = re.compile(
+    r'(?:(?:\$|#)([A-Z]{2,10}))'           # $BTC or #ETH
+    r'|(?:([A-Z]{2,10})/USDT)'             # BTC/USDT
+    r'|(?:عملة\s+([A-Z]{2,10}))'           # عملة BTC
+    r'|(?:(?:^|\s)([A-Z]{2,10})(?:\s|$))',  # standalone BTC
+    re.MULTILINE,
+)
+_COIN_BLACKLIST = {
+    "THE", "AND", "FOR", "NOT", "BUT", "ALL", "ARE", "WAS", "HAS", "HAD",
+    "CAN", "HER", "HIS", "HOW", "ITS", "LET", "MAY", "NEW", "NOW", "OLD",
+    "OUR", "OUT", "OWN", "SAY", "SHE", "TOO", "USE", "WAY", "WHO", "BOY",
+    "DID", "GET", "HIM", "MAN", "RUN", "TOP", "VIP", "USD", "API", "URL",
+    "APP", "YOU", "ANY", "BIG", "DAY", "END", "FEW", "GOT", "SET", "TRY",
+    "WIN", "YES", "BUY", "PUT", "SELL", "LONG", "SHORT", "STOP", "TAKE",
+    "HOLD", "DROP", "PUMP", "DUMP", "MOON", "BEAR", "BULL", "HIGH", "LOSS",
+    "GAIN", "FREE", "JOIN", "LINK", "SPOT", "FUTURES", "SPOT", "ATR", "RSI",
+    "MACD", "EMA", "SMA", "NEWS", "ALERT", "UPDATE", "NOTE", "WARNING",
+}
+_SIGNAL_KEYWORDS = [
+    (r"شراء|دخول|شراء قوي|صفقة شراء|long", "شراء"),
+    (r"بيع|خروج|صفقة بيع|short", "بيع"),
+    (r"هدف|TP|target|تيك بروفت", "هدف"),
+    (r"وقف|SL|stop.?loss|ستوب", "وقف خسارة"),
+    (r"تعزيز|reinforc", "تعزيز"),
+    (r"تحذير|warning|خطر|حذر", "تحذير"),
+]
+
+
+async def scan_watch_channels(client) -> str:
+    from collections import Counter
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    coin_mentions = Counter()
+    channel_summaries = {}
+    signals_found = []
+
+    for ch_name in WATCH_CHANNELS:
+        try:
+            entity = await client.get_entity(ch_name)
+        except Exception:
+            continue
+
+        msgs = []
+        msg_count = 0
+        try:
+            async for msg in client.iter_messages(entity, offset_date=since, reverse=True):
+                if not msg.text:
+                    continue
+                msg_count += 1
+                text = msg.text
+                msgs.append(text)
+
+                for m in _COIN_RE.finditer(text):
+                    coin = (m.group(1) or m.group(2) or m.group(3) or m.group(4) or "").upper()
+                    if coin and len(coin) >= 2 and coin not in _COIN_BLACKLIST:
+                        coin_mentions[coin] += 1
+
+                for pat, label in _SIGNAL_KEYWORDS:
+                    if re.search(pat, text, re.IGNORECASE):
+                        coin_m = _COIN_RE.search(text)
+                        if coin_m:
+                            c = (coin_m.group(1) or coin_m.group(2) or coin_m.group(3) or coin_m.group(4) or "").upper()
+                            if c and c not in _COIN_BLACKLIST:
+                                signals_found.append(f"{c} ({label})")
+                        break
+        except Exception:
+            continue
+
+        if msg_count > 0:
+            ch_title = getattr(entity, 'title', ch_name)
+            channel_summaries[ch_title] = msg_count
+
+    if not coin_mentions:
+        return ""
+
+    top_coins = coin_mentions.most_common(10)
+    coins_str = " | ".join(f"{c}: {n}×" for c, n in top_coins)
+
+    ch_str = "\n".join(f"  {ch}: {n} رسالة" for ch, n in channel_summaries.items())
+
+    unique_signals = list(dict.fromkeys(signals_found))[:10]
+    sig_str = "، ".join(unique_signals) if unique_signals else "لا توجد"
+
+    summary = (
+        f"<b>📊 ملخص القنوات اليومي</b>\n\n"
+        f"<b>أكثر العملات ذكراً:</b>\n{coins_str}\n\n"
+        f"<b>إشارات:</b> {sig_str}\n\n"
+        f"<b>القنوات ({len(channel_summaries)}):</b>\n{ch_str}"
+    )
+    return summary
+
+
 # ---------- main ----------
 async def main():
     if "--check" in sys.argv:
@@ -1605,10 +1704,27 @@ async def main():
             except Exception:
                 pass
 
+    async def daily_channel_summary():
+        while True:
+            now = datetime.now()
+            target = now.replace(hour=DAILY_SUMMARY_HOUR, minute=0, second=0)
+            if now >= target:
+                target += timedelta(days=1)
+            wait_sec = (target - now).total_seconds()
+            await asyncio.sleep(wait_sec)
+            try:
+                summary = await scan_watch_channels(client)
+                if summary:
+                    log("ملخص القنوات اليومي أُرسل")
+                    notify(summary)
+            except Exception as e:
+                log(f"خطأ ملخص القنوات: {e}")
+
     asyncio.create_task(position_checker())
     asyncio.create_task(reinforcement_checker())
     asyncio.create_task(manual_trade_scanner())
     asyncio.create_task(tracker_reporter())
+    asyncio.create_task(daily_channel_summary())
     log(f"Listening... (cap=${CAPITAL}, "
         f"sizing=dynamic(×0.7-×1.5), phases={len(ENTRY_PHASES)}×{ENTRY_PHASES[0]['ratio']:.0%}@{[p['delay_min'] for p in ENTRY_PHASES]}min, "
         f"max_open={MAX_CONCURRENT}, "
