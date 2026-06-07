@@ -1536,6 +1536,11 @@ _COIN_BLACKLIST = {
     "HOLD", "DROP", "PUMP", "DUMP", "MOON", "BEAR", "BULL", "HIGH", "LOSS",
     "GAIN", "FREE", "JOIN", "LINK", "SPOT", "FUTURES", "SPOT", "ATR", "RSI",
     "MACD", "EMA", "SMA", "NEWS", "ALERT", "UPDATE", "NOTE", "WARNING",
+    "CONFIRMED", "BOTTOM", "BREAK", "ENTRY", "EXIT", "CHART", "PRICE",
+    "MARKET", "TRADE", "ORDER", "LIMIT", "DAILY", "WEEKLY", "MONTHLY",
+    "OPEN", "CLOSE", "ABOVE", "BELOW", "SUPPORT", "RESISTANCE", "LEVEL",
+    "RISK", "SIGNAL", "PROFIT", "TARGET", "SETUP", "TREND", "ZONE",
+    "FTX", "CEX", "DEX", "NFT", "ETF", "SEC", "IPO", "OTC", "ICO",
 }
 _SIGNAL_KEYWORDS = [
     (r"شراء|دخول|شراء قوي|صفقة شراء|long", "شراء"),
