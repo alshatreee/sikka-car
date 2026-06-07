@@ -99,15 +99,15 @@ logger = logging.getLogger("daytrading")
 logger.setLevel(logging.INFO)
 logger.propagate = False
 _fmt = logging.Formatter("[%(asctime)s] %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
-_sh = logging.StreamHandler()
-_sh.setFormatter(_fmt)
-logger.addHandler(_sh)
+# Only add file handler (avoid duplicate when nohup redirects stdout to same file)
 try:
     _fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
     _fh.setFormatter(_fmt)
     logger.addHandler(_fh)
 except Exception:
-    pass
+    _sh = logging.StreamHandler()
+    _sh.setFormatter(_fmt)
+    logger.addHandler(_sh)
 
 
 # ── Telegram ──
@@ -511,6 +511,7 @@ class DayState:
     wins: int = 0
     losses: int = 0
     history: list = field(default_factory=list)
+    mode: str = "PAPER"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -821,7 +822,7 @@ def show_status():
     print(f"\n{'═' * 50}")
     print(f"  DAY TRADING BOT STATUS")
     print(f"{'═' * 50}")
-    print(f"  Mode: {'PAPER' if PAPER_MODE else 'LIVE'}")
+    print(f"  Mode: {st.mode}")
     print(f"  Daily PnL: ${st.daily_pnl:+.2f} | Total PnL: ${st.total_pnl:+.2f}")
     print(f"  Today's trades: {st.daily_trades}/{MAX_DAILY_TRADES}")
     print(f"  Win/Loss: {st.wins}/{st.losses} "
@@ -888,6 +889,8 @@ def main():
            f"Watchlist: {len(WATCHLIST)} coins")
 
     st = load_state()
+    st.mode = mode
+    save_state(st)
 
     while True:
         try:
