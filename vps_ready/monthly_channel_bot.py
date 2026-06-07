@@ -2059,4 +2059,111 @@ if __name__ == "__main__":
         if not found:
             print(f"❌ {symbol} غير موجود في المراكز المفتوحة")
         sys.exit(0)
+    if "--recover" in sys.argv:
+        async def _recover():
+            from telethon import TelegramClient
+            RECOVER_SYMBOLS = {"NEAR", "MOVR", "APT", "ZEN", "UB", "NIL", "XLM"}
+            print("جاري الاتصال بتيليجرام لاسترجاع التوصيات...")
+            client = TelegramClient(TG_SESSION, TG_API_ID, TG_API_HASH)
+            await client.start()
+
+            # جلب الرصيد الفعلي من المنصات
+            import ccxt
+            exchanges_local = {}
+            if BYBIT_KEY:
+                try:
+                    ex = get_exchange(); ex.load_markets()
+                    exchanges_local["bybit"] = ex
+                except Exception as e:
+                    print(f"خطأ Bybit: {e}")
+            if KUCOIN_KEY:
+                try:
+                    ex = get_kucoin_exchange(); ex.load_markets()
+                    exchanges_local["kucoin"] = ex
+                except Exception as e:
+                    print(f"خطأ KuCoin: {e}")
+
+            # رصيد كل عملة في المنصات
+            holdings = {}  # symbol -> {qty, exchange}
+            for ex_name, ex in exchanges_local.items():
+                try:
+                    bal = ex.fetch_balance()
+                    for sym, info in bal.items():
+                        if not isinstance(info, dict): continue
+                        total = float(info.get("total", 0))
+                        if total > 0 and sym.upper() in RECOVER_SYMBOLS:
+                            holdings[sym.upper()] = {"qty": total, "exchange": ex_name}
+                except Exception:
+                    pass
+
+            print(f"عملات موجودة في المنصات: {list(holdings.keys())}")
+
+            # مسح التوصيات من القنوات
+            since = datetime.now(timezone.utc) - timedelta(days=60)
+            found_signals = {}  # symbol -> signal
+
+            for channel_name in TG_CHANNELS:
+                try:
+                    entity = await client.get_entity(channel_name)
+                except Exception:
+                    continue
+                async for msg in client.iter_messages(entity, offset_date=since, reverse=True):
+                    if not msg.text:
+                        continue
+                    sig = parse_signal(msg.text)
+                    if sig and sig.symbol.upper() in holdings:
+                        found_signals[sig.symbol.upper()] = sig
+
+            state = load_state()
+            added = 0
+            for symbol, holding in holdings.items():
+                # تخطي إذا موجود بالفعل
+                already = any(p.get("symbol") == symbol for p in state.open_positions.values())
+                if already:
+                    print(f"  {symbol} — موجود بالفعل في البوت، تخطي")
+                    continue
+
+                sig = found_signals.get(symbol)
+                ex_name = holding["exchange"]
+                ex = exchanges_local.get(ex_name)
+                qty = holding["qty"]
+
+                try:
+                    pair = f"{symbol}/USDT"
+                    price = float(ex.fetch_ticker(pair).get("last", 0))
+                except Exception:
+                    price = 0
+
+                if sig:
+                    entry = sig.buy_price
+                    tp = sig.sell_price
+                    tp_pct = sig.tp_pct
+                    targets_list = [{"price": t["price"], "pct": t["pct"], "hit": False}
+                                    for t in sig.targets] if sig.targets else []
+                    trade_num = sig.trade_num
+                    print(f"  ✅ {symbol} — توصية وجدت: دخول={entry} هدف={tp} أهداف={len(targets_list)}")
+                else:
+                    entry = price if price else qty
+                    tp = round(price * 1.20, 6) if price else 0
+                    tp_pct = 20.0
+                    targets_list = []
+                    trade_num = 0
+                    print(f"  ⚠️ {symbol} — لا توصية، هدف افتراضي +20% @ {tp}")
+
+                state.open_positions[pair] = {
+                    "trade_num": trade_num, "symbol": symbol, "pair": pair,
+                    "entry": entry, "qty": qty, "tp": tp, "tp_pct": tp_pct,
+                    "opened": time.time(), "opened_str": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "reason": "استرجاع يدوي", "exchange": ex_name,
+                    "swing_base": entry, "total_size": round(entry * qty, 2),
+                    "phases": [], "atr_sl": None, "targets": targets_list, "targets_hit": 0,
+                }
+                added += 1
+
+            save_state(state)
+            print(f"\n✅ تم إضافة {added} عملة للبوت")
+            await client.disconnect()
+
+        asyncio.run(_recover())
+        sys.exit(0)
     asyncio.run(main())
