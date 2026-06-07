@@ -59,7 +59,7 @@ PARTIAL_SELL_PCT = float(os.getenv("MONTHLY_PARTIAL_SELL_PCT", "50"))
 REBUY_DROP_PCT = float(os.getenv("MONTHLY_REBUY_DROP_PCT", "5.0"))
 BTC_DROP_LIMIT = float(os.getenv("MONTHLY_BTC_DROP_LIMIT", "5.0"))
 LIMIT_ORDER_SLIP = float(os.getenv("MONTHLY_LIMIT_SLIP", "0.5"))  # % فوق السوق للشراء
-MIN_TRADE_USDT = float(os.getenv("MONTHLY_MIN_TRADE_USDT", "5.0"))
+MIN_TRADE_USDT = float(os.getenv("MONTHLY_MIN_TRADE_USDT", "50.0"))
 KUCOIN_TRADE_SIZE = float(os.getenv("MONTHLY_KUCOIN_TRADE_SIZE", "100"))
 BYBIT_TRADE_SIZE = float(os.getenv("MONTHLY_BYBIT_TRADE_SIZE", "100"))
 PROTECTED_SYMBOLS = [s.strip().upper() for s in os.getenv("MONTHLY_PROTECTED_SYMBOLS", "").split(",") if s.strip()]
@@ -629,7 +629,11 @@ def get_trade_size(exchange) -> float:
         balance = exchange.fetch_balance()
         free_usdt = float(balance.get("USDT", {}).get("free", 0))
         size = free_usdt * TRADE_PCT / 100
-        log(f"رصيد: ${free_usdt:.2f} | حجم الصفقة: ${size:.2f} ({TRADE_PCT}%)")
+        if size < MIN_TRADE_USDT and free_usdt >= 1:
+            size = min(free_usdt, MIN_TRADE_USDT)
+            log(f"رصيد: ${free_usdt:.2f} | حجم أقل من ${MIN_TRADE_USDT} — شراء بالمتاح: ${size:.2f}")
+        else:
+            log(f"رصيد: ${free_usdt:.2f} | حجم الصفقة: ${size:.2f} ({TRADE_PCT}%)")
         return round(size, 2)
     except Exception as e:
         log(f"خطأ جلب الرصيد: {e} — استخدام الحجم الثابت ${TRADE_SIZE}")
