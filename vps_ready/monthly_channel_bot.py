@@ -816,6 +816,13 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
         log(f"العملة مفتوحة بالفعل بمنصة أخرى: {signal.symbol}"); return False
 
     exchange = _exchanges[ex_name]
+    if not PAPER_MODE:
+        try:
+            free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
+            if free < 1:
+                return False
+        except Exception:
+            pass
     _fixed = {"kucoin": KUCOIN_TRADE_SIZE, "bybit": BYBIT_TRADE_SIZE}.get(ex_name)
     base_size = _fixed if _fixed else get_trade_size(exchange)
     trade_size = dynamic_trade_size(base_size, signal.tp_pct)
@@ -1146,6 +1153,14 @@ async def check_phase2(state: State):
         exchange = _exchanges.get(ex_name)
         if not exchange:
             continue
+
+        if not PAPER_MODE:
+            try:
+                free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
+                if free < 1:
+                    continue
+            except Exception:
+                pass
 
         try:
             price = _safe_float(exchange.fetch_ticker(pair).get("last"))
