@@ -1282,6 +1282,15 @@ async def check_pending_signals(state: State):
     if state.halted:
         return
 
+    if not PAPER_MODE:
+        try:
+            ex = next(iter(_exchanges.values()))
+            free = float(ex.fetch_balance().get("USDT", {}).get("free", 0))
+            if free < 1:
+                return
+        except Exception:
+            pass
+
     for sig_data in list(state.pending_signals):
         symbol = sig_data["symbol"]
         buy_price = sig_data["buy_price"]
@@ -1353,6 +1362,15 @@ async def check_reinforcements(state: State):
     rollover_day(state)
     if state.halted:
         return
+
+    if not PAPER_MODE:
+        try:
+            ex = next(iter(_exchanges.values()))
+            free = float(ex.fetch_balance().get("USDT", {}).get("free", 0))
+            if free < 1:
+                return
+        except Exception:
+            pass
 
     for symbol, entries in list(state.reinforcements.items()):
         if not entries:
