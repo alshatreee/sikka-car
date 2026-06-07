@@ -93,6 +93,7 @@ WATCH_CHANNELS = [
     "ahmadchats", "Naif_Alert", "vipdrprofit",
 ]
 DAILY_SUMMARY_HOUR = int(os.getenv("MONTHLY_SUMMARY_HOUR", "21"))
+CHANNEL_MEMORY_FILE = BASE_DIR / "channel_memory.json"
 
 # ---------- logging / notify ----------
 _IS_TTY = sys.stdin and sys.stdin.isatty()
@@ -1504,6 +1505,23 @@ _SIGNAL_KEYWORDS = [
 ]
 
 
+def _load_channel_memory() -> dict:
+    if CHANNEL_MEMORY_FILE.exists():
+        try:
+            return json.loads(CHANNEL_MEMORY_FILE.read_text())
+        except Exception:
+            pass
+    return {"daily": {}, "coins": {}}
+
+
+def _save_channel_memory(mem: dict):
+    days = sorted(mem.get("daily", {}).keys())
+    if len(days) > 90:
+        for old in days[:-90]:
+            del mem["daily"][old]
+    CHANNEL_MEMORY_FILE.write_text(json.dumps(mem, ensure_ascii=False, indent=2))
+
+
 async def scan_watch_channels(client) -> str:
     from collections import Counter
     since = datetime.now(timezone.utc) - timedelta(hours=24)
@@ -1517,7 +1535,6 @@ async def scan_watch_channels(client) -> str:
         except Exception:
             continue
 
-        msgs = []
         msg_count = 0
         try:
             async for msg in client.iter_messages(entity, offset_date=since, reverse=True):
@@ -1525,7 +1542,6 @@ async def scan_watch_channels(client) -> str:
                     continue
                 msg_count += 1
                 text = msg.text
-                msgs.append(text)
 
                 for m in _COIN_RE.finditer(text):
                     coin = (m.group(1) or m.group(2) or m.group(3) or m.group(4) or "").upper()
@@ -1550,6 +1566,29 @@ async def scan_watch_channels(client) -> str:
     if not coin_mentions:
         return ""
 
+    # --- حفظ في الذاكرة ---
+    today = time.strftime("%Y-%m-%d")
+    mem = _load_channel_memory()
+    mem["daily"][today] = {
+        "coins": dict(coin_mentions.most_common(30)),
+        "signals": list(dict.fromkeys(signals_found))[:20],
+        "channels": channel_summaries,
+    }
+    for coin, count in coin_mentions.items():
+        if coin not in mem["coins"]:
+            mem["coins"][coin] = {"total": 0, "days": 0, "first_seen": today, "signals": []}
+        mem["coins"][coin]["total"] += count
+        mem["coins"][coin]["days"] += 1
+        mem["coins"][coin]["last_seen"] = today
+    for sig in signals_found:
+        coin_name = sig.split(" (")[0]
+        if coin_name in mem["coins"]:
+            sig_list = mem["coins"][coin_name].setdefault("signals", [])
+            sig_list.append({"date": today, "type": sig})
+            mem["coins"][coin_name]["signals"] = sig_list[-20:]
+    _save_channel_memory(mem)
+
+    # --- بناء الملخص ---
     top_coins = coin_mentions.most_common(10)
     coins_str = " | ".join(f"{c}: {n}×" for c, n in top_coins)
 
@@ -1558,11 +1597,50 @@ async def scan_watch_channels(client) -> str:
     unique_signals = list(dict.fromkeys(signals_found))[:10]
     sig_str = "، ".join(unique_signals) if unique_signals else "لا توجد"
 
+    # --- تحليل أسبوعي من الذاكرة ---
+    week_analysis = ""
+    week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    week_coins = Counter()
+    prev_week_coins = Counter()
+    for day_str, day_data in mem.get("daily", {}).items():
+        if day_str >= week_ago:
+            for c, n in day_data.get("coins", {}).items():
+                week_coins[c] += n
+        elif day_str >= (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%d"):
+            for c, n in day_data.get("coins", {}).items():
+                prev_week_coins[c] += n
+
+    if week_coins:
+        trending_up = []
+        new_coins = []
+        for coin, count in week_coins.most_common(15):
+            prev = prev_week_coins.get(coin, 0)
+            if prev == 0 and count >= 3:
+                new_coins.append(coin)
+            elif prev > 0 and count > prev * 1.5:
+                trending_up.append(f"{coin} (+{int((count/prev - 1)*100)}%)")
+
+        parts = []
+        if trending_up:
+            parts.append(f"صاعدة: {', '.join(trending_up[:5])}")
+        if new_coins:
+            parts.append(f"جديدة: {', '.join(new_coins[:5])}")
+
+        consistent = [c for c, info in mem.get("coins", {}).items()
+                       if info.get("days", 0) >= 5][:5]
+        if consistent:
+            parts.append(f"مستمرة: {', '.join(consistent)}")
+
+        if parts:
+            week_analysis = "\n\n<b>تحليل أسبوعي:</b>\n" + "\n".join(f"  {p}" for p in parts)
+
+    total_days = len(mem.get("daily", {}))
     summary = (
-        f"<b>📊 ملخص القنوات اليومي</b>\n\n"
+        f"<b>📊 ملخص القنوات اليومي</b> (ذاكرة: {total_days} يوم)\n\n"
         f"<b>أكثر العملات ذكراً:</b>\n{coins_str}\n\n"
         f"<b>إشارات:</b> {sig_str}\n\n"
         f"<b>القنوات ({len(channel_summaries)}):</b>\n{ch_str}"
+        f"{week_analysis}"
     )
     return summary
 
