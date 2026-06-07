@@ -537,6 +537,19 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
         price = _safe_float(exchange.fetch_ticker(pair).get("last"))
         if not price:
             return None
+
+        # حد المبلغ بالرصيد المتاح فعلياً — تجنب أخطاء "رصيد غير كافٍ"
+        if not PAPER_MODE:
+            try:
+                free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
+            except Exception:
+                free = usdt_amount
+            if usdt_amount > free:
+                usdt_amount = free * 0.99  # هامش بسيط للرسوم
+            if usdt_amount < 5:
+                log(f"تخطي شراء {pair} — رصيد متاح ${free:.2f} غير كافٍ")
+                return None
+
         qty = usdt_amount / price
         limit_price = round(price * (1 + LIMIT_ORDER_SLIP / 100), 8)
 
@@ -571,11 +584,15 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
         return order
     except Exception as e:
         err = str(e)
-        log(f"خطأ في الشراء: {pair} — {e}")
         if "permission" in err.lower() or "FORBIDDEN" in err:
             _disabled_exchanges.add(ex_id)
             log(f"تعطيل الشراء من {ex_id} — صلاحيات ناقصة")
             notify(f"⚠️ تعطيل الشراء من {ex_id} — مفتاح API بدون صلاحية spot write")
+        elif "insufficient" in err.lower() or "170131" in err or "200004" in err:
+            # رصيد غير كافٍ — رسالة عادية بدون تنبيه
+            log(f"تخطي شراء {pair} — رصيد غير كافٍ في {ex_id}")
+        else:
+            log(f"خطأ في الشراء: {pair} — {e}")
         return None
 
 def spot_sell(exchange, pair: str, qty: float) -> dict | None:
