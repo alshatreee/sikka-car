@@ -404,9 +404,24 @@ def main():
         try:
             alerts = run_checks(state)
             if alerts:
-                msg = "⚠️ <b>تنبيه مراقبة البوت</b>\n\n" + "\n\n".join(alerts)
-                log(f"تنبيهات ({len(alerts)}): {[a[:40] for a in alerts]}")
-                notify(msg)
+                import hashlib
+                new_alerts = []
+                new_hashes = []
+                for a in alerts:
+                    h = hashlib.md5(a[:80].encode()).hexdigest()[:12]
+                    new_hashes.append(h)
+                    if h not in state.last_alert_hashes:
+                        new_alerts.append(a)
+                state.last_alert_hashes = new_hashes
+                save_state(state)
+                if new_alerts:
+                    msg = "⚠️ <b>تنبيه مراقبة البوت</b>\n\n" + "\n\n".join(new_alerts)
+                    log(f"تنبيهات ({len(new_alerts)}): {[a[:40] for a in new_alerts]}")
+                    notify(msg)
+            else:
+                if state.last_alert_hashes:
+                    state.last_alert_hashes = []
+                    save_state(state)
 
             today = time.strftime("%Y-%m-%d")
             hour = int(time.strftime("%H"))
