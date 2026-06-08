@@ -736,7 +736,8 @@ def check_exits(st: DayState):
             to_close.append((sym, pos, price, pnl_pct, pnl_usd, exit_reason))
 
     for sym, pos, price, pnl_pct, pnl_usd, reason in to_close:
-        success = place_sell(sym, pos.qty) if not PAPER_MODE else True
+        sell_qty = pos.qty * 0.998  # account for exchange fees on buy
+        success = place_sell(sym, sell_qty) if not PAPER_MODE else True
         if success or PAPER_MODE:
             del st.positions[sym]
             st.daily_pnl += pnl_usd
@@ -842,7 +843,11 @@ def scan_markets(st: DayState) -> list[Signal]:
     return signals
 
 
+_cycle_count = 0
+
 def run_cycle(st: DayState):
+    global _cycle_count
+    _cycle_count += 1
     roll_day(st)
 
     # Check exits first
@@ -851,18 +856,31 @@ def run_cycle(st: DayState):
 
     # Check risk limits
     if st.daily_pnl <= -MAX_DAILY_LOSS:
+        logger.info("⛔ Daily loss limit ($%.2f) — paused", st.daily_pnl)
         return
     if len(st.positions) >= MAX_POSITIONS:
+        if _cycle_count % 12 == 0:
+            logger.info("⏸ Max positions (%d/%d) — waiting for exit", len(st.positions), MAX_POSITIONS)
         return
 
     # Scan for new entries
     signals = scan_markets(st)
+
+    if signals:
+        logger.info("📡 Found %d signals — best: %s (score %.0f)",
+                     len(signals), signals[0].symbol, signals[0].score)
 
     # Take best signals (max 2 new entries per cycle)
     for sig in signals[:2]:
         if len(st.positions) >= MAX_POSITIONS:
             break
         open_position(st, sig)
+
+    # Healthcheck every 30 min (6 cycles × 5 min)
+    if _cycle_count % 6 == 0:
+        pos_info = f"{len(st.positions)}/{MAX_POSITIONS} positions"
+        logger.info("💓 Cycle %d | %s | trades today: %d | PnL: $%.2f",
+                     _cycle_count, pos_info, st.daily_trades, st.daily_pnl)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -999,6 +1017,7 @@ def main():
     parser.add_argument("--live", action="store_true", help="Enable live trading")
     parser.add_argument("--status", action="store_true", help="Show current status")
     parser.add_argument("--backtest", action="store_true", help="Run backtest")
+    parser.add_argument("--scan", action="store_true", help="Scan once and show signals")
     args = parser.parse_args()
 
     if args.live:
@@ -1013,6 +1032,30 @@ def main():
 
     if args.backtest:
         backtest()
+        return
+
+    if args.scan:
+        print(f"\n{'═' * 55}")
+        print(f"  SCANNING {len(WATCHLIST)} COINS...")
+        print(f"{'═' * 55}")
+        st = load_state()
+        signals = scan_markets(st)
+        if not signals:
+            print("  ❌ No signals found — conditions not met for any coin")
+        else:
+            print(f"  ✅ Found {len(signals)} signal(s):\n")
+            for i, sig in enumerate(signals, 1):
+                print(f"  {i}. {sig.symbol:12s} | score: {sig.score:.0f} | "
+                      f"RSI: {sig.rsi:.1f} | trend: {sig.ema_trend} | "
+                      f"vol: ×{sig.volume_ratio:.1f}")
+                print(f"     price: {sig.price:.6f} | {sig.reason}")
+                print(f"     TP: {sig.price * (1 + TAKE_PROFIT_PCT/100):.6f} (+{TAKE_PROFIT_PCT}%) | "
+                      f"SL: {sig.price * (1 - STOP_LOSS_PCT/100):.6f} (-{STOP_LOSS_PCT}%)")
+                print()
+        intel = load_bot_intel()
+        if intel:
+            print(f"  📊 Cross-bot intel loaded: {len(intel)} coins with data")
+        print(f"{'═' * 55}\n")
         return
 
     # Main trading loop
