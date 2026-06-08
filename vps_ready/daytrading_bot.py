@@ -152,15 +152,20 @@ def fetch_klines(symbol: str, interval: str = "15", limit: int = 100) -> list[di
         return None
     candles = []
     for r in reversed(rows):
-        candles.append({
-            "ts": int(r[0]),
-            "open": float(r[1]),
-            "high": float(r[2]),
-            "low": float(r[3]),
-            "close": float(r[4]),
-            "volume": float(r[5]),
-        })
-    return candles
+        try:
+            if not r[1] or not r[4]:
+                continue
+            candles.append({
+                "ts": int(r[0]),
+                "open": float(r[1]),
+                "high": float(r[2]),
+                "low": float(r[3]),
+                "close": float(r[4]),
+                "volume": float(r[5]) if r[5] else 0.0,
+            })
+        except (ValueError, IndexError):
+            continue
+    return candles if candles else None
 
 
 def fetch_price(symbol: str) -> float | None:
@@ -168,7 +173,12 @@ def fetch_price(symbol: str) -> float | None:
     if data and data.get("retCode") == 0:
         tickers = data.get("result", {}).get("list", [])
         if tickers:
-            return float(tickers[0].get("lastPrice", 0))
+            val = tickers[0].get("lastPrice", "")
+            if val:
+                try:
+                    return float(val)
+                except ValueError:
+                    pass
     return None
 
 
