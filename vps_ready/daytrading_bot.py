@@ -63,8 +63,12 @@ TG_CHAT      = ENV.get("TELEGRAM_CHAT_ID", "")
 # Position sizing
 TRADE_SIZE_USDT    = float(ENV.get("DT_TRADE_SIZE", "50.0"))
 MAX_POSITIONS      = int(ENV.get("DT_MAX_POSITIONS", "5"))
-MAX_DAILY_TRADES   = int(ENV.get("DT_MAX_DAILY", "15"))
-MAX_DAILY_LOSS     = float(ENV.get("DT_MAX_LOSS", "30.0"))
+MAX_DAILY_LOSS     = float(ENV.get("DT_MAX_LOSS", "50.0"))
+
+# Cross-bot intelligence files
+ML_RECS_FILE       = BASE_DIR / "ml_recommendations.json"
+CHANNEL_MEM_FILE   = BASE_DIR / "channel_memory.json"
+SIGNAL_TRACKER     = BASE_DIR / "signal_tracker.json"
 
 # Entry: RSI bounce from oversold
 RSI_OVERSOLD       = float(ENV.get("DT_RSI_OVERSOLD", "35"))
@@ -269,6 +273,126 @@ def volume_ratio(candles: list[dict], lookback: int = 20) -> float:
 
 
 # ══════════════════════════════════════════════════════════════
+# CROSS-BOT INTELLIGENCE
+# ══════════════════════════════════════════════════════════════
+
+_bot_intel_cache: dict = {}
+_bot_intel_ts: float = 0
+
+def load_bot_intel() -> dict:
+    global _bot_intel_cache, _bot_intel_ts
+    if time.time() - _bot_intel_ts < 600:
+        return _bot_intel_cache
+
+    intel = {}
+
+    # ML recommendations (per-symbol profit/drawdown data)
+    if ML_RECS_FILE.exists():
+        try:
+            ml = json.loads(ML_RECS_FILE.read_text())
+            for sym, data in ml.get("per_symbol", ml).items():
+                sym_upper = sym.upper().replace("/USDT", "").replace("USDT", "")
+                if isinstance(data, dict):
+                    intel[sym_upper] = {
+                        "ml_profit": float(data.get("max_profit_pct", data.get("entry_saving_pct", 0))),
+                        "ml_drawdown": abs(float(data.get("max_drawdown_pct", 0))),
+                    }
+        except Exception:
+            pass
+
+    # Channel memory (recent mentions = interest)
+    if CHANNEL_MEM_FILE.exists():
+        try:
+            mem = json.loads(CHANNEL_MEM_FILE.read_text())
+            daily = mem.get("daily", {})
+            recent_days = sorted(daily.keys())[-7:]
+            mention_count: dict[str, int] = {}
+            for day in recent_days:
+                for coin in daily[day].get("coins", []):
+                    c = coin.upper()
+                    mention_count[c] = mention_count.get(c, 0) + 1
+            for c, count in mention_count.items():
+                if c not in intel:
+                    intel[c] = {}
+                intel[c]["channel_mentions"] = count
+        except Exception:
+            pass
+
+    # Signal tracker (win/loss history)
+    if SIGNAL_TRACKER.exists():
+        try:
+            tracker = json.loads(SIGNAL_TRACKER.read_text())
+            signals = tracker if isinstance(tracker, list) else tracker.get("signals", [])
+            win_loss: dict[str, list] = {}
+            for sig in signals:
+                sym = sig.get("symbol", "").upper()
+                outcome = sig.get("outcome", "")
+                if sym and outcome in ("WIN", "LOSS"):
+                    if sym not in win_loss:
+                        win_loss[sym] = [0, 0]
+                    if outcome == "WIN":
+                        win_loss[sym][0] += 1
+                    else:
+                        win_loss[sym][1] += 1
+            for sym, (w, l) in win_loss.items():
+                if sym not in intel:
+                    intel[sym] = {}
+                intel[sym]["win_rate"] = w / max(w + l, 1) * 100
+        except Exception:
+            pass
+
+    _bot_intel_cache = intel
+    _bot_intel_ts = time.time()
+    return intel
+
+
+def get_intel_boost(symbol: str) -> tuple[float, list[str]]:
+    intel = load_bot_intel()
+    sym = symbol.upper().replace("USDT", "")
+    data = intel.get(sym, {})
+    boost = 0.0
+    reasons = []
+
+    # ML profit history bonus
+    ml_profit = data.get("ml_profit", 0)
+    if ml_profit > 5:
+        boost += 10
+        reasons.append(f"ML+{ml_profit:.0f}%")
+    elif ml_profit > 2:
+        boost += 5
+        reasons.append(f"ML+{ml_profit:.0f}%")
+
+    # Low drawdown bonus (safer coin)
+    ml_dd = data.get("ml_drawdown", 0)
+    if 0 < ml_dd < 10:
+        boost += 5
+        reasons.append("lowDD")
+
+    # Channel mentions bonus (popular = more likely to move)
+    mentions = data.get("channel_mentions", 0)
+    if mentions >= 5:
+        boost += 10
+        reasons.append(f"ch×{mentions}")
+    elif mentions >= 3:
+        boost += 5
+        reasons.append(f"ch×{mentions}")
+
+    # Historical win rate bonus
+    wr = data.get("win_rate", -1)
+    if wr >= 70:
+        boost += 10
+        reasons.append(f"WR{wr:.0f}%")
+    elif wr >= 50:
+        boost += 5
+        reasons.append(f"WR{wr:.0f}%")
+    elif 0 <= wr < 30:
+        boost -= 10
+        reasons.append(f"⚠WR{wr:.0f}%")
+
+    return boost, reasons
+
+
+# ══════════════════════════════════════════════════════════════
 # SIGNAL DETECTION
 # ══════════════════════════════════════════════════════════════
 
@@ -359,6 +483,10 @@ def analyze_symbol(symbol: str) -> Signal | None:
     bounce_speed = rsi_now - rsi_prev
     score += min(bounce_speed * 2, 10)
 
+    # Cross-bot intelligence bonus
+    intel_boost, intel_reasons = get_intel_boost(symbol)
+    score += intel_boost
+
     if score < 60:
         return None
 
@@ -371,6 +499,8 @@ def analyze_symbol(symbol: str) -> Signal | None:
         reason_parts.append("uptrend")
     if has_volume:
         reason_parts.append(f"vol×{vol_r:.1f}")
+    if intel_reasons:
+        reason_parts.extend(intel_reasons)
 
     return Signal(
         symbol=symbol,
@@ -648,10 +778,6 @@ def open_position(st: DayState, signal: Signal):
     if len(st.positions) >= MAX_POSITIONS:
         return
 
-    if st.daily_trades >= MAX_DAILY_TRADES:
-        logger.info("Daily trade limit reached")
-        return
-
     if st.daily_pnl <= -MAX_DAILY_LOSS:
         logger.info("Daily loss limit reached: $%.2f", st.daily_pnl)
         return
@@ -725,8 +851,6 @@ def run_cycle(st: DayState):
 
     # Check risk limits
     if st.daily_pnl <= -MAX_DAILY_LOSS:
-        return
-    if st.daily_trades >= MAX_DAILY_TRADES:
         return
     if len(st.positions) >= MAX_POSITIONS:
         return
@@ -835,7 +959,7 @@ def show_status():
     print(f"{'═' * 50}")
     print(f"  Mode: {st.mode}")
     print(f"  Daily PnL: ${st.daily_pnl:+.2f} | Total PnL: ${st.total_pnl:+.2f}")
-    print(f"  Today's trades: {st.daily_trades}/{MAX_DAILY_TRADES}")
+    print(f"  Today's trades: {st.daily_trades} (unlimited)")
     print(f"  Win/Loss: {st.wins}/{st.losses} "
           f"({st.wins / max(st.wins + st.losses, 1) * 100:.0f}% WR)")
     print(f"\n  Open Positions ({len(st.positions)}/{MAX_POSITIONS}):")
