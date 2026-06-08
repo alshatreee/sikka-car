@@ -653,6 +653,10 @@ class DayState:
     losses: int = 0
     history: list = field(default_factory=list)
     mode: str = "PAPER"
+    # Self-learning memory
+    memory: dict = field(default_factory=dict)       # symbol → learning data
+    hour_stats: dict = field(default_factory=dict)   # hour → {wins, losses, pnl}
+    streak: dict = field(default_factory=dict)       # symbol → consecutive losses
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -685,6 +689,99 @@ def roll_day(st: DayState):
         st.daily_date = today
         st.daily_trades = 0
         st.daily_pnl = 0.0
+
+
+# ══════════════════════════════════════════════════════════════
+# SELF-LEARNING ENGINE
+# ══════════════════════════════════════════════════════════════
+
+def learn_from_trade(st: DayState, symbol: str, pnl_pct: float, pnl_usd: float,
+                     reason: str, held_min: int):
+    sym = symbol.replace("USDT", "")
+    hour = datetime.now(timezone.utc).hour
+
+    # Per-symbol memory
+    if sym not in st.memory:
+        st.memory[sym] = {"wins": 0, "losses": 0, "total_pnl": 0.0,
+                          "avg_pnl": 0.0, "trades": 0, "best_pnl": 0.0,
+                          "worst_pnl": 0.0, "avg_hold_min": 0}
+    m = st.memory[sym]
+    m["trades"] += 1
+    m["total_pnl"] = round(m["total_pnl"] + pnl_pct, 2)
+    m["avg_pnl"] = round(m["total_pnl"] / m["trades"], 2)
+    m["avg_hold_min"] = int((m["avg_hold_min"] * (m["trades"] - 1) + held_min) / m["trades"])
+    if pnl_pct > m["best_pnl"]:
+        m["best_pnl"] = round(pnl_pct, 2)
+    if pnl_pct < m["worst_pnl"]:
+        m["worst_pnl"] = round(pnl_pct, 2)
+    if pnl_usd >= 0:
+        m["wins"] += 1
+        st.streak[sym] = 0
+    else:
+        m["losses"] += 1
+        st.streak[sym] = st.streak.get(sym, 0) + 1
+
+    # Per-hour stats
+    h = str(hour)
+    if h not in st.hour_stats:
+        st.hour_stats[h] = {"wins": 0, "losses": 0, "pnl": 0.0, "trades": 0}
+    hs = st.hour_stats[h]
+    hs["trades"] += 1
+    hs["pnl"] = round(hs["pnl"] + pnl_usd, 2)
+    if pnl_usd >= 0:
+        hs["wins"] += 1
+    else:
+        hs["losses"] += 1
+
+
+def get_memory_boost(st: DayState, symbol: str) -> tuple[float, list[str]]:
+    sym = symbol.replace("USDT", "")
+    boost = 0.0
+    reasons = []
+
+    # Per-symbol learning
+    m = st.memory.get(sym)
+    if m and m["trades"] >= 3:
+        wr = m["wins"] / m["trades"] * 100
+        if wr >= 70:
+            boost += 10
+            reasons.append(f"myWR{wr:.0f}%")
+        elif wr >= 50:
+            boost += 5
+            reasons.append(f"myWR{wr:.0f}%")
+        elif wr < 30:
+            boost -= 15
+            reasons.append(f"⚠myWR{wr:.0f}%")
+
+        if m["avg_pnl"] > 2:
+            boost += 5
+            reasons.append(f"avgPnL+{m['avg_pnl']:.1f}%")
+        elif m["avg_pnl"] < -2:
+            boost -= 10
+            reasons.append(f"⚠avgPnL{m['avg_pnl']:.1f}%")
+
+    # Streak penalty (3+ consecutive losses = avoid)
+    streak = st.streak.get(sym, 0)
+    if streak >= 3:
+        boost -= 20
+        reasons.append(f"⛔streak{streak}")
+    elif streak >= 2:
+        boost -= 10
+        reasons.append(f"⚠streak{streak}")
+
+    # Hour-based learning
+    hour = str(datetime.now(timezone.utc).hour)
+    hs = st.hour_stats.get(hour)
+    if hs and hs["trades"] >= 5:
+        hour_wr = hs["wins"] / hs["trades"] * 100
+        if hour_wr >= 70:
+            boost += 5
+            reasons.append(f"goodHour")
+        elif hour_wr < 30:
+            boost -= 10
+            reasons.append(f"⚠badHour")
+
+    return boost, reasons
 
 
 # ══════════════════════════════════════════════════════════════
@@ -754,6 +851,8 @@ def check_exits(st: DayState):
                    f"PnL: {pnl_pct:+.2f}% (${pnl_usd:+.2f})\n"
                    f"Daily: ${st.daily_pnl:+.2f}")
 
+            held_min = int((datetime.now(timezone.utc) -
+                           datetime.fromisoformat(pos.opened_at)).total_seconds() / 60)
             st.history.append({
                 "symbol": sym,
                 "entry": pos.entry_price,
@@ -761,13 +860,14 @@ def check_exits(st: DayState):
                 "pnl_pct": round(pnl_pct, 2),
                 "pnl_usd": round(pnl_usd, 2),
                 "reason": reason,
-                "held_min": int((datetime.now(timezone.utc) -
-                                datetime.fromisoformat(pos.opened_at)).total_seconds() / 60),
+                "held_min": held_min,
                 "closed_at": now.isoformat(),
             })
-            # Keep last 100 trades
-            if len(st.history) > 100:
-                st.history = st.history[-100:]
+            if len(st.history) > 200:
+                st.history = st.history[-200:]
+
+            # Learn from this trade
+            learn_from_trade(st, sym, pnl_pct, pnl_usd, reason, held_min)
 
     save_state(st)
 
@@ -834,7 +934,14 @@ def scan_markets(st: DayState) -> list[Signal]:
         try:
             sig = analyze_symbol(symbol)
             if sig:
-                signals.append(sig)
+                # Apply self-learning boost
+                mem_boost, mem_reasons = get_memory_boost(st, symbol)
+                sig.score = min(sig.score + mem_boost, 99)
+                if mem_reasons:
+                    sig.reason += " | " + " ".join(mem_reasons)
+                # Skip if memory says avoid (score dropped below threshold)
+                if sig.score >= 55:
+                    signals.append(sig)
         except Exception as e:
             logger.debug("Error analyzing %s: %s", symbol, e)
         time.sleep(0.3)
@@ -1002,6 +1109,28 @@ def show_status():
             print(f"  {icon} {trade['symbol']:12s} | {trade['pnl_pct']:+.2f}% "
                   f"(${trade['pnl_usd']:+.2f}) | {trade['reason']} | "
                   f"{trade['held_min']}min")
+
+    if st.memory:
+        print(f"\n  🧠 Memory ({len(st.memory)} coins learned):")
+        print(f"  {'─' * 46}")
+        sorted_mem = sorted(st.memory.items(),
+                            key=lambda x: x[1].get("trades", 0), reverse=True)
+        for sym, m in sorted_mem[:10]:
+            wr = m["wins"] / max(m["trades"], 1) * 100
+            streak = st.streak.get(sym, 0)
+            streak_txt = f" | streak: {streak}❌" if streak >= 2 else ""
+            print(f"  {sym:8s} | {m['trades']} trades | WR: {wr:.0f}% | "
+                  f"avg: {m['avg_pnl']:+.1f}%{streak_txt}")
+
+    if st.hour_stats:
+        best_hours = sorted(st.hour_stats.items(),
+                            key=lambda x: x[1].get("pnl", 0), reverse=True)
+        good = [h for h, d in best_hours if d.get("pnl", 0) > 0]
+        bad = [h for h, d in best_hours if d.get("pnl", 0) < 0]
+        if good:
+            print(f"\n  ⏰ Best hours (UTC): {', '.join(good[:5])}")
+        if bad:
+            print(f"  ⏰ Worst hours (UTC): {', '.join(bad[:3])}")
 
     print(f"{'═' * 50}\n")
 
