@@ -71,9 +71,9 @@ CHANNEL_MEM_FILE   = BASE_DIR / "channel_memory.json"
 SIGNAL_TRACKER     = BASE_DIR / "signal_tracker.json"
 
 # Entry: RSI bounce from oversold
-RSI_OVERSOLD       = float(ENV.get("DT_RSI_OVERSOLD", "35"))
+RSI_OVERSOLD       = float(ENV.get("DT_RSI_OVERSOLD", "40"))
 RSI_BOUNCE_MIN     = float(ENV.get("DT_RSI_BOUNCE", "3"))
-MIN_VOLUME_SPIKE   = float(ENV.get("DT_VOL_SPIKE", "1.5"))
+MIN_VOLUME_SPIKE   = float(ENV.get("DT_VOL_SPIKE", "1.3"))
 
 # Exit targets (tight for day trading)
 TAKE_PROFIT_PCT    = float(ENV.get("DT_TP_PCT", "3.0"))
@@ -442,65 +442,85 @@ def analyze_symbol(symbol: str) -> Signal | None:
     price = closes_15m[-1]
     atr_pct = (atr / price * 100) if price > 0 else 0
 
-    # ── ENTRY CONDITIONS ──
-    # 1. RSI was oversold and is bouncing up
-    rsi_bounce = rsi_now > rsi_prev and rsi_prev <= RSI_OVERSOLD
-    # 2. Alternative: RSI crossing up from oversold zone
-    rsi_cross_up = rsi_now > RSI_OVERSOLD and rsi_prev <= RSI_OVERSOLD
+    has_volume = vol_r >= MIN_VOLUME_SPIKE
 
-    if not (rsi_bounce or rsi_cross_up):
+    # EMA crossover on 15m (short-term momentum shift)
+    ema9_15m = compute_ema(closes_15m, 9)
+    ema21_15m = compute_ema(closes_15m, 21)
+    ema_cross_up = False
+    if len(ema9_15m) >= 2 and len(ema21_15m) >= 2:
+        ema_cross_up = ema9_15m[-1] > ema21_15m[-1] and ema9_15m[-2] <= ema21_15m[-2]
+
+    # Price bounce from recent low
+    recent_low = min(c["low"] for c in candles_15m[-12:])
+    recent_high = max(c["high"] for c in candles_15m[-12:])
+    price_range = (recent_high - recent_low) / recent_low * 100 if recent_low > 0 else 0
+    near_low = (price - recent_low) / recent_low * 100 < 1.0 if recent_low > 0 else False
+    bouncing_from_low = near_low and price > candles_15m[-2]["close"]
+
+    # ── 3 ENTRY STRATEGIES ──
+    strategy = None
+    score = 0.0
+    reason_parts = []
+
+    # Strategy 1: RSI Bounce (original — relaxed to 40)
+    rsi_bounce = rsi_now > rsi_prev and rsi_prev <= RSI_OVERSOLD
+    rsi_cross_up = rsi_now > RSI_OVERSOLD and rsi_prev <= RSI_OVERSOLD
+    if rsi_bounce or rsi_cross_up:
+        strategy = "RSI"
+        score = 55.0
+        rsi_depth = max(0, RSI_OVERSOLD - rsi_prev)
+        score += min(rsi_depth * 2, 15)
+        bounce_speed = rsi_now - rsi_prev
+        score += min(bounce_speed * 2, 10)
+        if rsi_bounce:
+            reason_parts.append(f"RSI bounce {rsi_prev:.0f}→{rsi_now:.0f}")
+        else:
+            reason_parts.append(f"RSI cross {rsi_now:.0f}")
+
+    # Strategy 2: EMA Crossover + Volume (momentum entry)
+    elif ema_cross_up and has_volume:
+        strategy = "EMA_CROSS"
+        score = 55.0
+        score += min(vol_r * 3, 10)
+        reason_parts.append(f"EMA9×EMA21 cross")
+
+    # Strategy 3: Bounce from support + uptrend
+    elif bouncing_from_low and trend == "up" and price_range >= 2.0:
+        strategy = "SUPPORT"
+        score = 52.0
+        score += min(price_range * 2, 10)
+        reason_parts.append(f"support bounce ({price_range:.1f}% range)")
+
+    if strategy is None:
         return None
 
-    # 3. Trend filter: prefer uptrend or at least not strong downtrend
+    # Block strong downtrend for all strategies
     if trend == "down" and rsi_now < 30:
         return None
 
-    # 4. Volume confirmation
-    has_volume = vol_r >= MIN_VOLUME_SPIKE
-
-    # ── SCORING ──
-    score = 50.0
-
-    # RSI strength (deeper oversold = stronger signal)
-    rsi_depth = max(0, RSI_OVERSOLD - rsi_prev)
-    score += min(rsi_depth * 2, 15)
-
-    # Trend bonus
+    # ── COMMON SCORING ──
     if trend == "up":
-        score += 15
+        score += 12
+        reason_parts.append("uptrend")
     else:
         score -= 5
 
-    # Volume bonus
     if has_volume:
-        score += min(vol_r * 5, 15)
+        score += min(vol_r * 4, 12)
+        reason_parts.append(f"vol×{vol_r:.1f}")
 
-    # Volatility bonus (we want moves)
     if atr_pct >= 0.3:
         score += min(atr_pct * 3, 10)
-
-    # RSI bounce speed bonus
-    bounce_speed = rsi_now - rsi_prev
-    score += min(bounce_speed * 2, 10)
 
     # Cross-bot intelligence bonus
     intel_boost, intel_reasons = get_intel_boost(symbol)
     score += intel_boost
-
-    if score < 60:
-        return None
-
-    reason_parts = []
-    if rsi_bounce:
-        reason_parts.append(f"RSI bounce {rsi_prev:.0f}→{rsi_now:.0f}")
-    if rsi_cross_up:
-        reason_parts.append(f"RSI cross up {rsi_now:.0f}")
-    if trend == "up":
-        reason_parts.append("uptrend")
-    if has_volume:
-        reason_parts.append(f"vol×{vol_r:.1f}")
     if intel_reasons:
         reason_parts.extend(intel_reasons)
+
+    if score < 58:
+        return None
 
     return Signal(
         symbol=symbol,
@@ -1164,13 +1184,29 @@ def main():
         return
 
     if args.scan:
-        print(f"\n{'═' * 55}")
-        print(f"  SCANNING {len(WATCHLIST)} COINS...")
-        print(f"{'═' * 55}")
+        print(f"\n{'═' * 60}")
+        print(f"  SCANNING {len(WATCHLIST)} COINS (3 strategies)...")
+        print(f"{'═' * 60}")
+        # Show current RSI for all coins first
+        print(f"\n  📊 Market Overview:")
+        print(f"  {'─' * 56}")
+        for sym in WATCHLIST:
+            candles = fetch_klines(sym, "15", 30)
+            if not candles:
+                continue
+            closes = [c["close"] for c in candles]
+            rsi_vals = compute_rsi(closes, 14)
+            if not rsi_vals:
+                continue
+            rsi = rsi_vals[-1]
+            icon = "🟢" if rsi <= RSI_OVERSOLD else "⚪" if rsi <= 50 else "🔴"
+            print(f"  {icon} {sym:12s} RSI: {rsi:5.1f} | price: {closes[-1]:.6f}")
+            time.sleep(0.15)
+        print()
         st = load_state()
         signals = scan_markets(st)
         if not signals:
-            print("  ❌ No signals found — conditions not met for any coin")
+            print("  ❌ No signals found — conditions not met")
         else:
             print(f"  ✅ Found {len(signals)} signal(s):\n")
             for i, sig in enumerate(signals, 1):
