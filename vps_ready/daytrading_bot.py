@@ -186,20 +186,30 @@ def fetch_price(symbol: str) -> float | None:
     return None
 
 
+def _safe_float(val, default=0.0) -> float:
+    if not val or val == "":
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def fetch_balance() -> float:
     if PAPER_MODE:
         return 999.0
     data = bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
     if not data or data.get("retCode") != 0:
+        logger.debug("Balance API failed: %s", data)
         return 0.0
     coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
     for c in coins:
         if c.get("coin") == "USDT":
-            val = c.get("availableToWithdraw", 0)
-            try:
-                return float(val) if val != "" else 0.0
-            except (ValueError, TypeError):
-                return 0.0
+            for field in ("availableToWithdraw", "walletBalance", "equity"):
+                val = _safe_float(c.get(field))
+                if val > 0:
+                    return val
+            return 0.0
     return 0.0
 
 
@@ -949,9 +959,10 @@ def open_position(st: DayState, signal: Signal):
         return
 
     balance = fetch_balance()
+    logger.info("💰 Balance check: $%.2f", balance)
     size = min(TRADE_SIZE_USDT, balance * 0.95)
     if size < 5:
-        logger.info("Insufficient balance: $%.2f", balance)
+        logger.info("Insufficient balance: $%.2f — need at least $5 in Unified Account", balance)
         return
 
     price = signal.price
