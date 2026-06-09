@@ -403,6 +403,15 @@ def bybit_signed_get(path: str, params: str) -> dict | None:
         return None
 
 
+def _safe_float(val, default=0.0) -> float:
+    if not val or val == "":
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
 def fetch_balance() -> float:
     if PAPER_MODE:
         return 999.0
@@ -412,8 +421,32 @@ def fetch_balance() -> float:
     coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
     for c in coins:
         if c.get("coin") == "USDT":
-            return float(c.get("availableToWithdraw", 0))
+            for field in ("availableToWithdraw", "walletBalance", "equity"):
+                val = _safe_float(c.get(field))
+                if val > 0:
+                    return val
+            return 0.0
     return 0.0
+
+
+def _get_lot_step(symbol: str) -> float:
+    sym = f"{symbol}USDT" if not symbol.endswith("USDT") else symbol
+    data = http_get(f"https://api.bybit.com/v5/market/instruments-info?category=spot&symbol={sym}")
+    if data and data.get("retCode") == 0:
+        items = data.get("result", {}).get("list", [])
+        if items:
+            step = items[0].get("lotSizeFilter", {}).get("basePrecision", "")
+            if step:
+                try:
+                    return float(step)
+                except ValueError:
+                    pass
+    return 0.01
+
+
+def _round_qty(qty: float, step: float) -> float:
+    import math
+    return math.floor(qty / step) * step
 
 
 def place_buy(symbol: str, usdt_amount: float, price: float) -> bool:
@@ -421,19 +454,18 @@ def place_buy(symbol: str, usdt_amount: float, price: float) -> bool:
         logger.info("📝 PAPER BUY %sUSDT — $%.2f @ %.6f", symbol, usdt_amount, price)
         return True
     qty = usdt_amount / price
-    if price > 100:
-        qty = round(qty, 4)
-    elif price > 1:
-        qty = round(qty, 2)
-    else:
-        qty = round(qty, 0)
+    step = _get_lot_step(symbol)
+    qty = _round_qty(qty, step)
+    if qty <= 0:
+        logger.error("❌ BUY %s: qty rounded to 0", symbol)
+        return False
     result = bybit_signed_post({
         "category": "spot", "symbol": f"{symbol}USDT",
         "side": "Buy", "orderType": "Market",
         "qty": str(qty), "marketUnit": "baseCoin",
     })
     if result and result.get("retCode") == 0:
-        logger.info("✅ BUY %sUSDT — $%.2f @ %.6f", symbol, usdt_amount, price)
+        logger.info("✅ BUY %sUSDT — $%.2f @ %.6f (qty=%s)", symbol, usdt_amount, price, qty)
         return True
     logger.error("❌ BUY failed %s: %s", symbol, result)
     return False
@@ -444,12 +476,11 @@ def place_sell(symbol: str, qty: float) -> bool:
         logger.info("📝 PAPER SELL %sUSDT — qty %.6f", symbol, qty)
         return True
     sell_qty = qty * 0.998
-    if sell_qty > 100:
-        sell_qty = round(sell_qty, 2)
-    elif sell_qty > 1:
-        sell_qty = round(sell_qty, 4)
-    else:
-        sell_qty = round(sell_qty, 6)
+    step = _get_lot_step(symbol)
+    sell_qty = _round_qty(sell_qty, step)
+    if sell_qty <= 0:
+        logger.error("❌ SELL %s: qty rounded to 0", symbol)
+        return False
     result = bybit_signed_post({
         "category": "spot", "symbol": f"{symbol}USDT",
         "side": "Sell", "orderType": "Market",

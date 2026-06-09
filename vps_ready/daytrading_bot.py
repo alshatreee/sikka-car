@@ -61,7 +61,7 @@ TG_CHAT      = ENV.get("TELEGRAM_CHAT_ID", "")
 # ══════════════════════════════════════════════════════════════
 
 # Position sizing
-TRADE_SIZE_USDT    = float(ENV.get("DT_TRADE_SIZE", "50.0"))
+TRADE_SIZE_USDT    = float(ENV.get("DT_TRADE_SIZE", "25.0"))
 MAX_POSITIONS      = int(ENV.get("DT_MAX_POSITIONS", "5"))
 MAX_DAILY_LOSS     = float(ENV.get("DT_MAX_LOSS", "50.0"))
 
