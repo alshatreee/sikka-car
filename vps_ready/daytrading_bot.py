@@ -69,6 +69,7 @@ MAX_DAILY_LOSS     = float(ENV.get("DT_MAX_LOSS", "50.0"))
 ML_RECS_FILE       = BASE_DIR / "ml_recommendations.json"
 CHANNEL_MEM_FILE   = BASE_DIR / "channel_memory.json"
 SIGNAL_TRACKER     = BASE_DIR / "signal_tracker.json"
+AI_ANALYSIS_FILE   = BASE_DIR / "ai_channel_analysis.json"
 
 # Entry: RSI bounce from oversold
 RSI_OVERSOLD       = float(ENV.get("DT_RSI_OVERSOLD", "40"))
@@ -360,6 +361,27 @@ def load_bot_intel() -> dict:
         except Exception:
             pass
 
+    # AI channel analysis (Cerebras via bot_monitor)
+    if AI_ANALYSIS_FILE.exists():
+        try:
+            ai = json.loads(AI_ANALYSIS_FILE.read_text())
+            for sig in ai.get("buy", []):
+                sym = sig.get("symbol", "").upper().replace("USDT", "")
+                if sym:
+                    if sym not in intel:
+                        intel[sym] = {}
+                    conf = sig.get("confidence", "low")
+                    intel[sym]["ai_buy"] = {"high": 3, "medium": 2, "low": 1}.get(conf, 1)
+                    intel[sym]["ai_reason"] = sig.get("reason", "")
+            for sig in ai.get("sell", []):
+                sym = sig.get("symbol", "").upper().replace("USDT", "")
+                if sym:
+                    if sym not in intel:
+                        intel[sym] = {}
+                    intel[sym]["ai_sell"] = True
+        except Exception:
+            pass
+
     _bot_intel_cache = intel
     _bot_intel_ts = time.time()
     return intel
@@ -407,6 +429,21 @@ def get_intel_boost(symbol: str) -> tuple[float, list[str]]:
     elif 0 <= wr < 30:
         boost -= 10
         reasons.append(f"⚠WR{wr:.0f}%")
+
+    # AI analysis boost (from Cerebras via bot_monitor)
+    ai_buy = data.get("ai_buy", 0)
+    if ai_buy >= 3:
+        boost += 12
+        reasons.append(f"AI🟢high")
+    elif ai_buy >= 2:
+        boost += 8
+        reasons.append(f"AI🟢med")
+    elif ai_buy >= 1:
+        boost += 4
+        reasons.append(f"AI🟢low")
+    if data.get("ai_sell"):
+        boost -= 15
+        reasons.append("AI🔴sell")
 
     return boost, reasons
 

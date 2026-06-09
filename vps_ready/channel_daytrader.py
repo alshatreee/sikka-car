@@ -42,6 +42,7 @@ ENV_FILE   = BASE_DIR / ".env_monthly"
 STATE_FILE = BASE_DIR / "channel_daytrader_state.json"
 LOG_FILE   = BASE_DIR / "channel_daytrader.log"
 SESSION    = str(BASE_DIR / "channel_dt_session")
+RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
 
 # ── Load env ──
 def load_env() -> dict:
@@ -241,12 +242,27 @@ def parse_signal(text: str, channel: str) -> ChannelSignal | None:
     )
 
 
+def _save_raw_messages(messages_batch: list[dict]):
+    existing = []
+    if RAW_MSGS_FILE.exists():
+        try:
+            existing = json.loads(RAW_MSGS_FILE.read_text())
+        except Exception:
+            existing = []
+    existing.extend(messages_batch)
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    existing = [m for m in existing if m.get("ts", "") > cutoff]
+    existing = existing[-500:]
+    RAW_MSGS_FILE.write_text(json.dumps(existing, ensure_ascii=False, indent=1))
+
+
 def scan_channels() -> list[ChannelSignal]:
     if not _HAS_TELETHON or not TG_API_ID or not TG_API_HASH:
         logger.warning("Telethon not configured")
         return []
 
     signals = []
+    raw_batch = []
     try:
         with TelegramClient(SESSION, TG_API_ID, TG_API_HASH) as client:
             since = datetime.now(timezone.utc) - timedelta(minutes=SCAN_INTERVAL_SEC // 60 + 5)
@@ -259,6 +275,12 @@ def scan_channels() -> list[ChannelSignal]:
                             continue
                         if msg.date and msg.date.replace(tzinfo=timezone.utc) < since:
                             continue
+                        raw_batch.append({
+                            "channel": ch_name,
+                            "text": msg.text,
+                            "ts": msg.date.replace(tzinfo=timezone.utc).isoformat() if msg.date else datetime.now(timezone.utc).isoformat(),
+                            "msg_id": msg.id,
+                        })
                         sig = parse_signal(msg.text, ch_name)
                         if sig:
                             signals.append(sig)
@@ -266,6 +288,12 @@ def scan_channels() -> list[ChannelSignal]:
                     logger.debug("Channel %s: %s", ch_name, e)
     except Exception as e:
         logger.error("Telegram scan error: %s", e)
+
+    if raw_batch:
+        try:
+            _save_raw_messages(raw_batch)
+        except Exception:
+            pass
 
     return signals
 
@@ -527,6 +555,23 @@ def score_signal(st: CDTState, sig: ChannelSignal) -> float:
         score += 5
     elif sig.tp_pct > 15:
         score -= 5
+
+    # AI analysis boost (from bot_monitor Cerebras)
+    ai_file = BASE_DIR / "ai_channel_analysis.json"
+    if ai_file.exists():
+        try:
+            ai = json.loads(ai_file.read_text())
+            for s in ai.get("buy", []):
+                if s.get("symbol", "").upper() == sig.symbol.upper():
+                    conf = s.get("confidence", "low")
+                    score += {"high": 12, "medium": 8, "low": 4}.get(conf, 4)
+                    break
+            for s in ai.get("sell", []):
+                if s.get("symbol", "").upper() == sig.symbol.upper():
+                    score -= 15
+                    break
+        except Exception:
+            pass
 
     return score
 

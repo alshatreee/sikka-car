@@ -32,6 +32,10 @@ load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
 SERVICE_NAME = os.getenv("MONITOR_SERVICE", "monthly-channel-bot")
 NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
+CEREBRAS_KEY = os.getenv("CEREBRAS_API_KEY", "")
+
+RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
+AI_ANALYSIS_FILE = BASE_DIR / "ai_channel_analysis.json"
 
 CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "900"))
 LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "30"))
@@ -369,6 +373,144 @@ def build_health_report(state: MonitorState) -> str:
     return "\n".join(lines)
 
 
+# ══════════════════════════════════════════════════════════════
+# AI CHANNEL ANALYSIS (Cerebras)
+# ══════════════════════════════════════════════════════════════
+
+_ai_last_run = 0
+_AI_INTERVAL = 600  # every 10 min
+
+def _cerebras_analyze(messages_text: str) -> dict | None:
+    if not CEREBRAS_KEY:
+        return None
+    import urllib.request as req
+    prompt = (
+        "أنت محلل عملات رقمية محترف. حلل رسائل القنوات التالية واستخرج:\n"
+        "1. أي عملة مذكورة بإيجابية (شراء/صعود/بول ران/بامب/اختراق/فرصة/أي توصية إيجابية)\n"
+        "2. أي عملة مذكورة بسلبية (بيع/هبوط/دامب/تحذير)\n"
+        "3. مستوى الثقة (high/medium/low)\n\n"
+        "افهم المصطلحات المعرّبة: بول ران=bull run, بامب=pump, بريك اوت=breakout, "
+        "لونق=long, شورت=short, دامب=dump, تارقت=target, ستوب لوس=stop loss, "
+        "هودل=HODL, رالي=rally, مون=moon, سبورت=support, ريزستنس=resistance, "
+        "تريند=trend, بيرش=bearish, بولش=bullish, اكيوميوليت=accumulate, "
+        "دي سي ايه=DCA, ريكفري=recovery\n\n"
+        "أجب بـ JSON فقط بهذا الشكل:\n"
+        '{"buy":[{"symbol":"XRP","confidence":"high","reason":"بول ران + اختراق"}],'
+        '"sell":[{"symbol":"BTC","confidence":"medium","reason":"هبوط"}],'
+        '"watch":[{"symbol":"ETH","note":"ذكر بدون توصية واضحة"}]}\n\n'
+        "الرسائل:\n" + messages_text
+    )
+    body = json.dumps({
+        "model": "llama-4-scout-17b-16e-instruct",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 1000,
+    })
+    try:
+        r = req.Request("https://api.cerebras.ai/v1/chat/completions",
+                        data=body.encode(),
+                        headers={"Content-Type": "application/json",
+                                 "Authorization": f"Bearer {CEREBRAS_KEY}"})
+        with req.urlopen(r, timeout=30) as resp:
+            data = json.loads(resp.read())
+        content = data["choices"][0]["message"]["content"]
+        start = content.find("{")
+        end = content.rfind("}") + 1
+        if start >= 0 and end > start:
+            return json.loads(content[start:end])
+    except Exception as e:
+        log(f"Cerebras AI error: {e}")
+    return None
+
+
+def run_ai_analysis():
+    global _ai_last_run
+    now = time.time()
+    if now - _ai_last_run < _AI_INTERVAL:
+        return
+    _ai_last_run = now
+
+    if not CEREBRAS_KEY or not RAW_MSGS_FILE.exists():
+        return
+
+    try:
+        raw = json.loads(RAW_MSGS_FILE.read_text())
+    except Exception:
+        return
+
+    if not raw:
+        return
+
+    existing = {}
+    if AI_ANALYSIS_FILE.exists():
+        try:
+            existing = json.loads(AI_ANALYSIS_FILE.read_text())
+        except Exception:
+            existing = {}
+
+    seen_ids = set(existing.get("_seen_ids", []))
+    new_msgs = [m for m in raw if str(m.get("msg_id", "")) not in seen_ids]
+    if not new_msgs:
+        return
+
+    batch_text = ""
+    for m in new_msgs[-30:]:
+        batch_text += f"[{m.get('channel','')}] {m.get('text','')}\n---\n"
+
+    if not batch_text.strip():
+        return
+
+    log(f"AI: تحليل {len(new_msgs)} رسالة جديدة...")
+    result = _cerebras_analyze(batch_text)
+    if not result:
+        return
+
+    buy_signals = existing.get("buy", [])
+    sell_signals = existing.get("sell", [])
+    watch_list = existing.get("watch", [])
+
+    for sig in result.get("buy", []):
+        sym = sig.get("symbol", "").upper()
+        if sym and not any(s.get("symbol") == sym for s in buy_signals[-20:]):
+            sig["symbol"] = sym
+            sig["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            buy_signals.append(sig)
+
+    for sig in result.get("sell", []):
+        sym = sig.get("symbol", "").upper()
+        if sym:
+            sig["symbol"] = sym
+            sig["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+            sell_signals.append(sig)
+
+    for sig in result.get("watch", []):
+        sym = sig.get("symbol", "").upper()
+        if sym:
+            sig["symbol"] = sym
+            watch_list.append(sig)
+
+    seen_ids.update(str(m.get("msg_id", "")) for m in new_msgs)
+    seen_list = list(seen_ids)[-500:]
+
+    output = {
+        "last_analysis": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "buy": buy_signals[-50:],
+        "sell": sell_signals[-50:],
+        "watch": watch_list[-30:],
+        "_seen_ids": seen_list,
+    }
+    AI_ANALYSIS_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=1))
+
+    buy_count = len(result.get("buy", []))
+    sell_count = len(result.get("sell", []))
+    if buy_count or sell_count:
+        log(f"AI: {buy_count} شراء, {sell_count} بيع")
+        for s in result.get("buy", []):
+            log(f"  🟢 {s.get('symbol')} [{s.get('confidence')}]: {s.get('reason','')}")
+        for s in result.get("sell", []):
+            log(f"  🔴 {s.get('symbol')} [{s.get('confidence')}]: {s.get('reason','')}")
+
+
 def main():
     if "--report" in sys.argv:
         state = load_state()
@@ -402,6 +544,7 @@ def main():
     while True:
         time.sleep(CHECK_INTERVAL)
         try:
+            run_ai_analysis()
             alerts = run_checks(state)
             if alerts:
                 import hashlib
