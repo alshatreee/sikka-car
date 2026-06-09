@@ -84,23 +84,49 @@ WATCH_CHANNELS = [
 PAPER_MODE = True
 
 # ── Signal parsing patterns ──
+
+# Arabic transliterations of English trading terms
+# بول ران = bull run, بامب = pump, بريك اوت = breakout, etc.
 _BUY_RE = re.compile(
-    r'شراء|buy|long|صعود|صاعد|دخول|إيجابي|bullish|اختراق|ارتفاع|فرصة',
+    r'شراء|buy|long|صعود|صاعد|دخول|إيجابي|bullish|اختراق|ارتفاع|فرصة'
+    r'|بول\s*ران|بول\s*رن|بولش|بولي?ش'              # bull run, bullish
+    r'|بامب|بمب|بامبينق|بمبنق'                       # pump, pumping
+    r'|بريك\s*أوت|بريك\s*اوت|بريكاوت'               # breakout
+    r'|لونق|لونج'                                     # long
+    r'|رالي|رالى'                                     # rally
+    r'|مون|تو\s*ذا?\s*مون|موون'                      # moon, to the moon
+    r'|هاي|ها[يى]ر|أعلى'                              # high, higher
+    r'|سبورت|دعم'                                     # support
+    r'|ريفرسال|انعكاس'                                # reversal
+    r'|ريكفري|تعاف[يى]'                               # recovery
+    r'|اكيوميوليت|اكيوملي?ت|تجميع'                    # accumulate
+    r'|باي|با[يى]'                                     # buy
+    r'|انتري|إنتري'                                    # entry
+    r'|سيقنال|سيجنال|إشارة|اشارة'                     # signal
+    r'|تريند\s*أب|تريند\s*اب|ترند\s*صاعد'            # trend up
+    r'|قاع|قاعين|ارتداد|رجوع',                        # bottom, bounce
     re.I
 )
 _COIN_RE = re.compile(
     r'\b([A-Z]{2,10})(?:/USDT|USDT|\s*/\s*USDT)\b'
 )
 _PRICE_RE = re.compile(
-    r'(?:سعر|entry|price|دخول)[:\s]*\$?([\d.]+)',
+    r'(?:سعر|entry|price|دخول|انتري|إنتري)[:\s]*\$?([\d.]+)',
     re.I
 )
 _TARGET_RE = re.compile(
-    r'(?:هدف|target|tp|الهدف|بيع)[:\s]*\$?([\d.]+)',
+    r'(?:هدف|target|tp|الهدف|بيع|تيك\s*بروفت|تارقت|تارجت)[:\s]*\$?([\d.]+)',
     re.I
 )
 _STOP_RE = re.compile(
-    r'(?:وقف|stop|sl|ستوب)[:\s]*\$?([\d.]+)',
+    r'(?:وقف|stop|sl|ستوب|ستوب\s*لوس|وقف\s*خسار[ةه])[:\s]*\$?([\d.]+)',
+    re.I
+)
+
+# Bearish terms — skip these signals
+_SELL_RE = re.compile(
+    r'بيع فوري|بير\s*ران|بيرش|بيري?ش|شورت|دامب|دمب'
+    r'|ريزستنس|مقاومة|هبوط|هابط|سلبي|خروج|sell|short|bearish|dump',
     re.I
 )
 
@@ -170,6 +196,8 @@ class ChannelSignal:
 
 def parse_signal(text: str, channel: str) -> ChannelSignal | None:
     if not _BUY_RE.search(text):
+        return None
+    if _SELL_RE.search(text) and not re.search(r'شراء|buy|long|دخول', text, re.I):
         return None
 
     coins = _COIN_RE.findall(text)
