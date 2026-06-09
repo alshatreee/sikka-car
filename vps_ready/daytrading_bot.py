@@ -635,19 +635,37 @@ def bybit_signed_post(params: dict) -> dict | None:
         return None
 
 
+def _get_lot_step(symbol: str) -> float:
+    data = http_get(f"https://api.bybit.com/v5/market/instruments-info?category=spot&symbol={symbol}")
+    if data and data.get("retCode") == 0:
+        items = data.get("result", {}).get("list", [])
+        if items:
+            step = items[0].get("lotSizeFilter", {}).get("basePrecision", "")
+            if step:
+                try:
+                    return float(step)
+                except ValueError:
+                    pass
+    return 0.01
+
+
+def _round_qty(qty: float, step: float) -> float:
+    import math
+    return math.floor(qty / step) * step
+
+
 def place_buy(symbol: str, usdt_amount: float, price: float) -> bool:
     if PAPER_MODE:
         logger.info("📝 PAPER BUY %s — $%.2f @ %.6f", symbol, usdt_amount, price)
         return True
 
     qty = usdt_amount / price
-    # Round to appropriate precision
-    if price > 100:
-        qty = round(qty, 4)
-    elif price > 1:
-        qty = round(qty, 2)
-    else:
-        qty = round(qty, 0)
+    step = _get_lot_step(symbol)
+    qty = _round_qty(qty, step)
+
+    if qty <= 0:
+        logger.error("❌ BUY %s: qty rounded to 0 (step=%s)", symbol, step)
+        return False
 
     result = bybit_signed_post({
         "category": "spot",
@@ -658,7 +676,7 @@ def place_buy(symbol: str, usdt_amount: float, price: float) -> bool:
         "marketUnit": "baseCoin",
     })
     if result and result.get("retCode") == 0:
-        logger.info("✅ BUY %s — $%.2f @ %.6f", symbol, usdt_amount, price)
+        logger.info("✅ BUY %s — $%.2f @ %.6f (qty=%s step=%s)", symbol, usdt_amount, price, qty, step)
         return True
     logger.error("❌ BUY failed %s: %s", symbol, result)
     return False
@@ -669,12 +687,12 @@ def place_sell(symbol: str, qty: float) -> bool:
         logger.info("📝 PAPER SELL %s — qty %.6f", symbol, qty)
         return True
 
-    if qty > 100:
-        qty = round(qty, 2)
-    elif qty > 1:
-        qty = round(qty, 4)
-    else:
-        qty = round(qty, 6)
+    step = _get_lot_step(symbol)
+    qty = _round_qty(qty, step)
+
+    if qty <= 0:
+        logger.error("❌ SELL %s: qty rounded to 0 (step=%s)", symbol, step)
+        return False
 
     result = bybit_signed_post({
         "category": "spot",
