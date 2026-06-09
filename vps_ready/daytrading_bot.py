@@ -493,15 +493,14 @@ def analyze_symbol(symbol: str) -> Signal | None:
         reason_parts.append(f"support bounce ({price_range:.1f}% range)")
 
     # Strategy 4: Momentum Breakout (works in bullish markets)
-    # Price breaks above 3h high + volume + RSI 50-65 (not overbought)
-    elif has_volume and trend == "up" and 45 <= rsi_now <= 68:
+    # Price breaks above 3h high OR 3 green candles, RSI 45-68
+    elif trend == "up" and 45 <= rsi_now <= 68:
         high_3h = max(c["high"] for c in candles_15m[-12:])
         prev_high = max(c["high"] for c in candles_15m[-24:-12]) if len(candles_15m) >= 24 else high_3h
-        breakout = price >= high_3h and high_3h > prev_high
-        # Also check: price is accelerating (last 3 candles all green)
+        breakout = price >= high_3h * 0.999 and high_3h > prev_high
         green_run = all(candles_15m[-(i+1)]["close"] > candles_15m[-(i+1)]["open"]
                        for i in range(3)) if len(candles_15m) >= 3 else False
-        if breakout or (green_run and vol_r >= 1.5):
+        if (breakout and vol_r >= 1.0) or (green_run and trend == "up"):
             strategy = "MOMENTUM"
             score = 52.0
             score += min((vol_r - 1) * 8, 12)
@@ -511,16 +510,23 @@ def analyze_symbol(symbol: str) -> Signal | None:
                 reason_parts.append(f"3x green")
 
     # Strategy 5: Pullback in Uptrend (most common pattern in bull market)
-    # Uptrend + RSI dipped to 42-52 zone + now turning up + any volume
-    elif trend == "up" and 42 <= rsi_now <= 55 and rsi_now > rsi_prev:
-        pullback_depth = 60 - rsi_now  # deeper pullback = better
-        if pullback_depth >= 5:
+    # Uptrend + RSI in 38-55 zone + (turning up OR last candle green)
+    elif trend == "up" and 38 <= rsi_now <= 55:
+        pullback_depth = 60 - rsi_now
+        last_green = candles_15m[-1]["close"] > candles_15m[-1]["open"]
+        rsi_turning = rsi_now > rsi_prev
+        if pullback_depth >= 5 and (rsi_turning or last_green):
             strategy = "PULLBACK"
             score = 50.0
-            score += min(pullback_depth * 1.5, 12)
+            score += min(pullback_depth * 1.5, 15)
+            if rsi_turning:
+                score += 3
+            if last_green:
+                score += 3
             if vol_r >= 1.2:
                 score += 5
-            reason_parts.append(f"pullback RSI {rsi_now:.0f}↑ in uptrend")
+            reason_parts.append(f"pullback RSI {rsi_now:.0f} in uptrend"
+                              + (" ↑" if rsi_turning else " 🟢candle"))
 
     if strategy is None:
         return None
