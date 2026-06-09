@@ -673,19 +673,22 @@ def run_cycle(st: CDTState):
         return
 
     # Scan channels for signals
+    logger.info("🔍 Cycle %d — scanning %d channels...", _cycle_count, len(WATCH_CHANNELS))
     signals = scan_channels()
 
     if signals:
-        # Score and sort
         scored = [(sig, score_signal(st, sig)) for sig in signals]
         scored.sort(key=lambda x: x[1], reverse=True)
 
         logger.info("📡 Found %d channel signals", len(signals))
         for sig, score in scored:
+            logger.info("  → %s score %.0f from %s", sig.symbol, score, sig.channel)
             if score >= 50 and len(st.positions) < MAX_POSITIONS:
                 open_from_signal(st, sig)
+    else:
+        logger.info("📭 No new signals from channels")
 
-    # Healthcheck
+    # Healthcheck every 6 cycles
     if _cycle_count % 6 == 0:
         logger.info("💓 Cycle %d | %d/%d positions | trades: %d | PnL: $%.2f",
                      _cycle_count, len(st.positions), MAX_POSITIONS,
