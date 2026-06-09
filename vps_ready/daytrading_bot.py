@@ -195,7 +195,11 @@ def fetch_balance() -> float:
     coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
     for c in coins:
         if c.get("coin") == "USDT":
-            return float(c.get("availableToWithdraw", 0))
+            val = c.get("availableToWithdraw", 0)
+            try:
+                return float(val) if val != "" else 0.0
+            except (ValueError, TypeError):
+                return 0.0
     return 0.0
 
 
@@ -293,9 +297,14 @@ def load_bot_intel() -> dict:
             for sym, data in ml.get("per_symbol", ml).items():
                 sym_upper = sym.upper().replace("/USDT", "").replace("USDT", "")
                 if isinstance(data, dict):
+                    def _safe_float(v, default=0.0):
+                        try:
+                            return float(v) if v != "" else default
+                        except (ValueError, TypeError):
+                            return default
                     intel[sym_upper] = {
-                        "ml_profit": float(data.get("max_profit_pct", data.get("entry_saving_pct", 0))),
-                        "ml_drawdown": abs(float(data.get("max_drawdown_pct", 0))),
+                        "ml_profit": _safe_float(data.get("max_profit_pct", data.get("entry_saving_pct", 0))),
+                        "ml_drawdown": abs(_safe_float(data.get("max_drawdown_pct", 0))),
                     }
         except Exception:
             pass
@@ -1298,7 +1307,8 @@ def main():
             save_state(st)
             break
         except Exception as e:
-            logger.error("Cycle error: %s", e)
+            import traceback
+            logger.error("Cycle error: %s\n%s", e, traceback.format_exc())
 
         time.sleep(SCAN_INTERVAL_SEC)
 
