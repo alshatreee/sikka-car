@@ -84,38 +84,53 @@ WATCH_CHANNELS = [
 PAPER_MODE = True
 
 # ── Signal parsing patterns ──
+#
+# Philosophy: These are CRYPTO channels — everything is about coins.
+# Any message mentioning a coin is a potential signal UNLESS it's
+# explicitly bearish. No need to match specific buy keywords.
+#
 
-# Arabic transliterations of English trading terms
-# بول ران = bull run, بامب = pump, بريك اوت = breakout, etc.
-_BUY_RE = re.compile(
-    r'شراء|buy|long|صعود|صاعد|دخول|إيجابي|bullish|اختراق|ارتفاع|فرصة'
-    r'|بول\s*ران|بول\s*رن|بولش|بولي?ش'              # bull run, bullish
-    r'|بامب|بمب|بامبينق|بمبنق'                       # pump, pumping
-    r'|بريك\s*أوت|بريك\s*اوت|بريكاوت'               # breakout
-    r'|لونق|لونج'                                     # long
-    r'|رالي|رالى'                                     # rally
-    r'|مون|تو\s*ذا?\s*مون|موون'                      # moon, to the moon
-    r'|هاي|ها[يى]ر|أعلى'                              # high, higher
-    r'|سبورت|دعم'                                     # support
-    r'|ريفرسال|انعكاس'                                # reversal
-    r'|ريكفري|تعاف[يى]'                               # recovery
-    r'|اكيوميوليت|اكيوملي?ت|تجميع'                    # accumulate
-    r'|باي|با[يى]'                                     # buy
-    r'|انتري|إنتري'                                    # entry
-    r'|سيقنال|سيجنال|إشارة|اشارة'                     # signal
-    r'|تريند\s*أب|تريند\s*اب|ترند\s*صاعد'            # trend up
-    r'|قاع|قاعين|ارتداد|رجوع',                        # bottom, bounce
+# Coin detection — flexible: "XRP", "XRP/USDT", "عملة XRP", "$XRP"
+_COIN_RE = re.compile(
+    r'\b([A-Z]{2,10})(?:/USDT|USDT|\s*/\s*USDT)?\b'
+    r'|\$([A-Z]{2,10})\b'
+)
+
+# Bearish / sell / warning — SKIP these
+_BEARISH_RE = re.compile(
+    r'بيع\s*فوري|بيع\s*كامل|خروج\s*فوري|خروج\s*كامل'
+    r'|بير\s*ران|بيرش|بيري?ش'                         # bear run, bearish
+    r'|شورت|short|sell\s*all'                          # short, sell all
+    r'|دامب|دمب|دامبينق|dump'                          # dump
+    r'|هبوط\s*حاد|هبوط\s*قوي|انهيار|كراش|crash'       # crash
+    r'|سكام|scam|نصب|احتيال'                           # scam
+    r'|تحذير\s*خسار|خطر\s*كبير',                       # danger warning
     re.I
 )
-_COIN_RE = re.compile(
-    r'\b([A-Z]{2,10})(?:/USDT|USDT|\s*/\s*USDT)\b'
+
+# Bullish boost — gives higher confidence score
+_BULLISH_RE = re.compile(
+    r'شراء|buy|long|صعود|صاعد|دخول|إيجابي|bullish|اختراق|ارتفاع|فرصة'
+    r'|بول\s*ران|بول\s*رن|بولش|بولي?ش'
+    r'|بامب|بمب|بامبينق|بمبنق'
+    r'|بريك\s*أوت|بريك\s*اوت|بريكاوت'
+    r'|لونق|لونج|رالي|رالى|مون|موون'
+    r'|ريفرسال|انعكاس|ريكفري|تعاف[يى]'
+    r'|اكيوميوليت|اكيوملي?ت|تجميع'
+    r'|باي|با[يى]|انتري|إنتري'
+    r'|سيقنال|سيجنال|إشارة|اشارة'
+    r'|قاع|ارتداد|دعم|سبورت'
+    r'|هدف|target|tp|تارقت|هودل|هولد|HODL',
+    re.I
 )
+
+# Price extraction
 _PRICE_RE = re.compile(
-    r'(?:سعر|entry|price|دخول|انتري|إنتري)[:\s]*\$?([\d.]+)',
+    r'(?:سعر|entry|price|دخول|انتري|إنتري|عند)[:\s]*\$?([\d.]+)',
     re.I
 )
 _TARGET_RE = re.compile(
-    r'(?:هدف|target|tp|الهدف|بيع|تيك\s*بروفت|تارقت|تارجت)[:\s]*\$?([\d.]+)',
+    r'(?:هدف|target|tp|الهدف|تيك\s*بروفت|تارقت|تارجت)[:\s]*\$?([\d.]+)',
     re.I
 )
 _STOP_RE = re.compile(
@@ -123,18 +138,14 @@ _STOP_RE = re.compile(
     re.I
 )
 
-# Bearish terms — skip these signals
-_SELL_RE = re.compile(
-    r'بيع فوري|بير\s*ران|بيرش|بيري?ش|شورت|دامب|دمب'
-    r'|ريزستنس|مقاومة|هبوط|هابط|سلبي|خروج|sell|short|bearish|dump',
-    re.I
-)
-
 _BLACKLIST = {
-    "USD", "USDT", "USDC", "NFT", "CEO", "DCA", "ATH", "ATL",
-    "RSI", "ETF", "SEC", "API", "URL", "PDF", "VIP", "THE",
-    "BNB", "FOR", "ALL", "NEW", "NOW", "TOP", "BIG", "LOW",
-    "HIGH", "FREE", "JOIN", "BEST", "PUMP", "DUMP",
+    "USD", "USDT", "USDC", "BUSD", "DAI", "NFT", "CEO", "DCA",
+    "ATH", "ATL", "RSI", "ETF", "SEC", "API", "URL", "PDF", "VIP",
+    "THE", "FOR", "ALL", "NEW", "NOW", "TOP", "BIG", "LOW", "HIGH",
+    "FREE", "JOIN", "BEST", "PUMP", "DUMP", "FYI", "IMO", "TBA",
+    "AMA", "FAQ", "OTC", "ICO", "IDO", "IEO", "KYC", "TVL", "APY",
+    "APR", "ROI", "PNL", "FOMO", "FUD", "DYOR", "NFA", "GM", "GN",
+    "WAGMI", "NGMI", "LFG", "SER", "ANON", "BASED", "REKT",
 }
 
 # ── Logging ──
@@ -195,13 +206,17 @@ class ChannelSignal:
 
 
 def parse_signal(text: str, channel: str) -> ChannelSignal | None:
-    if not _BUY_RE.search(text):
-        return None
-    if _SELL_RE.search(text) and not re.search(r'شراء|buy|long|دخول', text, re.I):
+    # Step 1: Skip explicitly bearish messages
+    if _BEARISH_RE.search(text):
         return None
 
-    coins = _COIN_RE.findall(text)
-    coins = [c.upper() for c in coins if c.upper() not in _BLACKLIST and len(c) >= 2]
+    # Step 2: Find coin symbols — any coin mentioned is a potential signal
+    raw_matches = _COIN_RE.findall(text)
+    coins = []
+    for m in raw_matches:
+        sym = (m[0] or m[1]).upper()
+        if sym and sym not in _BLACKLIST and 2 <= len(sym) <= 10:
+            coins.append(sym)
     if not coins:
         return None
 
@@ -491,7 +506,16 @@ def roll_day(st: CDTState):
 # ══════════════════════════════════════════════════════════════
 
 def score_signal(st: CDTState, sig: ChannelSignal) -> float:
-    score = 50.0
+    score = 40.0  # base score — lower threshold since crypto channels = all crypto
+
+    # Bullish language boost — explicit buy/bullish terms = higher confidence
+    bullish_matches = len(_BULLISH_RE.findall(sig.raw_text))
+    if bullish_matches >= 3:
+        score += 20
+    elif bullish_matches >= 2:
+        score += 15
+    elif bullish_matches >= 1:
+        score += 10
 
     # Channel reputation
     ch = st.channel_stats.get(sig.channel, {})
