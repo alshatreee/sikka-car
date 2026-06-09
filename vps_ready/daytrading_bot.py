@@ -94,7 +94,7 @@ WATCHLIST = [
     "PEPEUSDT", "ARBUSDT", "OPUSDT", "FETUSDT", "RNDRUSDT",
     "STXUSDT", "LINKUSDT", "DOGEUSDT", "XRPUSDT", "ADAUSDT",
     "AAVEUSDT", "ENAUSDT", "ONDOUSDT", "PENGUUSDT", "MOVEUSDT",
-    "ARUSDT", "MOVRUSDT", "ALGOUSDT", "ZENUSDT",
+    "ARUSDT", "MOVRUSDT", "ALGOUSDT", "ZENUSDT", "XLMUSDT",
 ]
 
 PAPER_MODE = True
@@ -491,6 +491,24 @@ def analyze_symbol(symbol: str) -> Signal | None:
         score = 52.0
         score += min(price_range * 2, 10)
         reason_parts.append(f"support bounce ({price_range:.1f}% range)")
+
+    # Strategy 4: Momentum Breakout (works in bullish markets)
+    # Price breaks above 3h high + volume + RSI 50-65 (not overbought)
+    elif has_volume and trend == "up" and 45 <= rsi_now <= 68:
+        high_3h = max(c["high"] for c in candles_15m[-12:])
+        prev_high = max(c["high"] for c in candles_15m[-24:-12]) if len(candles_15m) >= 24 else high_3h
+        breakout = price >= high_3h and high_3h > prev_high
+        # Also check: price is accelerating (last 3 candles all green)
+        green_run = all(candles_15m[-(i+1)]["close"] > candles_15m[-(i+1)]["open"]
+                       for i in range(3)) if len(candles_15m) >= 3 else False
+        if breakout or (green_run and vol_r >= 1.5):
+            strategy = "MOMENTUM"
+            score = 52.0
+            score += min((vol_r - 1) * 8, 12)
+            if breakout:
+                reason_parts.append(f"breakout high")
+            if green_run:
+                reason_parts.append(f"3x green")
 
     if strategy is None:
         return None
