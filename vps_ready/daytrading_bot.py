@@ -510,6 +510,18 @@ def analyze_symbol(symbol: str) -> Signal | None:
             if green_run:
                 reason_parts.append(f"3x green")
 
+    # Strategy 5: Pullback in Uptrend (most common pattern in bull market)
+    # Uptrend + RSI dipped to 42-52 zone + now turning up + any volume
+    elif trend == "up" and 42 <= rsi_now <= 55 and rsi_now > rsi_prev:
+        pullback_depth = 60 - rsi_now  # deeper pullback = better
+        if pullback_depth >= 5:
+            strategy = "PULLBACK"
+            score = 50.0
+            score += min(pullback_depth * 1.5, 12)
+            if vol_r >= 1.2:
+                score += 5
+            reason_parts.append(f"pullback RSI {rsi_now:.0f}↑ in uptrend")
+
     if strategy is None:
         return None
 
@@ -1203,22 +1215,41 @@ def main():
 
     if args.scan:
         print(f"\n{'═' * 60}")
-        print(f"  SCANNING {len(WATCHLIST)} COINS (3 strategies)...")
+        print(f"  SCANNING {len(WATCHLIST)} COINS (5 strategies)...")
         print(f"{'═' * 60}")
-        # Show current RSI for all coins first
         print(f"\n  📊 Market Overview:")
         print(f"  {'─' * 56}")
         for sym in WATCHLIST:
-            candles = fetch_klines(sym, "15", 30)
-            if not candles:
+            candles_15m = fetch_klines(sym, "15", 100)
+            candles_1h = fetch_klines(sym, "60", 50)
+            if not candles_15m or len(candles_15m) < 25:
                 continue
-            closes = [c["close"] for c in candles]
-            rsi_vals = compute_rsi(closes, 14)
-            if not rsi_vals:
+            closes_15m = [c["close"] for c in candles_15m]
+            rsi_vals = compute_rsi(closes_15m, 14)
+            if not rsi_vals or len(rsi_vals) < 2:
                 continue
             rsi = rsi_vals[-1]
+            rsi_p = rsi_vals[-2]
+            vol_r = volume_ratio(candles_15m)
+            # trend
+            tr = "?"
+            if candles_1h and len(candles_1h) >= 25:
+                c1h = [c["close"] for c in candles_1h]
+                e9 = compute_ema(c1h, 9)
+                e21 = compute_ema(c1h, 21)
+                if e9 and e21:
+                    tr = "↑" if e9[-1] > e21[-1] else "↓"
+            rsi_dir = "↑" if rsi > rsi_p else "↓"
             icon = "🟢" if rsi <= RSI_OVERSOLD else "⚪" if rsi <= 50 else "🔴"
-            print(f"  {icon} {sym:12s} RSI: {rsi:5.1f} | price: {closes[-1]:.6f}")
+            note = ""
+            if rsi <= RSI_OVERSOLD and rsi > rsi_p:
+                note = " ← RSI bounce!"
+            elif tr == "↑" and 42 <= rsi <= 55 and rsi > rsi_p:
+                note = " ← pullback candidate"
+            elif vol_r >= 1.3 and tr == "↑":
+                note = " ← volume spike"
+            print(f"  {icon} {sym:12s} RSI:{rsi:5.1f}{rsi_dir} | vol:×{vol_r:.1f} | "
+                  f"trend:{tr}{note}")
             time.sleep(0.15)
         print()
         st = load_state()
