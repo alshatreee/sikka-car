@@ -447,7 +447,15 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
                                  "User-Agent": _UA})
         with req.urlopen(r, timeout=30) as resp:
             data = json.loads(resp.read())
-        content = data["choices"][0]["message"]["content"]
+        choices = data.get("choices") or []
+        if not choices:
+            log(f"Cerebras: empty choices — {json.dumps(data)[:300]}")
+            return None
+        msg = choices[0].get("message") or choices[0].get("delta") or {}
+        content = msg.get("content") or msg.get("text") or ""
+        if not content:
+            log(f"Cerebras: no content — {json.dumps(choices[0])[:300]}")
+            return None
         start = content.find("{")
         end = content.rfind("}") + 1
         if start >= 0 and end > start:
@@ -459,9 +467,9 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
                 detail = " | " + e.read().decode()[:300]
             except Exception:
                 pass
-        if "model_not_found" in detail:
+        if "model_not_found" in str(detail):
             global _cerebras_model
-            _cerebras_model = ""  # re-discover on next attempt
+            _cerebras_model = ""
         log(f"Cerebras AI error: {e}{detail}")
     return None
 
