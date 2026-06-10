@@ -73,7 +73,7 @@ SIGNAL_TRACKER     = BASE_DIR / "signal_tracker.json"
 AI_ANALYSIS_FILE   = BASE_DIR / "ai_channel_analysis.json"
 
 # Entry: RSI bounce from oversold
-RSI_OVERSOLD       = float(ENV.get("DT_RSI_OVERSOLD", "40"))
+RSI_OVERSOLD       = float(ENV.get("DT_RSI_OVERSOLD", "35"))
 RSI_BOUNCE_MIN     = float(ENV.get("DT_RSI_BOUNCE", "3"))
 MIN_VOLUME_SPIKE   = float(ENV.get("DT_VOL_SPIKE", "1.3"))
 
@@ -81,8 +81,8 @@ MIN_VOLUME_SPIKE   = float(ENV.get("DT_VOL_SPIKE", "1.3"))
 TAKE_PROFIT_PCT    = float(ENV.get("DT_TP_PCT", "3.0"))
 # SL must stay below TP: risking 2 to make 3 breaks even at 40% win rate
 STOP_LOSS_PCT      = float(ENV.get("DT_SL_PCT", "2.0"))
-TRAILING_ACTIVATE  = float(ENV.get("DT_TRAIL_ACT", "2.0"))
-TRAILING_PCT       = float(ENV.get("DT_TRAIL_PCT", "1.5"))
+TRAILING_ACTIVATE  = float(ENV.get("DT_TRAIL_ACT", "1.5"))
+TRAILING_PCT       = float(ENV.get("DT_TRAIL_PCT", "0.8"))
 MAX_HOLD_HOURS     = int(ENV.get("DT_MAX_HOLD", "12"))
 
 # Scan settings
@@ -521,10 +521,11 @@ def analyze_symbol(symbol: str) -> Signal | None:
     score = 0.0
     reason_parts = []
 
-    # Strategy 1: RSI Bounce (original — relaxed to 40)
+    # Strategy 1: RSI Bounce — require confirmation (last candle green)
+    last_green = candles_15m[-1]["close"] > candles_15m[-1]["open"]
     rsi_bounce = rsi_now > rsi_prev and rsi_prev <= RSI_OVERSOLD
     rsi_cross_up = rsi_now > RSI_OVERSOLD and rsi_prev <= RSI_OVERSOLD
-    if rsi_bounce or rsi_cross_up:
+    if (rsi_bounce or rsi_cross_up) and last_green:
         strategy = "RSI"
         score = 55.0
         rsi_depth = max(0, RSI_OVERSOLD - rsi_prev)
@@ -889,9 +890,9 @@ def get_memory_boost(st: DayState, symbol: str) -> tuple[float, list[str]]:
     boost = 0.0
     reasons = []
 
-    # Per-symbol learning
+    # Per-symbol learning (activate after just 2 trades)
     m = st.memory.get(sym)
-    if m and m["trades"] >= 3:
+    if m and m["trades"] >= 2:
         wr = m["wins"] / m["trades"] * 100
         if wr >= 70:
             boost += 10
@@ -899,7 +900,10 @@ def get_memory_boost(st: DayState, symbol: str) -> tuple[float, list[str]]:
         elif wr >= 50:
             boost += 5
             reasons.append(f"myWR{wr:.0f}%")
-        elif wr < 30:
+        elif wr == 0:
+            boost -= 25
+            reasons.append(f"⛔myWR0%")
+        elif wr < 40:
             boost -= 15
             reasons.append(f"⚠myWR{wr:.0f}%")
 
@@ -910,9 +914,9 @@ def get_memory_boost(st: DayState, symbol: str) -> tuple[float, list[str]]:
             boost -= 10
             reasons.append(f"⚠avgPnL{m['avg_pnl']:.1f}%")
 
-    # Streak penalty (3+ consecutive losses = avoid)
+    # Streak penalty (2+ consecutive losses = avoid)
     streak = st.streak.get(sym, 0)
-    if streak >= 3:
+    if streak >= 2:
         boost -= 20
         reasons.append(f"⛔streak{streak}")
     elif streak >= 2:
@@ -1090,7 +1094,7 @@ def scan_markets(st: DayState) -> list[Signal]:
                 if mem_reasons:
                     sig.reason += " | " + " ".join(mem_reasons)
                 # Skip if memory says avoid (score dropped below threshold)
-                if sig.score >= 55:
+                if sig.score >= 62:
                     signals.append(sig)
         except Exception as e:
             logger.debug("Error analyzing %s: %s", symbol, e)
