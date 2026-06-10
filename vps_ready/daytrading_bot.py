@@ -79,7 +79,8 @@ MIN_VOLUME_SPIKE   = float(ENV.get("DT_VOL_SPIKE", "1.3"))
 
 # Exit targets (tight for day trading)
 TAKE_PROFIT_PCT    = float(ENV.get("DT_TP_PCT", "3.0"))
-STOP_LOSS_PCT      = float(ENV.get("DT_SL_PCT", "4.0"))
+# SL must stay below TP: risking 2 to make 3 breaks even at 40% win rate
+STOP_LOSS_PCT      = float(ENV.get("DT_SL_PCT", "2.0"))
 TRAILING_ACTIVATE  = float(ENV.get("DT_TRAIL_ACT", "2.0"))
 TRAILING_PCT       = float(ENV.get("DT_TRAIL_PCT", "1.5"))
 MAX_HOLD_HOURS     = int(ENV.get("DT_MAX_HOLD", "12"))
@@ -1101,6 +1102,28 @@ def scan_markets(st: DayState) -> list[Signal]:
 
 _cycle_count = 0
 
+_btc_trend_cache = {"ts": 0.0, "up": True}
+
+
+def btc_trend_up() -> bool:
+    """Market filter: most losses cluster in market-wide drops, so block
+    new entries while BTC EMA9 < EMA21 on 1h. Cached 15 min."""
+    now = time.time()
+    if now - _btc_trend_cache["ts"] < 900:
+        return _btc_trend_cache["up"]
+    up = _btc_trend_cache["up"]  # keep last known on API failure
+    candles = fetch_klines("BTCUSDT", "60", 50)
+    if candles and len(candles) >= 25:
+        closes = [c["close"] for c in candles]
+        e9 = compute_ema(closes, 9)
+        e21 = compute_ema(closes, 21)
+        if e9 and e21:
+            up = e9[-1] > e21[-1]
+    _btc_trend_cache["ts"] = now
+    _btc_trend_cache["up"] = up
+    return up
+
+
 def run_cycle(st: DayState):
     global _cycle_count
     _cycle_count += 1
@@ -1117,6 +1140,12 @@ def run_cycle(st: DayState):
     if len(st.positions) >= MAX_POSITIONS:
         if _cycle_count % 12 == 0:
             logger.info("⏸ Max positions (%d/%d) — waiting for exit", len(st.positions), MAX_POSITIONS)
+        return
+
+    # Market filter: no new longs while BTC 1h trend is down
+    if not btc_trend_up():
+        if _cycle_count % 6 == 0:
+            logger.info("🌧 BTC 1h downtrend — skipping new entries")
         return
 
     # Scan for new entries
