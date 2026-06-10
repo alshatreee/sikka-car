@@ -590,16 +590,14 @@ def analyze_symbol(symbol: str) -> Signal | None:
     if strategy is None:
         return None
 
-    # Block strong downtrend for all strategies
-    if trend == "down" and rsi_now < 30:
+    # Only trade coins in 1h uptrend — downtrend "bounces" were the
+    # main loss source (7 of last 10 trades hit SL within hours)
+    if trend != "up":
         return None
 
     # ── COMMON SCORING ──
-    if trend == "up":
-        score += 12
-        reason_parts.append("uptrend")
-    else:
-        score -= 5
+    score += 12
+    reason_parts.append("uptrend")
 
     if has_volume:
         score += min(vol_r * 4, 12)
@@ -806,6 +804,7 @@ class DayState:
     memory: dict = field(default_factory=dict)       # symbol → learning data
     hour_stats: dict = field(default_factory=dict)   # hour → {wins, losses, pnl}
     streak: dict = field(default_factory=dict)       # symbol → consecutive losses
+    sl_times: list = field(default_factory=list)     # recent stop-loss timestamps (circuit breaker)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -999,6 +998,10 @@ def check_exits(st: DayState):
             else:
                 st.losses += 1
 
+            if reason == "SL":
+                st.sl_times.append(now.isoformat())
+                st.sl_times = st.sl_times[-20:]
+
             icon = "🟢" if pnl_usd >= 0 else "🔴"
             notify(f"{icon} CLOSE {sym} [{reason}]\n"
                    f"Entry: {pos.entry_price:.6f} → Exit: {price:.6f}\n"
@@ -1150,6 +1153,15 @@ def run_cycle(st: DayState):
     if not btc_trend_up():
         if _cycle_count % 6 == 0:
             logger.info("🌧 BTC 1h downtrend — skipping new entries")
+        return
+
+    # Circuit breaker: 3+ stop-losses within 4h = hostile market, pause entries
+    now_utc = datetime.now(timezone.utc)
+    recent_sl = [t for t in st.sl_times
+                 if (now_utc - datetime.fromisoformat(t)).total_seconds() < 4 * 3600]
+    if len(recent_sl) >= 3:
+        if _cycle_count % 6 == 0:
+            logger.info("🛑 Circuit breaker: %d SLs in 4h — paused until market calms", len(recent_sl))
         return
 
     # Scan for new entries
