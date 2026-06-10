@@ -380,6 +380,39 @@ def build_health_report(state: MonitorState) -> str:
 _ai_last_run = 0
 _AI_INTERVAL = 600  # every 10 min
 
+_cerebras_model = ""
+_UA = "Mozilla/5.0 (X11; Linux x86_64) bot-monitor/1.0"
+
+
+def _cerebras_get_model() -> str:
+    """Model names change over time — discover what this key can access."""
+    global _cerebras_model
+    if _cerebras_model:
+        return _cerebras_model
+    import urllib.request as req
+    try:
+        r = req.Request("https://api.cerebras.ai/v1/models",
+                        headers={"Authorization": f"Bearer {CEREBRAS_KEY}",
+                                 "User-Agent": _UA})
+        with req.urlopen(r, timeout=15) as resp:
+            ids = [m.get("id", "") for m in json.loads(resp.read()).get("data", [])]
+        for pref in ("llama-3.3-70b", "llama3.3-70b", "qwen-3-235b",
+                     "gpt-oss", "qwen-3-32b", "llama3.1-8b", "llama"):
+            for mid in ids:
+                if pref in mid:
+                    _cerebras_model = mid
+                    log(f"Cerebras model selected: {mid}")
+                    return mid
+        if ids:
+            _cerebras_model = ids[0]
+            log(f"Cerebras model selected: {ids[0]}")
+            return ids[0]
+        log(f"Cerebras: no models available for this key")
+    except Exception as e:
+        log(f"Cerebras models list error: {e}")
+    return "llama-3.3-70b"
+
+
 def _cerebras_analyze(messages_text: str) -> dict | None:
     if not CEREBRAS_KEY:
         return None
@@ -401,7 +434,7 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
         "الرسائل:\n" + messages_text
     )
     body = json.dumps({
-        "model": "llama-4-scout-17b-16e-instruct",
+        "model": _cerebras_get_model(),
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
         "max_tokens": 1000,
@@ -411,7 +444,7 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
                         data=body.encode(),
                         headers={"Content-Type": "application/json",
                                  "Authorization": f"Bearer {CEREBRAS_KEY}",
-                                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) bot-monitor/1.0"})
+                                 "User-Agent": _UA})
         with req.urlopen(r, timeout=30) as resp:
             data = json.loads(resp.read())
         content = data["choices"][0]["message"]["content"]
@@ -426,6 +459,9 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
                 detail = " | " + e.read().decode()[:300]
             except Exception:
                 pass
+        if "model_not_found" in detail:
+            global _cerebras_model
+            _cerebras_model = ""  # re-discover on next attempt
         log(f"Cerebras AI error: {e}{detail}")
     return None
 
