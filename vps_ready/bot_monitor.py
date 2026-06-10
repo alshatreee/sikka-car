@@ -437,7 +437,7 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
         "model": _cerebras_get_model(),
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.1,
-        "max_tokens": 1000,
+        "max_tokens": 8000,
     })
     try:
         r = req.Request("https://api.cerebras.ai/v1/chat/completions",
@@ -445,14 +445,14 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
                         headers={"Content-Type": "application/json",
                                  "Authorization": f"Bearer {CEREBRAS_KEY}",
                                  "User-Agent": _UA})
-        with req.urlopen(r, timeout=30) as resp:
+        with req.urlopen(r, timeout=60) as resp:
             data = json.loads(resp.read())
         choices = data.get("choices") or []
         if not choices:
             log(f"Cerebras: empty choices — {json.dumps(data)[:300]}")
             return None
         msg = choices[0].get("message") or choices[0].get("delta") or {}
-        content = msg.get("content") or msg.get("text") or ""
+        content = msg.get("content") or msg.get("text") or msg.get("reasoning") or ""
         if not content:
             log(f"Cerebras: no content — {json.dumps(choices[0])[:300]}")
             return None
@@ -460,6 +460,7 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
         end = content.rfind("}") + 1
         if start >= 0 and end > start:
             return json.loads(content[start:end])
+        log(f"Cerebras: no JSON in response — {content[:300]}")
     except Exception as e:
         detail = ""
         if hasattr(e, "read"):
