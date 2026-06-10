@@ -89,30 +89,30 @@ PAPER_MODE = True
 
 # Buy/bullish keywords (Arabic + transliterated English)
 _BUY_RE = re.compile(
-    r'شراء|buy|long|صعود|صاعد|دخول|إيجابي|bullish|اختراق|ارتفاع|فرصة'
+    r'شراء|\bbuy\b|\blong\b|صعود|صاعد|دخول|إيجابي|bullish|اختراق|ارتفاع|فرصة'
     r'|بول\s*ران|بول\s*رن|بولش|بولي?ش'              # bull run, bullish
     r'|بامب|بمب|بامبينق|بمبنق'                       # pump, pumping
     r'|بريك\s*أوت|بريك\s*اوت|بريكاوت'               # breakout
     r'|لونق|لونج'                                     # long
     r'|رالي|رالى'                                     # rally
-    r'|مون|تو\s*ذا?\s*مون|موون'                      # moon, to the moon
+    r'|تو\s*ذا?\s*مون|للمون'                          # to the moon (standalone مون
+                                                       # matched يهتمون/يقدمون — removed)
     r'|سبورت|دعم'                                     # support
     r'|ريفرسال|انعكاس'                                # reversal
     r'|ريكفري|تعاف[يى]'                               # recovery
     r'|اكيوميوليت|اكيوملي?ت|تجميع'                    # accumulate
-    r'|باي|با[يى]'                                     # buy
     r'|انتري|إنتري'                                    # entry
-    r'|سيقنال|سيجنال|إشارة|اشارة'                     # signal
     r'|تريند\s*أب|تريند\s*اب|ترند\s*صاعد'            # trend up
-    r'|قاع|قاعين|ارتداد|رجوع',                        # bottom, bounce
+    r'|قاع(?![ا-ي])|ارتداد',                          # bottom (not قاعدة), bounce
     re.I
 )
 
 # Bearish — skip these
 _SELL_RE = re.compile(
     r'بيع\s*فوري|بيع\s*كامل|خروج\s*فوري|خروج\s*كامل'
-    r'|بير\s*ران|بيرش|بيري?ش|شورت|short|sell\s*all'
-    r'|دامب|دمب|dump|هبوط\s*حاد|انهيار|كراش|crash'
+    r'|بير\s*ران|بيرش|بيري?ش|شورت|\bshort\b|sell\s*all'
+    r'|دامب|دمب|\bdump\b|هبوط\s*حاد|انهيار|كراش|crash'
+    r'|كسر\s*(?:ال)?دعم|كسر\s*(?:ال)?سبورت|فقد\s*(?:ال)?دعم'  # broke support = bearish
     r'|سكام|scam|نصب|احتيال',
     re.I
 )
@@ -604,17 +604,19 @@ def score_signal(st: CDTState, sig: ChannelSignal) -> float:
         score -= 5
 
     # AI analysis boost (from bot_monitor Cerebras)
+    # Normalize: AI file stores "ENJUSDT", channel signals store "ENJ"
     ai_file = BASE_DIR / "ai_channel_analysis.json"
     if ai_file.exists():
         try:
+            sig_sym = sig.symbol.upper().replace("USDT", "")
             ai = json.loads(ai_file.read_text())
             for s in ai.get("buy", []):
-                if s.get("symbol", "").upper() == sig.symbol.upper():
+                if s.get("symbol", "").upper().replace("USDT", "") == sig_sym:
                     conf = s.get("confidence", "low")
                     score += {"high": 12, "medium": 8, "low": 4}.get(conf, 4)
                     break
             for s in ai.get("sell", []):
-                if s.get("symbol", "").upper() == sig.symbol.upper():
+                if s.get("symbol", "").upper().replace("USDT", "") == sig_sym:
                     score -= 15
                     break
         except Exception:
@@ -623,15 +625,32 @@ def score_signal(st: CDTState, sig: ChannelSignal) -> float:
     return score
 
 
+def _coin_trend_up(symbol: str) -> bool | None:
+    """1h trend via SMA9 vs SMA21. None = no data (don't block)."""
+    sym = f"{symbol}USDT" if not symbol.endswith("USDT") else symbol
+    data = http_get(f"https://api.bybit.com/v5/market/kline?category=spot&symbol={sym}&interval=60&limit=30")
+    if not data or data.get("retCode") != 0:
+        return None
+    rows = data.get("result", {}).get("list", [])
+    if len(rows) < 21:
+        return None
+    closes = [float(r[4]) for r in reversed(rows)]
+    return sum(closes[-9:]) / 9 > sum(closes[-21:]) / 21
+
+
 def verify_technical(symbol: str) -> tuple[bool, str]:
     rsi = fetch_rsi(symbol)
-    if rsi is None:
-        return True, "no RSI data"
-    if rsi > 75:
-        return False, f"RSI overbought ({rsi:.0f})"
-    if rsi < 25:
-        return True, f"RSI oversold ({rsi:.0f}) — strong buy"
-    return True, f"RSI ok ({rsi:.0f})"
+    if rsi is not None:
+        if rsi > 75:
+            return False, f"RSI overbought ({rsi:.0f})"
+        if rsi < 25:
+            return False, f"RSI {rsi:.0f} — falling knife, wait for bounce"
+    # Coin must be in 1h uptrend — same rule as daytrading_bot
+    trend = _coin_trend_up(symbol)
+    if trend is False:
+        return False, "1h downtrend"
+    rsi_txt = f"RSI {rsi:.0f}" if rsi is not None else "no RSI"
+    return True, f"{rsi_txt}, trend ok"
 
 
 # ══════════════════════════════════════════════════════════════
@@ -770,8 +789,9 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
         return
 
     # Use signal targets if reasonable, otherwise defaults
+    # SL capped at 4% — a 10% channel stop contradicts the 2% risk policy
     tp_pct = sig.tp_pct if 1.5 <= sig.tp_pct <= 10 else TAKE_PROFIT_PCT
-    sl_pct = sig.sl_pct if 2 <= sig.sl_pct <= 10 else STOP_LOSS_PCT
+    sl_pct = sig.sl_pct if 2 <= sig.sl_pct <= 4 else STOP_LOSS_PCT
 
     st.positions[sig.symbol] = {
         "entry": price,
@@ -829,7 +849,7 @@ def run_cycle(st: CDTState):
         logger.info("📡 Found %d channel signals", len(signals))
         for sig, score in scored:
             logger.info("  → %s score %.0f from %s", sig.symbol, score, sig.channel)
-            if score >= 50 and len(st.positions) < MAX_POSITIONS:
+            if score >= 55 and len(st.positions) < MAX_POSITIONS:
                 open_from_signal(st, sig)
     else:
         logger.info("📭 No new signals from channels")
