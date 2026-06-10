@@ -68,12 +68,12 @@ TG_CHAT      = ENV.get("TELEGRAM_CHAT_ID", "")
 # STRATEGY PARAMETERS
 # ══════════════════════════════════════════════════════════════
 
-TRADE_SIZE_USDT   = float(ENV.get("CDT_TRADE_SIZE", "50.0"))
+TRADE_SIZE_USDT   = float(ENV.get("CDT_TRADE_SIZE", "25.0"))
 MAX_POSITIONS     = int(ENV.get("CDT_MAX_POSITIONS", "5"))
 MAX_DAILY_LOSS    = float(ENV.get("CDT_MAX_LOSS", "50.0"))
 
 TAKE_PROFIT_PCT   = float(ENV.get("CDT_TP_PCT", "3.0"))
-STOP_LOSS_PCT     = float(ENV.get("CDT_SL_PCT", "4.0"))
+STOP_LOSS_PCT     = float(ENV.get("CDT_SL_PCT", "2.0"))
 MAX_HOLD_HOURS    = int(ENV.get("CDT_MAX_HOLD", "24"))
 
 SCAN_INTERVAL_SEC = int(ENV.get("CDT_SCAN_SEC", "600"))
@@ -462,16 +462,17 @@ def _qty_str(qty: float) -> str:
     return s
 
 
-def place_buy(symbol: str, usdt_amount: float, price: float) -> bool:
-    if PAPER_MODE:
-        logger.info("📝 PAPER BUY %sUSDT — $%.2f @ %.6f", symbol, usdt_amount, price)
-        return True
+def place_buy(symbol: str, usdt_amount: float, price: float) -> float | None:
+    """Returns actual rounded qty on success, None on failure."""
     qty = usdt_amount / price
     step = _get_lot_step(symbol)
     qty = _round_qty(qty, step)
     if qty <= 0:
-        logger.error("❌ BUY %s: qty rounded to 0", symbol)
-        return False
+        logger.error("❌ BUY %s: qty rounded to 0 (step=%s)", symbol, step)
+        return None
+    if PAPER_MODE:
+        logger.info("📝 PAPER BUY %sUSDT — $%.2f @ %.6f (qty=%s)", symbol, usdt_amount, price, qty)
+        return qty
     result = bybit_signed_post({
         "category": "spot", "symbol": f"{symbol}USDT",
         "side": "Buy", "orderType": "Market",
@@ -479,9 +480,9 @@ def place_buy(symbol: str, usdt_amount: float, price: float) -> bool:
     })
     if result and result.get("retCode") == 0:
         logger.info("✅ BUY %sUSDT — $%.2f @ %.6f (qty=%s)", symbol, usdt_amount, price, qty)
-        return True
+        return qty
     logger.error("❌ BUY failed %s: %s", symbol, result)
-    return False
+    return None
 
 
 def place_sell(symbol: str, qty: float) -> bool:
@@ -708,12 +709,37 @@ def check_exits(st: CDTState):
     save_state(st)
 
 
+_btc_trend_cache = {"ts": 0.0, "up": True}
+
+
+def btc_trend_up() -> bool:
+    now = time.time()
+    if now - _btc_trend_cache["ts"] < 900:
+        return _btc_trend_cache["up"]
+    up = _btc_trend_cache["up"]
+    data = http_get("https://api.bybit.com/v5/market/kline?category=spot&symbol=BTCUSDT&interval=60&limit=50")
+    if data and data.get("retCode") == 0:
+        rows = data.get("result", {}).get("list", [])
+        if len(rows) >= 25:
+            closes = [float(r[4]) for r in reversed(rows)]
+            m9 = sum(closes[-9:]) / 9
+            m21 = sum(closes[-21:]) / 21
+            up = m9 > m21
+    _btc_trend_cache["ts"] = now
+    _btc_trend_cache["up"] = up
+    return up
+
+
 def open_from_signal(st: CDTState, sig: ChannelSignal):
     if sig.symbol in st.positions:
         return
     if len(st.positions) >= MAX_POSITIONS:
         return
     if st.daily_pnl <= -MAX_DAILY_LOSS:
+        return
+
+    if not btc_trend_up():
+        logger.info("🌧 BTC 1h downtrend — skip %s from %s", sig.symbol, sig.channel)
         return
 
     # Dedup: don't act on same Telegram message twice
@@ -739,8 +765,8 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
     if size < 5:
         return
 
-    success = place_buy(sig.symbol, size, price)
-    if not success:
+    qty = place_buy(sig.symbol, size, price)
+    if qty is None:
         return
 
     # Use signal targets if reasonable, otherwise defaults
@@ -749,7 +775,7 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
 
     st.positions[sig.symbol] = {
         "entry": price,
-        "qty": size / price,
+        "qty": qty,
         "size": size,
         "tp_pct": tp_pct,
         "sl_pct": sl_pct,
