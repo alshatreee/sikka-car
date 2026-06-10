@@ -33,6 +33,7 @@ SERVICE_NAME = os.getenv("MONITOR_SERVICE", "monthly-channel-bot")
 NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 CEREBRAS_KEY = os.getenv("CEREBRAS_API_KEY", "")
+GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 
 RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
 AI_ANALYSIS_FILE = BASE_DIR / "ai_channel_analysis.json"
@@ -417,22 +418,7 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
     if not CEREBRAS_KEY:
         return None
     import urllib.request as req
-    prompt = (
-        "أنت محلل عملات رقمية محترف. حلل رسائل القنوات التالية واستخرج:\n"
-        "1. أي عملة مذكورة بإيجابية (شراء/صعود/بول ران/بامب/اختراق/فرصة/أي توصية إيجابية)\n"
-        "2. أي عملة مذكورة بسلبية (بيع/هبوط/دامب/تحذير)\n"
-        "3. مستوى الثقة (high/medium/low)\n\n"
-        "افهم المصطلحات المعرّبة: بول ران=bull run, بامب=pump, بريك اوت=breakout, "
-        "لونق=long, شورت=short, دامب=dump, تارقت=target, ستوب لوس=stop loss, "
-        "هودل=HODL, رالي=rally, مون=moon, سبورت=support, ريزستنس=resistance, "
-        "تريند=trend, بيرش=bearish, بولش=bullish, اكيوميوليت=accumulate, "
-        "دي سي ايه=DCA, ريكفري=recovery\n\n"
-        "أجب بـ JSON فقط بهذا الشكل:\n"
-        '{"buy":[{"symbol":"XRP","confidence":"high","reason":"بول ران + اختراق"}],'
-        '"sell":[{"symbol":"BTC","confidence":"medium","reason":"هبوط"}],'
-        '"watch":[{"symbol":"ETH","note":"ذكر بدون توصية واضحة"}]}\n\n'
-        "الرسائل:\n" + messages_text
-    )
+    prompt = _AI_PROMPT + "الرسائل:\n" + messages_text
     body = json.dumps({
         "model": _cerebras_get_model(),
         "messages": [{"role": "user", "content": prompt}],
@@ -456,11 +442,11 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
         if not content:
             log(f"Cerebras: no content — {json.dumps(choices[0])[:300]}")
             return None
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        if start >= 0 and end > start:
-            return json.loads(content[start:end])
-        log(f"Cerebras: no JSON in response — {content[:300]}")
+        result = _extract_json(content)
+        if result:
+            log("Cerebras AI analysis OK")
+            return result
+        log(f"Cerebras: no JSON — {content[:300]}")
     except Exception as e:
         detail = ""
         if hasattr(e, "read"):
@@ -475,6 +461,75 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
     return None
 
 
+_AI_PROMPT = (
+    "أنت محلل عملات رقمية محترف. حلل رسائل القنوات التالية واستخرج:\n"
+    "1. أي عملة مذكورة بإيجابية (شراء/صعود/بول ران/بامب/اختراق/فرصة/أي توصية إيجابية)\n"
+    "2. أي عملة مذكورة بسلبية (بيع/هبوط/دامب/تحذير)\n"
+    "3. مستوى الثقة (high/medium/low)\n\n"
+    "افهم المصطلحات المعرّبة: بول ران=bull run, بامب=pump, بريك اوت=breakout, "
+    "لونق=long, شورت=short, دامب=dump, تارقت=target, ستوب لوس=stop loss, "
+    "هودل=HODL, رالي=rally, مون=moon, سبورت=support, ريزستنس=resistance, "
+    "تريند=trend, بيرش=bearish, بولش=bullish, اكيوميوليت=accumulate, "
+    "دي سي ايه=DCA, ريكفري=recovery\n\n"
+    "أجب بـ JSON فقط بهذا الشكل:\n"
+    '{"buy":[{"symbol":"XRP","confidence":"high","reason":"بول ران + اختراق"}],'
+    '"sell":[{"symbol":"BTC","confidence":"medium","reason":"هبوط"}],'
+    '"watch":[{"symbol":"ETH","note":"ذكر بدون توصية واضحة"}]}\n\n'
+)
+
+
+def _extract_json(text: str) -> dict | None:
+    start = text.find("{")
+    end = text.rfind("}") + 1
+    if start >= 0 and end > start:
+        try:
+            return json.loads(text[start:end])
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def _gemini_analyze(messages_text: str) -> dict | None:
+    if not GEMINI_KEY:
+        return None
+    import urllib.request as req
+    prompt = _AI_PROMPT + "الرسائل:\n" + messages_text
+    body = json.dumps({
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2000},
+    })
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}"
+    try:
+        r = req.Request(url, data=body.encode(),
+                        headers={"Content-Type": "application/json",
+                                 "User-Agent": _UA})
+        with req.urlopen(r, timeout=30) as resp:
+            data = json.loads(resp.read())
+        candidates = data.get("candidates") or []
+        if not candidates:
+            log(f"Gemini: no candidates — {json.dumps(data)[:300]}")
+            return None
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text = parts[0].get("text", "") if parts else ""
+        if not text:
+            log(f"Gemini: empty response — {json.dumps(candidates[0])[:300]}")
+            return None
+        result = _extract_json(text)
+        if result:
+            log("Gemini AI analysis OK")
+            return result
+        log(f"Gemini: no JSON — {text[:300]}")
+    except Exception as e:
+        detail = ""
+        if hasattr(e, "read"):
+            try:
+                detail = " | " + e.read().decode()[:300]
+            except Exception:
+                pass
+        log(f"Gemini AI error: {e}{detail}")
+    return None
+
+
 def run_ai_analysis():
     global _ai_last_run
     now = time.time()
@@ -482,7 +537,7 @@ def run_ai_analysis():
         return
     _ai_last_run = now
 
-    if not CEREBRAS_KEY or not RAW_MSGS_FILE.exists():
+    if not (CEREBRAS_KEY or GEMINI_KEY) or not RAW_MSGS_FILE.exists():
         return
 
     try:
@@ -514,6 +569,8 @@ def run_ai_analysis():
 
     log(f"AI: تحليل {len(new_msgs)} رسالة جديدة...")
     result = _cerebras_analyze(batch_text)
+    if not result:
+        result = _gemini_analyze(batch_text)
     if not result:
         return
 
