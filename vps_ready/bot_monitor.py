@@ -410,7 +410,8 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
         r = req.Request("https://api.cerebras.ai/v1/chat/completions",
                         data=body.encode(),
                         headers={"Content-Type": "application/json",
-                                 "Authorization": f"Bearer {CEREBRAS_KEY}"})
+                                 "Authorization": f"Bearer {CEREBRAS_KEY}",
+                                 "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) bot-monitor/1.0"})
         with req.urlopen(r, timeout=30) as resp:
             data = json.loads(resp.read())
         content = data["choices"][0]["message"]["content"]
@@ -419,7 +420,13 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
         if start >= 0 and end > start:
             return json.loads(content[start:end])
     except Exception as e:
-        log(f"Cerebras AI error: {e}")
+        detail = ""
+        if hasattr(e, "read"):
+            try:
+                detail = " | " + e.read().decode()[:300]
+            except Exception:
+                pass
+        log(f"Cerebras AI error: {e}{detail}")
     return None
 
 

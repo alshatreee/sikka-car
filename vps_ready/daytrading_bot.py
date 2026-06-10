@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse, json, hashlib, hmac, logging, os, sys, time, statistics
 import urllib.request
 from dataclasses import dataclass, field, asdict
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -687,8 +688,18 @@ def _get_lot_step(symbol: str) -> float:
 
 
 def _round_qty(qty: float, step: float) -> float:
-    import math
-    return math.floor(qty / step) * step
+    # Decimal avoids float artifacts like 9.870000000000001 that Bybit
+    # rejects with "Order quantity has too many decimals" (retCode 170137)
+    d_step = Decimal(str(step))
+    return float((Decimal(str(qty)) // d_step) * d_step)
+
+
+def _qty_str(qty: float) -> str:
+    # plain decimal string, never scientific notation, no trailing zeros
+    s = format(Decimal(str(qty)), 'f')
+    if '.' in s:
+        s = s.rstrip('0').rstrip('.')
+    return s
 
 
 def place_buy(symbol: str, usdt_amount: float, price: float) -> float | None:
@@ -715,7 +726,7 @@ def place_buy(symbol: str, usdt_amount: float, price: float) -> float | None:
         "symbol": symbol,
         "side": "Buy",
         "orderType": "Market",
-        "qty": str(qty),
+        "qty": _qty_str(qty),
         "marketUnit": "baseCoin",
     })
     if result and result.get("retCode") == 0:
@@ -742,7 +753,7 @@ def place_sell(symbol: str, qty: float) -> bool:
         "symbol": symbol,
         "side": "Sell",
         "orderType": "Market",
-        "qty": str(qty),
+        "qty": _qty_str(qty),
         "marketUnit": "baseCoin",
     })
     if result and result.get("retCode") == 0:
