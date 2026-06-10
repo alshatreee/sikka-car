@@ -128,7 +128,7 @@ class State:
     reinforced_keys: list[str] = field(default_factory=list)
     pending_signals: list[dict] = field(default_factory=list)
     executed_signals: list[str] = field(default_factory=list)
-    entered_symbols: list[str] = field(default_factory=list)
+    entered_symbols: list[str] = field(default_factory=list)  # must be cleaned when position is closed
     consecutive_losses: int = 0
 
 def load_state() -> State:
@@ -145,7 +145,9 @@ def load_state() -> State:
     return State()
 
 def save_state(s: State) -> None:
-    STATE_FILE.write_text(json.dumps(asdict(s), indent=2, ensure_ascii=False))
+    tmp = STATE_FILE.with_suffix('.tmp')
+    tmp.write_text(json.dumps(asdict(s), indent=2, ensure_ascii=False))
+    tmp.replace(STATE_FILE)
 
 # ---------- ML recommendations ----------
 _ml_recs_cache: dict = {}
@@ -920,6 +922,10 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
     pos = state.open_positions.pop(pair, None)
     if not pos:
         return
+    # Clean entered_symbols so the symbol can be re-entered later
+    sym = pos.get("symbol", pair.split("/")[0]).upper()
+    if sym in state.entered_symbols:
+        state.entered_symbols.remove(sym)
     sell_qty = pos["qty"]
     pnl = (price - pos["entry"]) * sell_qty
     pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
@@ -2059,6 +2065,9 @@ if __name__ == "__main__":
                         "closed": time.strftime("%Y-%m-%d %H:%M:%S"),
                     })
                     del state.open_positions[pair]
+                    # Clean entered_symbols so the symbol can be re-entered later
+                    if symbol in state.entered_symbols:
+                        state.entered_symbols.remove(symbol)
                     save_state(state)
                     sign = "+" if pnl >= 0 else ""
                     print(f"✅ تم بيع {pair} @ {price} | ربح: {sign}{pnl_pct:.1f}% (${sign}{pnl:.2f})")

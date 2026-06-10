@@ -120,15 +120,15 @@ _COIN_RE = re.compile(
     r'\b([A-Z]{2,10})(?:/USDT|USDT|\s*/\s*USDT)\b'
 )
 _PRICE_RE = re.compile(
-    r'(?:سعر|entry|price|دخول|انتري|إنتري|عند)[:\s]*\$?([\d.]+)',
+    r'(?:سعر|entry|price|دخول|انتري|إنتري|عند)[:\s]*\$?(\d+\.?\d*)',
     re.I
 )
 _TARGET_RE = re.compile(
-    r'(?:هدف|target|tp|الهدف|بيع|تيك\s*بروفت|تارقت|تارجت)[:\s]*\$?([\d.]+)',
+    r'(?:هدف|target|tp|الهدف|بيع|تيك\s*بروفت|تارقت|تارجت)[:\s]*\$?(\d+\.?\d*)',
     re.I
 )
 _STOP_RE = re.compile(
-    r'(?:وقف|stop|sl|ستوب|ستوب\s*لوس|وقف\s*خسار[ةه])[:\s]*\$?([\d.]+)',
+    r'(?:وقف|stop|sl|ستوب|ستوب\s*لوس|وقف\s*خسار[ةه])[:\s]*\$?(\d+\.?\d*)',
     re.I
 )
 
@@ -194,9 +194,10 @@ class ChannelSignal:
     sl_pct: float
     raw_text: str
     timestamp: str
+    msg_id: int = 0
 
 
-def parse_signal(text: str, channel: str) -> ChannelSignal | None:
+def parse_signal(text: str, channel: str, msg_id: int = 0) -> ChannelSignal | None:
     if not _BUY_RE.search(text):
         return None
     if _SELL_RE.search(text) and not re.search(r'شراء|buy|long|دخول', text, re.I):
@@ -239,6 +240,7 @@ def parse_signal(text: str, channel: str) -> ChannelSignal | None:
         sl_pct=max(sl_pct, 2.0),
         raw_text=text[:200],
         timestamp=datetime.now(timezone.utc).isoformat(),
+        msg_id=msg_id,
     )
 
 
@@ -281,7 +283,7 @@ def scan_channels() -> list[ChannelSignal]:
                             "ts": msg.date.replace(tzinfo=timezone.utc).isoformat() if msg.date else datetime.now(timezone.utc).isoformat(),
                             "msg_id": msg.id,
                         })
-                        sig = parse_signal(msg.text, ch_name)
+                        sig = parse_signal(msg.text, ch_name, msg_id=msg.id)
                         if sig:
                             signals.append(sig)
                 except Exception as e:
@@ -532,7 +534,9 @@ def load_state() -> CDTState:
 
 
 def save_state(st: CDTState):
-    STATE_FILE.write_text(json.dumps(st.to_dict(), indent=2, default=str))
+    tmp = STATE_FILE.with_suffix('.tmp')
+    tmp.write_text(json.dumps(st.to_dict(), indent=2, default=str))
+    tmp.replace(STATE_FILE)
 
 
 def roll_day(st: CDTState):
@@ -701,11 +705,11 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
     if st.daily_pnl <= -MAX_DAILY_LOSS:
         return
 
-    # Dedup: don't act on same signal twice
-    sig_hash = hashlib.md5(f"{sig.symbol}{sig.channel}{sig.timestamp[:13]}".encode()).hexdigest()[:12]
-    if sig_hash in st.seen_signals:
+    # Dedup: don't act on same Telegram message twice
+    sig_key = f"{sig.channel}:{sig.msg_id}"
+    if sig_key in st.seen_signals:
         return
-    st.seen_signals.append(sig_hash)
+    st.seen_signals.append(sig_key)
     if len(st.seen_signals) > 500:
         st.seen_signals = st.seen_signals[-500:]
 

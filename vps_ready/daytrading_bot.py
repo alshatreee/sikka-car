@@ -691,10 +691,16 @@ def _round_qty(qty: float, step: float) -> float:
     return math.floor(qty / step) * step
 
 
-def place_buy(symbol: str, usdt_amount: float, price: float) -> bool:
+def place_buy(symbol: str, usdt_amount: float, price: float) -> float | None:
+    """Buy symbol. Returns actual rounded qty on success, None on failure."""
     if PAPER_MODE:
-        logger.info("📝 PAPER BUY %s — $%.2f @ %.6f", symbol, usdt_amount, price)
-        return True
+        step = _get_lot_step(symbol)
+        qty = _round_qty(usdt_amount / price, step)
+        if qty <= 0:
+            logger.error("❌ PAPER BUY %s: qty rounded to 0 (step=%s)", symbol, step)
+            return None
+        logger.info("📝 PAPER BUY %s — $%.2f @ %.6f (qty=%s)", symbol, usdt_amount, price, qty)
+        return qty
 
     qty = usdt_amount / price
     step = _get_lot_step(symbol)
@@ -702,7 +708,7 @@ def place_buy(symbol: str, usdt_amount: float, price: float) -> bool:
 
     if qty <= 0:
         logger.error("❌ BUY %s: qty rounded to 0 (step=%s)", symbol, step)
-        return False
+        return None
 
     result = bybit_signed_post({
         "category": "spot",
@@ -714,9 +720,9 @@ def place_buy(symbol: str, usdt_amount: float, price: float) -> bool:
     })
     if result and result.get("retCode") == 0:
         logger.info("✅ BUY %s — $%.2f @ %.6f (qty=%s step=%s)", symbol, usdt_amount, price, qty, step)
-        return True
+        return qty
     logger.error("❌ BUY failed %s: %s", symbol, result)
-    return False
+    return None
 
 
 def place_sell(symbol: str, qty: float) -> bool:
@@ -807,7 +813,9 @@ def load_state() -> DayState:
 
 
 def save_state(st: DayState):
-    STATE_FILE.write_text(json.dumps(st.to_dict(), indent=2, default=str))
+    tmp = STATE_FILE.with_suffix('.tmp')
+    tmp.write_text(json.dumps(st.to_dict(), indent=2, default=str))
+    tmp.replace(STATE_FILE)
 
 
 def roll_day(st: DayState):
@@ -1023,10 +1031,9 @@ def open_position(st: DayState, signal: Signal):
     price = signal.price
     tp_price = price * (1 + TAKE_PROFIT_PCT / 100)
     sl_price = price * (1 - STOP_LOSS_PCT / 100)
-    qty = size / price
 
-    success = place_buy(signal.symbol, size, price)
-    if not success:
+    qty = place_buy(signal.symbol, size, price)
+    if qty is None:
         return
 
     pos = Position(
