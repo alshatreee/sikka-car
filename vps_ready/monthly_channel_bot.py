@@ -35,7 +35,7 @@ TG_CHANNELS  = [c.strip() for c in os.getenv("MONTHLY_CHANNELS",
 TG_SESSION   = str(BASE_DIR / "monthly_session")
 BYBIT_KEY    = os.getenv("BYBIT_API_KEY", "")
 BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
-BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "true").lower() == "true"
+BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 KUCOIN_KEY    = os.getenv("KUCOIN_API_KEY", "")
 KUCOIN_SECRET = os.getenv("KUCOIN_API_SECRET", "")
 KUCOIN_PASS   = os.getenv("KUCOIN_PASSPHRASE", "")
@@ -385,7 +385,10 @@ def parse_signal(text: str) -> Signal | None:
     buy_m = re.search(r"سعر\s*الشراء\s*[:\s]*([\d.]+)", text)
     sell_m = re.search(r"سعر\s*البيع\s*[:\s]*([\d.]+)", text)
     if buy_m and sell_m:
-        buy_p, sell_p = float(buy_m.group(1)), float(sell_m.group(1))
+        try:
+            buy_p, sell_p = float(buy_m.group(1)), float(sell_m.group(1))
+        except ValueError:
+            return None
         pct_m = re.search(r"سعر\s*البيع\s*[:\s]*[\d.]+\s*\(?\s*%?([\d.]+)\s*%\)?", text)
         tp_pct = float(pct_m.group(1)) if pct_m else (
             round((sell_p - buy_p) / buy_p * 100, 2) if buy_p > 0 else 0.0)
@@ -552,8 +555,14 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
                 log(f"تخطي شراء {pair} — رصيد متاح ${free:.2f} غير كافٍ")
                 return None
 
-        qty = usdt_amount / price
+        qty = _prec_qty(exchange, pair, usdt_amount / price)
+        if qty <= 0:
+            return None
         limit_price = round(price * (1 + LIMIT_ORDER_SLIP / 100), 8)
+        try:
+            limit_price = float(exchange.price_to_precision(pair, limit_price))
+        except Exception:
+            pass
 
         if PAPER_MODE:
             log(f"أمر شراء [ورقي]: {pair} | سعر={price} | كمية={qty:.6f} | ${usdt_amount}")
@@ -565,6 +574,7 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
         # انتظار التنفيذ حتى 30 ثانية
         oid = order.get("id")
         if oid:
+            fetched = None
             for _ in range(6):
                 time.sleep(5)
                 try:
@@ -576,13 +586,29 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
                         break
                 except Exception:
                     pass
-            # إلغاء والتحويل لأمر سوق
+            # إلغاء والتحويل لأمر سوق — شراء المتبقي فقط (جزء قد يكون تنفّذ)
             try:
                 exchange.cancel_order(oid, pair)
             except Exception:
                 pass
-            log(f"لم يُنفَّذ الأمر المحدود — تحويل لأمر سوق: {pair}")
-            order = exchange.create_market_buy_order(pair, qty)
+            filled = 0.0
+            try:
+                final = exchange.fetch_order(oid, pair)
+                filled = _safe_float(final.get("filled"))
+            except Exception:
+                if fetched:
+                    filled = _safe_float(fetched.get("filled"))
+            remainder = _prec_qty(exchange, pair, qty - filled)
+            if remainder <= 0 or filled >= qty * 0.999:
+                log(f"الأمر المحدود تنفّذ فعلياً ({filled:.6f}): {pair}")
+                return {"filled": filled, "amount": filled, "average": limit_price, "price": limit_price}
+            log(f"لم يُنفَّذ الأمر المحدود — أمر سوق للمتبقي {remainder:.6f}: {pair}")
+            # تمرير السعر: ccxt يحسب التكلفة = كمية × سعر لمنصات spot
+            order = exchange.create_order(pair, 'market', 'buy', remainder, price)
+            if order and filled > 0:
+                mkt_filled = _safe_float(order.get("filled"), default=remainder)
+                order["filled"] = filled + mkt_filled
+                order["amount"] = order["filled"]
         return order
     except Exception as e:
         err = str(e)
@@ -597,15 +623,32 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
             log(f"خطأ في الشراء: {pair} — {e}")
         return None
 
-def spot_sell(exchange, pair: str, qty: float) -> dict | None:
+def _prec_qty(exchange, pair: str, qty: float) -> float:
+    """تقريب الكمية لدقة المنصة — الأرقام الخام مثل 33.333333 تُرفض."""
     try:
+        return float(exchange.amount_to_precision(pair, qty))
+    except Exception:
+        return float(f"{qty:.6f}")
+
+def spot_sell(exchange, pair: str, qty: float) -> dict | None:
+    # gate قراءة فقط — ممنوع أي أمر بيع حتى لو تلوثت الحالة
+    if getattr(exchange, 'id', '') == 'gateio':
+        log(f"رفض بيع {pair} على gate — مفتاح قراءة فقط")
+        return None
+    try:
+        qty = _prec_qty(exchange, pair, qty)
+        if qty <= 0:
+            return None
         order = exchange.create_market_sell_order(pair, qty)
         log(f"أمر بيع: {pair} | كمية={qty:.6f}"); return order
     except Exception as e:
         log(f"خطأ في البيع: {pair} — {e}"); return None
 
 def place_stop_loss(exchange, pair: str, qty: float, trigger_price: float) -> str | None:
+    if getattr(exchange, 'id', '') == 'gateio':
+        return None
     try:
+        qty = _prec_qty(exchange, pair, qty)
         if exchange.id == 'kucoin':
             params = {'stop': 'loss', 'stopPrice': str(trigger_price)}
         else:
@@ -919,13 +962,9 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
     log(msg); notify(msg); return True
 
 def close_trade(state: State, pair: str, reason: str, price: float, exchange, skip_sell: bool = False):
-    pos = state.open_positions.pop(pair, None)
+    pos = state.open_positions.get(pair)
     if not pos:
         return
-    # Clean entered_symbols so the symbol can be re-entered later
-    sym = pos.get("symbol", pair.split("/")[0]).upper()
-    if sym in state.entered_symbols:
-        state.entered_symbols.remove(sym)
     sell_qty = pos["qty"]
     pnl = (price - pos["entry"]) * sell_qty
     pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
@@ -933,14 +972,25 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
     if not PAPER_MODE and not skip_sell:
         try:
             balance = exchange.fetch_balance()
-            sym = pair.split("/")[0]
-            available = float(balance.get(sym, {}).get("free", 0))
+            sym_b = pair.split("/")[0]
+            available = float(balance.get(sym_b, {}).get("free", 0))
             if available < sell_qty:
                 sell_qty = available
         except Exception:
             pass
         if sell_qty > 0:
-            spot_sell(exchange, pair, sell_qty)
+            order = spot_sell(exchange, pair, sell_qty)
+            if order is None:
+                # البيع فشل — لا نحذف الصفقة، ستُعاد المحاولة في الدورة القادمة
+                log(f"⚠️ فشل بيع {pair} — تبقى الصفقة مفتوحة لإعادة المحاولة")
+                return
+
+    # البيع نجح (أو ورقي/تخطي) — الآن نحذف الصفقة من السجل
+    state.open_positions.pop(pair, None)
+    # Clean entered_symbols so the symbol can be re-entered later
+    sym = pos.get("symbol", pair.split("/")[0]).upper()
+    if sym in state.entered_symbols:
+        state.entered_symbols.remove(sym)
 
     state.daily_pnl += pnl
     if state.daily_pnl <= -MAX_DAILY_LOSS:
@@ -1305,7 +1355,9 @@ async def scan_history(client, state: State):
 
             reinf_only = parse_reinforcements(msg.text)
             if reinf_only and not signal:
-                sym_m = re.search(r"([A-Z]{2,10})", msg.text)
+                sym_m = (re.search(r"(?:العملة|عملة)[:\s]*([A-Z]{2,10})", msg.text)
+                         or re.search(r"(?:\$|#)([A-Z]{2,10})", msg.text)
+                         or re.search(r"([A-Z]{2,10})/USDT", msg.text))
                 if sym_m:
                     sym = sym_m.group(1).upper()
                     if sym not in ("USDT", "BTC", "ETH", "THE", "FOR", "AND", "NOT"):
