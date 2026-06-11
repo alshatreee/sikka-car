@@ -691,6 +691,58 @@ def get_all_held_coins() -> dict[str, list[str]]:
     return held
 
 
+def get_all_positions() -> list[dict]:
+    """Return [{symbol, pair, entry, qty, bot, opened_str}, ...] from all bots."""
+    positions = []
+
+    if MONTHLY_STATE.exists():
+        try:
+            data = json.loads(MONTHLY_STATE.read_text())
+            for pair, pos in data.get("open_positions", {}).items():
+                positions.append({
+                    "symbol": _normalize_sym(pair),
+                    "pair": pair.replace("/", ""),
+                    "entry": pos.get("entry", 0),
+                    "qty": pos.get("qty", 0),
+                    "bot": "monthly",
+                    "opened": pos.get("opened_str", ""),
+                })
+        except Exception:
+            pass
+
+    if DAYTRADING_STATE.exists():
+        try:
+            data = json.loads(DAYTRADING_STATE.read_text())
+            for sym_key, pos in data.get("positions", {}).items():
+                positions.append({
+                    "symbol": _normalize_sym(sym_key),
+                    "pair": sym_key if "USDT" in sym_key else sym_key + "USDT",
+                    "entry": pos.get("entry_price", 0),
+                    "qty": pos.get("qty", 0),
+                    "bot": "daytrading",
+                    "opened": pos.get("opened_at", ""),
+                })
+        except Exception:
+            pass
+
+    if CHANNEL_DT_STATE.exists():
+        try:
+            data = json.loads(CHANNEL_DT_STATE.read_text())
+            for sym_key, pos in data.get("positions", {}).items():
+                positions.append({
+                    "symbol": _normalize_sym(sym_key),
+                    "pair": sym_key + "USDT" if "USDT" not in sym_key else sym_key,
+                    "entry": pos.get("entry_price", 0),
+                    "qty": pos.get("qty", 0),
+                    "bot": "channel_dt",
+                    "opened": pos.get("opened_at", ""),
+                })
+        except Exception:
+            pass
+
+    return positions
+
+
 def check_held_vs_ai() -> list[str]:
     """Cross-check every held coin against AI sell recommendations.
 
@@ -1024,6 +1076,43 @@ def _handle_command(text: str) -> str | None:
             lines.append(f"  {sym}USDT — {', '.join(bots)}")
         return "\n".join(lines)
 
+    # ── أرباح / pnl ──
+    if text in ("أرباح", "ارباح", "pnl", "/pnl", "ربح"):
+        positions = get_all_positions()
+        if not positions:
+            return "📭 لا توجد مراكز مفتوحة"
+        lines = ["<b>📈 أرباح/خسائر المراكز المفتوحة</b>\n"]
+        total_cost = 0.0
+        total_value = 0.0
+        for p in sorted(positions, key=lambda x: x["symbol"]):
+            entry = p["entry"]
+            qty = p["qty"]
+            pair = p["pair"]
+            if not entry or not qty:
+                lines.append(f"  ⚪ {p['symbol']} ({p['bot']}) — بيانات ناقصة")
+                continue
+            price = _fetch_price(pair)
+            if not price:
+                lines.append(f"  ⚪ {p['symbol']} ({p['bot']}) — سعر غير متوفر")
+                continue
+            cost = entry * qty
+            value = price * qty
+            pnl_pct = ((price - entry) / entry) * 100
+            pnl_usd = value - cost
+            total_cost += cost
+            total_value += value
+            icon = "🟢" if pnl_pct >= 0 else "🔴"
+            lines.append(
+                f"  {icon} <b>{p['symbol']}</b> ({p['bot']})\n"
+                f"      دخول: ${entry:,.6f} → حالي: ${price:,.6f}\n"
+                f"      الربح: {pnl_pct:+.2f}% (${pnl_usd:+,.2f})"
+            )
+        if total_cost > 0:
+            total_pnl_pct = ((total_value - total_cost) / total_cost) * 100
+            total_pnl_usd = total_value - total_cost
+            lines.append(f"\n<b>الإجمالي: {total_pnl_pct:+.2f}% (${total_pnl_usd:+,.2f})</b>")
+        return "\n".join(lines)
+
     # ── أوامر / help ──
     if text in ("أوامر", "help", "/help", "مساعدة"):
         return (
@@ -1031,6 +1120,7 @@ def _handle_command(text: str) -> str | None:
             "<code>بيع ENJ 50%</code> — بيع 50% من ENJ\n"
             "<code>بيع ENJ</code> — بيع 100% من ENJ\n"
             "<code>مراجعة</code> — مراجعة AI للعملات\n"
+            "<code>أرباح</code> — نسبة الربح/الخسارة لكل عملة\n"
             "<code>حالة</code> — تقرير صحة البوتات\n"
             "<code>رصيد</code> — رصيد المحفظة\n"
             "<code>عملات</code> — العملات المحتفظ بها\n"
