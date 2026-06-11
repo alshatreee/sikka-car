@@ -438,7 +438,7 @@ def _cerebras_analyze(messages_text: str) -> dict | None:
             log(f"Cerebras: empty choices — {json.dumps(data)[:300]}")
             return None
         msg = choices[0].get("message") or choices[0].get("delta") or {}
-        content = msg.get("content") or msg.get("text") or msg.get("reasoning") or ""
+        content = (msg.get("content") or "").strip() or (msg.get("text") or "").strip() or (msg.get("reasoning") or "").strip()
         if not content:
             log(f"Cerebras: no content — {json.dumps(choices[0])[:300]}")
             return None
@@ -608,7 +608,9 @@ def run_ai_analysis():
         "watch": watch_list[-30:],
         "_seen_ids": seen_list,
     }
-    AI_ANALYSIS_FILE.write_text(json.dumps(output, ensure_ascii=False, indent=1))
+    _tmp = AI_ANALYSIS_FILE.with_suffix(".tmp")
+    _tmp.write_text(json.dumps(output, ensure_ascii=False, indent=1))
+    os.replace(_tmp, AI_ANALYSIS_FILE)
 
     buy_count = len(result.get("buy", []))
     sell_count = len(result.get("sell", []))

@@ -419,7 +419,7 @@ def _parse_buy_and_reinforce(text: str) -> tuple[float, list[float]]:
             continue
         if price <= 0:
             continue
-        if "الشراء الأول" in line or "الشراء" in line and "تعزيز" not in line.lower():
+        if ("الشراء الأول" in line or "الشراء" in line) and "تعزيز" not in line.lower():
             if buy_price == 0:
                 buy_price = price
         if "التعزيز" in line:
@@ -527,7 +527,7 @@ def _safe_float(*values, default=0.0) -> float:
             continue
         try:
             f = float(v)
-            if f:
+            if f or f == 0.0:
                 return f
         except (TypeError, ValueError):
             continue
@@ -1190,7 +1190,7 @@ async def check_positions(state: State):
                     if is_last:
                         close_trade(state, pair, f"هدف أخير ({next_target['pct']}%)", price, exchange)
                     else:
-                        sell_pct_per_target = 100 / len(targets)
+                        sell_pct_per_target = 100 / len(remaining_targets)
                         target_sell(state, pair, price, exchange, next_target, sell_pct_per_target)
                     continue
             elif not pos.get("partial_taken"):

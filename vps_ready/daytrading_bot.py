@@ -913,12 +913,12 @@ def get_memory_boost(st: DayState, symbol: str) -> tuple[float, list[str]]:
             boost -= 10
             reasons.append(f"⚠avgPnL{m['avg_pnl']:.1f}%")
 
-    # Streak penalty (2+ consecutive losses = avoid)
+    # Streak penalty (consecutive losses = avoid)
     streak = st.streak.get(sym, 0)
     if streak >= 2:
         boost -= 20
         reasons.append(f"⛔streak{streak}")
-    elif streak >= 2:
+    elif streak >= 1:
         boost -= 10
         reasons.append(f"⚠streak{streak}")
 
@@ -979,6 +979,8 @@ def check_exits(st: DayState):
         # Time expiry
         else:
             opened = datetime.fromisoformat(pos.opened_at)
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
             if (now - opened).total_seconds() > MAX_HOLD_HOURS * 3600:
                 exit_reason = "EXPIRED"
 

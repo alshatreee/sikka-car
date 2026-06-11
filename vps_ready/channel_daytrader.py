@@ -222,11 +222,11 @@ def parse_signal(text: str, channel: str, msg_id: int = 0) -> ChannelSignal | No
     # Calculate TP/SL percentages
     tp_pct = TAKE_PROFIT_PCT
     sl_pct = STOP_LOSS_PCT
-    if entry_price > 0 and target_price > 0:
+    if entry_price > 0 and target_price > entry_price:
         tp_pct = (target_price - entry_price) / entry_price * 100
         if tp_pct > 20:
             tp_pct = TAKE_PROFIT_PCT
-    if entry_price > 0 and stop_price > 0:
+    if entry_price > 0 and 0 < stop_price < entry_price:
         sl_pct = (entry_price - stop_price) / entry_price * 100
         if sl_pct > 20:
             sl_pct = STOP_LOSS_PCT
