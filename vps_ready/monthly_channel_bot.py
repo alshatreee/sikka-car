@@ -144,10 +144,14 @@ def load_state() -> State:
             pass
     return State()
 
+def _atomic_write(path, text: str) -> None:
+    """كتابة آمنة: ملف مؤقت ثم استبدال ذري — يمنع التلف عند توقف مفاجئ."""
+    tmp = path.with_suffix(path.suffix + '.tmp')
+    tmp.write_text(text)
+    tmp.replace(path)
+
 def save_state(s: State) -> None:
-    tmp = STATE_FILE.with_suffix('.tmp')
-    tmp.write_text(json.dumps(asdict(s), indent=2, ensure_ascii=False))
-    tmp.replace(STATE_FILE)
+    _atomic_write(STATE_FILE, json.dumps(asdict(s), indent=2, ensure_ascii=False))
 
 # ---------- ML recommendations ----------
 _ml_recs_cache: dict = {}
@@ -202,7 +206,7 @@ def _clean_tracker(data: list[dict]) -> list[dict]:
     return unique
 
 def _save_tracker(data: list[dict]) -> None:
-    TRACKER_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    _atomic_write(TRACKER_FILE, json.dumps(data, indent=2, ensure_ascii=False))
 
 def tracker_add(symbol: str, pair: str, signal_price: float, entry_price: float,
                 ex_name: str, source: str = "bot"):
@@ -227,7 +231,7 @@ def _load_seen_trades() -> set:
     return set()
 
 def _save_seen_trades(seen: set) -> None:
-    _MANUAL_SCAN_FILE.write_text(json.dumps(list(seen)[-2000:]))
+    _atomic_write(_MANUAL_SCAN_FILE, json.dumps(list(seen)[-2000:]))
 
 def scan_manual_trades():
     seen = _load_seen_trades()
@@ -592,23 +596,32 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
             except Exception:
                 pass
             filled = 0.0
+            limit_avg = limit_price
             try:
                 final = exchange.fetch_order(oid, pair)
                 filled = _safe_float(final.get("filled"))
+                limit_avg = _safe_float(final.get("average"), default=limit_price) or limit_price
             except Exception:
                 if fetched:
                     filled = _safe_float(fetched.get("filled"))
+                    limit_avg = _safe_float(fetched.get("average"), default=limit_price) or limit_price
             remainder = _prec_qty(exchange, pair, qty - filled)
             if remainder <= 0 or filled >= qty * 0.999:
                 log(f"الأمر المحدود تنفّذ فعلياً ({filled:.6f}): {pair}")
-                return {"filled": filled, "amount": filled, "average": limit_price, "price": limit_price}
+                return {"filled": filled, "amount": filled, "average": limit_avg, "price": limit_avg}
             log(f"لم يُنفَّذ الأمر المحدود — أمر سوق للمتبقي {remainder:.6f}: {pair}")
             # تمرير السعر: ccxt يحسب التكلفة = كمية × سعر لمنصات spot
             order = exchange.create_order(pair, 'market', 'buy', remainder, price)
             if order and filled > 0:
                 mkt_filled = _safe_float(order.get("filled"), default=remainder)
-                order["filled"] = filled + mkt_filled
-                order["amount"] = order["filled"]
+                mkt_avg = _safe_float(order.get("average"), default=price) or price
+                total_filled = filled + mkt_filled
+                # متوسط السعر المرجّح بين الجزء المحدود وجزء السوق
+                if total_filled > 0:
+                    vwap = (filled * limit_avg + mkt_filled * mkt_avg) / total_filled
+                    order["average"] = vwap
+                order["filled"] = total_filled
+                order["amount"] = total_filled
         return order
     except Exception as e:
         err = str(e)
@@ -636,6 +649,15 @@ def spot_sell(exchange, pair: str, qty: float) -> dict | None:
         log(f"رفض بيع {pair} على gate — مفتاح قراءة فقط")
         return None
     try:
+        # حد الكمية بالرصيد الفعلي — الرسوم تقتطع من العملة المشتراة فلا نملك كامل qty
+        if not PAPER_MODE:
+            try:
+                base = pair.split("/")[0]
+                free = float(exchange.fetch_balance().get(base, {}).get("free", 0))
+                if free > 0 and free < qty:
+                    qty = free
+            except Exception:
+                pass
         qty = _prec_qty(exchange, pair, qty)
         if qty <= 0:
             return None
@@ -1631,7 +1653,7 @@ def _save_channel_memory(mem: dict):
     if len(days) > 90:
         for old in days[:-90]:
             del mem["daily"][old]
-    CHANNEL_MEMORY_FILE.write_text(json.dumps(mem, ensure_ascii=False, indent=2))
+    _atomic_write(CHANNEL_MEMORY_FILE, json.dumps(mem, ensure_ascii=False, indent=2))
 
 
 async def scan_watch_channels(client) -> str:

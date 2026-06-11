@@ -520,6 +520,8 @@ class CDTState:
     total_trades: int = 0
     wins: int = 0
     losses: int = 0
+    daily_wins: int = 0
+    daily_losses: int = 0
     history: list = field(default_factory=list)
     mode: str = "PAPER"
     # Learning
@@ -556,10 +558,12 @@ def roll_day(st: CDTState):
     if st.daily_date != today:
         if st.daily_date and st.daily_trades > 0:
             notify(f"📊 Channel DayTrader | trades: {st.daily_trades} | "
-                   f"PnL: ${st.daily_pnl:+.2f} | W/L: {st.wins}/{st.losses}")
+                   f"PnL: ${st.daily_pnl:+.2f} | W/L: {st.daily_wins}/{st.daily_losses}")
         st.daily_date = today
         st.daily_trades = 0
         st.daily_pnl = 0.0
+        st.daily_wins = 0
+        st.daily_losses = 0
 
 
 # ══════════════════════════════════════════════════════════════
@@ -679,6 +683,8 @@ def check_exits(st: CDTState):
             exit_reason = "SL"
         else:
             opened = datetime.fromisoformat(pos["opened_at"])
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
             if (now - opened).total_seconds() > MAX_HOLD_HOURS * 3600:
                 exit_reason = "EXPIRED"
 
@@ -696,8 +702,10 @@ def check_exits(st: CDTState):
             is_win = pnl_usd >= 0
             if is_win:
                 st.wins += 1
+                st.daily_wins += 1
             else:
                 st.losses += 1
+                st.daily_losses += 1
 
             # Learn from trade
             ch = pos.get("channel", "")
@@ -749,6 +757,22 @@ def btc_trend_up() -> bool:
     return up
 
 
+def _ai_says_sell(symbol: str) -> bool:
+    """True if bot_monitor's AI flagged this symbol as a SELL — hard veto on entry."""
+    ai_file = BASE_DIR / "ai_channel_analysis.json"
+    if not ai_file.exists():
+        return False
+    try:
+        sig_sym = symbol.upper().replace("USDT", "")
+        ai = json.loads(ai_file.read_text())
+        for s in ai.get("sell", []):
+            if s.get("symbol", "").upper().replace("USDT", "") == sig_sym:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def open_from_signal(st: CDTState, sig: ChannelSignal):
     if sig.symbol in st.positions:
         return
@@ -759,6 +783,10 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
 
     if not btc_trend_up():
         logger.info("🌧 BTC 1h downtrend — skip %s from %s", sig.symbol, sig.channel)
+        return
+
+    if _ai_says_sell(sig.symbol):
+        logger.info("🔴 AI flags %s as SELL — veto entry from %s", sig.symbol, sig.channel)
         return
 
     # Dedup: don't act on same Telegram message twice

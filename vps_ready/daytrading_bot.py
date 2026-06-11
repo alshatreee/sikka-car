@@ -798,6 +798,8 @@ class DayState:
     total_trades: int = 0
     wins: int = 0
     losses: int = 0
+    daily_wins: int = 0
+    daily_losses: int = 0
     history: list = field(default_factory=list)
     mode: str = "PAPER"
     # Self-learning memory
@@ -835,10 +837,12 @@ def roll_day(st: DayState):
     if st.daily_date != today:
         if st.daily_date and (st.daily_trades > 0):
             notify(f"📊 Day Trading Daily | trades: {st.daily_trades} | "
-                   f"PnL: ${st.daily_pnl:+.2f} | W/L: {st.wins}/{st.losses}")
+                   f"PnL: ${st.daily_pnl:+.2f} | W/L: {st.daily_wins}/{st.daily_losses}")
         st.daily_date = today
         st.daily_trades = 0
         st.daily_pnl = 0.0
+        st.daily_wins = 0
+        st.daily_losses = 0
 
 
 # ══════════════════════════════════════════════════════════════
@@ -997,8 +1001,10 @@ def check_exits(st: DayState):
             st.total_trades += 1
             if pnl_usd >= 0:
                 st.wins += 1
+                st.daily_wins += 1
             else:
                 st.losses += 1
+                st.daily_losses += 1
 
             if reason == "SL":
                 st.sl_times.append(now.isoformat())
