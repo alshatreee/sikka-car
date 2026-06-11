@@ -40,6 +40,7 @@ notify() {
 
 cd "$BOTS_DIR" || { log "FATAL: cannot cd $BOTS_DIR"; exit 1; }
 
+status_line=""
 for bot in "${BOTS[@]}"; do
     # Count running instances of this exact bot (live).
     count=$(pgrep -fc "python3 ${bot}.py --live" || true)
@@ -50,6 +51,7 @@ for bot in "${BOTS[@]}"; do
         sleep 1
         log "RESTARTED ${bot} (was down)"
         notify "🔄 Watchdog: أعدت تشغيل ${bot} (كان متوقفاً)"
+        status_line+="${bot}:restarted "
     elif [ "$count" -gt 1 ]; then
         # More than one copy → kill all and start a single clean instance.
         pkill -f "python3 ${bot}.py --live"
@@ -58,5 +60,16 @@ for bot in "${BOTS[@]}"; do
         sleep 1
         log "DEDUP ${bot} (had ${count} copies, restarted single)"
         notify "⚠️ Watchdog: ${bot} كان يعمل ${count} نسخ — أبقيت نسخة واحدة"
+        status_line+="${bot}:dedup "
+    else
+        status_line+="${bot}:ok "
     fi
 done
+
+# Heartbeat so `tail watchdog.log` always shows the watchdog is alive.
+log "heartbeat ${status_line}"
+
+# Cap the log so it can't grow without bound (~ last 2000 lines).
+if [ -f "$WLOG" ] && [ "$(wc -l < "$WLOG")" -gt 2000 ]; then
+    tail -n 1000 "$WLOG" > "$WLOG.tmp" && mv "$WLOG.tmp" "$WLOG"
+fi
