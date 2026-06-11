@@ -16,8 +16,10 @@ bot_monitor.py — مراقب وتحليل بوت القناة الشهرية
     pip install python-dotenv requests
 """
 from __future__ import annotations
-import json, os, re, subprocess, sys, time
+import hashlib, hmac, json, os, re, subprocess, sys, time, threading
+import urllib.request as _urllib_req
 from dataclasses import dataclass, field, asdict
+from decimal import Decimal
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -34,6 +36,8 @@ NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT = os.getenv("TELEGRAM_CHAT_ID", "")
 CEREBRAS_KEY = os.getenv("CEREBRAS_API_KEY", "")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+BYBIT_KEY = os.getenv("BYBIT_API_KEY", "")
+BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
 
 RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
 AI_ANALYSIS_FILE = BASE_DIR / "ai_channel_analysis.json"
@@ -746,6 +750,342 @@ def check_held_vs_ai() -> list[str]:
     return alerts
 
 
+# ══════════════════════════════════════════════════════════════
+# BYBIT TRADING FUNCTIONS (for Telegram command execution)
+# ══════════════════════════════════════════════════════════════
+
+def _http_get(url: str, timeout: int = 15) -> dict | None:
+    try:
+        req = _urllib_req.Request(url, headers={"User-Agent": "bot-monitor/1.0"})
+        with _urllib_req.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
+def _safe_float(val, default=0.0) -> float:
+    if not val or val == "":
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
+
+def _bybit_signed_get(path: str, params: str) -> dict | None:
+    ts = str(int(time.time() * 1000))
+    recv = "5000"
+    sign_str = f"{ts}{BYBIT_KEY}{recv}{params}"
+    sig = hmac.new(BYBIT_SECRET.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+    url = f"https://api.bybit.com{path}?{params}"
+    try:
+        req = _urllib_req.Request(url, headers={
+            "X-BAPI-API-KEY": BYBIT_KEY,
+            "X-BAPI-TIMESTAMP": ts,
+            "X-BAPI-RECV-WINDOW": recv,
+            "X-BAPI-SIGN": sig,
+        })
+        with _urllib_req.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        log(f"Bybit GET {path}: {e}")
+        return None
+
+
+def _bybit_signed_post(params: dict) -> dict | None:
+    ts = str(int(time.time() * 1000))
+    recv = "5000"
+    body = json.dumps(params)
+    sign_str = f"{ts}{BYBIT_KEY}{recv}{body}"
+    sig = hmac.new(BYBIT_SECRET.encode(), sign_str.encode(), hashlib.sha256).hexdigest()
+    url = "https://api.bybit.com/v5/order/create"
+    try:
+        req = _urllib_req.Request(url, data=body.encode(), headers={
+            "Content-Type": "application/json",
+            "X-BAPI-API-KEY": BYBIT_KEY,
+            "X-BAPI-TIMESTAMP": ts,
+            "X-BAPI-RECV-WINDOW": recv,
+            "X-BAPI-SIGN": sig,
+        }, method="POST")
+        with _urllib_req.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        log(f"Bybit POST: {e}")
+        return None
+
+
+def _get_lot_step(symbol: str) -> float:
+    data = _http_get(f"https://api.bybit.com/v5/market/instruments-info?category=spot&symbol={symbol}")
+    if data and data.get("retCode") == 0:
+        items = data.get("result", {}).get("list", [])
+        if items:
+            step = items[0].get("lotSizeFilter", {}).get("basePrecision", "")
+            if step:
+                try:
+                    return float(step)
+                except ValueError:
+                    pass
+    return 0.01
+
+
+def _round_qty(qty: float, step: float) -> float:
+    d_step = Decimal(str(step))
+    return float((Decimal(str(qty)) // d_step) * d_step)
+
+
+def _qty_str(qty: float) -> str:
+    s = format(Decimal(str(qty)), 'f')
+    if '.' in s:
+        s = s.rstrip('0').rstrip('.')
+    return s
+
+
+def _fetch_price(symbol: str) -> float | None:
+    data = _http_get(f"https://api.bybit.com/v5/market/tickers?category=spot&symbol={symbol}")
+    if data and data.get("retCode") == 0:
+        tickers = data.get("result", {}).get("list", [])
+        if tickers:
+            val = tickers[0].get("lastPrice", "")
+            if val:
+                try:
+                    return float(val)
+                except ValueError:
+                    pass
+    return None
+
+
+def _fetch_coin_balance(coin: str) -> float:
+    coin = coin.upper().replace("USDT", "")
+    data = _bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
+    if not data or data.get("retCode") != 0:
+        return 0.0
+    coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
+    for c in coins:
+        if c.get("coin") == coin:
+            for fld in ("availableToWithdraw", "free", "walletBalance"):
+                val = _safe_float(c.get(fld))
+                if val > 0:
+                    return val
+            return 0.0
+    return 0.0
+
+
+def _fetch_usdt_balance() -> float:
+    data = _bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
+    if not data or data.get("retCode") != 0:
+        return 0.0
+    coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
+    for c in coins:
+        if c.get("coin") == "USDT":
+            for fld in ("availableToWithdraw", "walletBalance", "equity"):
+                val = _safe_float(c.get(fld))
+                if val > 0:
+                    return val
+            return 0.0
+    return 0.0
+
+
+def _execute_sell(symbol: str, sell_pct: float) -> str:
+    """Execute a sell order. symbol is base coin (e.g. 'ENJ'). sell_pct is 1-100."""
+    if not BYBIT_KEY or not BYBIT_SECRET:
+        return "❌ مفاتيح Bybit غير متوفرة"
+
+    pair = f"{symbol.upper()}USDT"
+    free = _fetch_coin_balance(symbol)
+    if free <= 0:
+        return f"❌ لا يوجد رصيد من {symbol} في المحفظة"
+
+    price = _fetch_price(pair)
+    if not price:
+        return f"❌ لم أستطع جلب سعر {pair}"
+
+    sell_qty = free * (sell_pct / 100.0)
+    value_usd = sell_qty * price
+
+    if value_usd < 1.0:
+        return f"❌ قيمة البيع أقل من $1 ({symbol}: {sell_qty:.6f} ≈ ${value_usd:.2f})"
+
+    step = _get_lot_step(pair)
+    sell_qty = _round_qty(sell_qty, step)
+
+    if sell_qty <= 0:
+        return f"❌ الكمية صفر بعد التقريب (step={step})"
+
+    result = _bybit_signed_post({
+        "category": "spot",
+        "symbol": pair,
+        "side": "Sell",
+        "orderType": "Market",
+        "qty": _qty_str(sell_qty),
+        "marketUnit": "baseCoin",
+    })
+
+    if result and result.get("retCode") == 0:
+        actual_value = sell_qty * price
+        pct_label = f"{sell_pct:.0f}%"
+        msg = (f"✅ تم بيع {pct_label} من {symbol}\n"
+               f"الكمية: {_qty_str(sell_qty)}\n"
+               f"السعر: ${price:,.6f}\n"
+               f"القيمة: ${actual_value:,.2f}\n"
+               f"المتبقي: {_qty_str(free - sell_qty)} {symbol}")
+        log(f"CMD SELL: {symbol} {pct_label} — qty={sell_qty} @ ${price}")
+        return msg
+
+    err_msg = result.get("retMsg", "unknown") if result else "no response"
+    err_code = result.get("retCode", "?") if result else "?"
+    log(f"CMD SELL FAILED: {symbol} — {err_code}: {err_msg}")
+    return f"❌ فشل البيع: {err_code} — {err_msg}"
+
+
+# ══════════════════════════════════════════════════════════════
+# TELEGRAM COMMAND INTERFACE
+# ══════════════════════════════════════════════════════════════
+
+_tg_update_offset = 0
+
+
+def _tg_get_updates() -> list[dict]:
+    """Fetch new messages via Telegram Bot API long-polling."""
+    global _tg_update_offset
+    if not NOTIFY_TOKEN:
+        return []
+    url = (f"https://api.telegram.org/bot{NOTIFY_TOKEN}/getUpdates"
+           f"?offset={_tg_update_offset}&timeout=30&allowed_updates=[\"message\"]")
+    try:
+        req = _urllib_req.Request(url, headers={"User-Agent": "bot-monitor/1.0"})
+        with _urllib_req.urlopen(req, timeout=45) as r:
+            data = json.loads(r.read())
+        if not data.get("ok"):
+            return []
+        updates = data.get("result", [])
+        if updates:
+            _tg_update_offset = updates[-1]["update_id"] + 1
+        return updates
+    except Exception as e:
+        log(f"TG getUpdates: {e}")
+        return []
+
+
+def _handle_command(text: str) -> str | None:
+    """Parse and execute a Telegram command. Returns reply text or None."""
+    text = text.strip()
+    if not text:
+        return None
+
+    # ── بيع / sell ──
+    sell_match = re.match(
+        r"(?:بيع|sell)\s+([A-Za-z]+)\s*(\d+)?\s*%?",
+        text, re.IGNORECASE
+    )
+    if sell_match:
+        symbol = sell_match.group(1).upper()
+        pct = int(sell_match.group(2)) if sell_match.group(2) else 100
+        if pct < 1 or pct > 100:
+            return "❌ النسبة يجب أن تكون بين 1 و 100"
+        return _execute_sell(symbol, pct)
+
+    # ── مراجعة / review ──
+    if text in ("مراجعة", "review", "/review"):
+        run_ai_analysis()
+        alerts = check_held_vs_ai()
+        if alerts:
+            return "🔎 <b>مراجعة العملات المحتفظ بها</b>\n\n" + "\n\n".join(alerts)
+        return "✅ لا توجد توصيات بيع لأي عملة محتفظ بها"
+
+    # ── حالة / status ──
+    if text in ("حالة", "status", "/status"):
+        state = load_state()
+        return build_health_report(state)
+
+    # ── رصيد / balance ──
+    if text in ("رصيد", "balance", "/balance"):
+        if not BYBIT_KEY:
+            return "❌ مفاتيح Bybit غير متوفرة"
+        usdt = _fetch_usdt_balance()
+        held = get_all_held_coins()
+        lines = [f"<b>💰 رصيد المحفظة</b>\n", f"USDT: ${usdt:,.2f}"]
+        total = usdt
+        for sym, bots in sorted(held.items()):
+            bal = _fetch_coin_balance(sym)
+            price = _fetch_price(f"{sym}USDT")
+            val = bal * price if (bal and price) else 0
+            total += val
+            lines.append(f"{sym}: {_qty_str(bal)} ≈ ${val:,.2f}  ({', '.join(bots)})")
+        lines.append(f"\n<b>الإجمالي: ${total:,.2f}</b>")
+        return "\n".join(lines)
+
+    # ── عملات / coins / holdings ──
+    if text in ("عملات", "coins", "holdings", "/coins"):
+        held = get_all_held_coins()
+        if not held:
+            return "📭 لا توجد عملات محتفظ بها حالياً"
+        lines = ["<b>📊 العملات المحتفظ بها</b>\n"]
+        for sym, bots in sorted(held.items()):
+            lines.append(f"  {sym}USDT — {', '.join(bots)}")
+        return "\n".join(lines)
+
+    # ── أوامر / help ──
+    if text in ("أوامر", "help", "/help", "مساعدة"):
+        return (
+            "<b>📋 الأوامر المتاحة:</b>\n\n"
+            "<code>بيع ENJ 50%</code> — بيع 50% من ENJ\n"
+            "<code>بيع ENJ</code> — بيع 100% من ENJ\n"
+            "<code>مراجعة</code> — مراجعة AI للعملات\n"
+            "<code>حالة</code> — تقرير صحة البوتات\n"
+            "<code>رصيد</code> — رصيد المحفظة\n"
+            "<code>عملات</code> — العملات المحتفظ بها\n"
+            "<code>أوامر</code> — هذه القائمة"
+        )
+
+    return None
+
+
+def _tg_reply(chat_id: str, text: str):
+    """Send a reply to a specific chat."""
+    if not NOTIFY_TOKEN:
+        return
+    try:
+        import requests
+        requests.post(
+            f"https://api.telegram.org/bot{NOTIFY_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except Exception as e:
+        log(f"TG reply error: {e}")
+
+
+def _command_loop():
+    """Background thread: poll Telegram for commands and execute them."""
+    global _tg_update_offset
+    # Skip old messages on startup
+    log("CMD: بدء واجهة أوامر تيليجرام...")
+    try:
+        boot = _tg_get_updates()
+        if boot:
+            log(f"CMD: تخطي {len(boot)} رسالة قديمة")
+    except Exception:
+        pass
+
+    while True:
+        try:
+            updates = _tg_get_updates()
+            for upd in updates:
+                msg = upd.get("message", {})
+                chat_id = str(msg.get("chat", {}).get("id", ""))
+                text = msg.get("text", "")
+
+                if chat_id != NOTIFY_CHAT:
+                    continue
+
+                reply = _handle_command(text)
+                if reply:
+                    _tg_reply(chat_id, reply)
+        except Exception as e:
+            log(f"CMD loop error: {e}")
+            time.sleep(10)
+
+
 def main():
     if "--report" in sys.argv:
         state = load_state()
@@ -787,7 +1127,10 @@ def main():
         save_state(state)
         log(f"بدء من نهاية اللوق (offset={state.log_offset})")
 
-    notify(f"🩺 بدأت مراقبة البوت <b>{SERVICE_NAME}</b>\nفحص كل {CHECK_INTERVAL//60} دقيقة")
+    notify(f"🩺 بدأت مراقبة البوت <b>{SERVICE_NAME}</b>\nفحص كل {CHECK_INTERVAL//60} دقيقة\n📱 واجهة الأوامر فعّالة — أرسل <code>أوامر</code> لعرض القائمة")
+
+    cmd_thread = threading.Thread(target=_command_loop, daemon=True)
+    cmd_thread.start()
 
     while True:
         time.sleep(CHECK_INTERVAL)
@@ -802,7 +1145,6 @@ def main():
                     notify(msg)
             alerts = run_checks(state)
             if alerts:
-                import hashlib
                 new_alerts = []
                 new_hashes = []
                 for a in alerts:
