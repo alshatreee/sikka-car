@@ -780,7 +780,6 @@ def btc_trend_up() -> bool:
     now = time.time()
     if now - _btc_trend_cache["ts"] < 900:
         return _btc_trend_cache["up"]
-    up = _btc_trend_cache["up"]
     data = http_get("https://api.bybit.com/v5/market/kline?category=spot&symbol=BTCUSDT&interval=60&limit=50")
     if data and data.get("retCode") == 0:
         rows = data.get("result", {}).get("list", [])
@@ -788,10 +787,9 @@ def btc_trend_up() -> bool:
             closes = [float(r[4]) for r in reversed(rows)]
             m9 = sum(closes[-9:]) / 9
             m21 = sum(closes[-21:]) / 21
-            up = m9 > m21
-    _btc_trend_cache["ts"] = now
-    _btc_trend_cache["up"] = up
-    return up
+            _btc_trend_cache["up"] = m9 > m21
+            _btc_trend_cache["ts"] = now
+    return _btc_trend_cache["up"]
 
 
 def _ai_says_sell(symbol: str) -> bool:
@@ -830,9 +828,6 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
     sig_key = f"{sig.channel}:{sig.msg_id}"
     if sig_key in st.seen_signals:
         return
-    st.seen_signals.append(sig_key)
-    if len(st.seen_signals) > 500:
-        st.seen_signals = st.seen_signals[-500:]
 
     # Technical verification
     ok, reason = verify_technical(sig.symbol)
@@ -853,6 +848,11 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
     qty = place_buy(sig.symbol, size, price)
     if qty is None:
         return
+
+    # Mark as seen AFTER successful buy — failed buys should be retried
+    st.seen_signals.append(sig_key)
+    if len(st.seen_signals) > 500:
+        st.seen_signals = st.seen_signals[-500:]
 
     # Use signal targets if reasonable, otherwise defaults
     # SL capped at 4% — a 10% channel stop contradicts the 2% risk policy

@@ -598,10 +598,16 @@ def run_ai_analysis():
 
     for sig in result.get("sell", []):
         sym = sig.get("symbol", "").upper()
-        if sym:
+        if sym and not any(s.get("symbol") == sym for s in sell_signals[-20:]):
             sig["symbol"] = sym
             sig["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
             sell_signals.append(sig)
+    # Expire sell signals older than 24h so a single stale AI SELL
+    # doesn't permanently veto a coin in channel_daytrader.
+    cutoff = time.time() - 86400
+    sell_signals = [s for s in sell_signals
+                    if time.mktime(time.strptime(s.get("ts", "2000-01-01T00:00:00"),
+                       "%Y-%m-%dT%H:%M:%S")) > cutoff]
 
     for sig in result.get("watch", []):
         sym = sig.get("symbol", "").upper()

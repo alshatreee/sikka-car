@@ -610,7 +610,13 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
                 log(f"الأمر المحدود تنفّذ فعلياً ({filled:.6f}): {pair}")
                 return {"filled": filled, "amount": filled, "average": limit_avg, "price": limit_avg}
             log(f"لم يُنفَّذ الأمر المحدود — أمر سوق للمتبقي {remainder:.6f}: {pair}")
-            # تمرير السعر: ccxt يحسب التكلفة = كمية × سعر لمنصات spot
+            # سعر حديث للاحتياط السوقي — السعر القديم قد يكون متأخراً 30 ثانية
+            try:
+                fresh = _safe_float(exchange.fetch_ticker(pair).get("last"))
+                if fresh:
+                    price = fresh
+            except Exception:
+                pass
             order = exchange.create_order(pair, 'market', 'buy', remainder, price)
             if order and filled > 0:
                 mkt_filled = _safe_float(order.get("filled"), default=remainder)
@@ -803,6 +809,16 @@ def partial_rebuy(state, pair: str, price: float, exchange):
     pos["partial_taken"] = False
     pos["partial_usdt"] = 0
     pos.pop("rebuy_fails", None)
+    # After a rebuy following a target sell, roll back targets_hit so the
+    # next target-sell uses the correct remaining-target count and sells
+    # the right fraction. Without this, the rebought qty inflates the
+    # base and subsequent target sells distribute wrong percentages.
+    targets = pos.get("targets", [])
+    if targets and pos.get("targets_hit", 0) > 0:
+        pos["targets_hit"] = pos["targets_hit"] - 1
+        hit_targets = [t for t in targets if t.get("hit")]
+        if hit_targets:
+            hit_targets[-1]["hit"] = False
     save_state(state)
 
     drop_pct = (price - pos["entry"]) / pos["entry"] * 100
@@ -1872,6 +1888,20 @@ async def main():
             if len(state.executed_signals) > 500:
                 state.executed_signals = state.executed_signals[-500:]
             save_state(state)
+        else:
+            # الشراء فشل (رصيد غير كافٍ أو حد يومي) — نحفظ التوصية كمعلّقة
+            # حتى يعيد check_pending_signals محاولتها لاحقاً
+            pending_key = sig_key
+            if not any(p.get("key") == pending_key for p in state.pending_signals):
+                state.pending_signals.append({
+                    "key": pending_key, "symbol": signal.symbol,
+                    "buy_price": signal.buy_price, "sell_price": signal.sell_price,
+                    "tp_pct": signal.tp_pct, "trade_num": signal.trade_num,
+                    "targets": [{"price": t["price"], "pct": t["pct"]} for t in signal.targets] if signal.targets else [],
+                    "added": time.strftime("%Y-%m-%d %H:%M:%S"),
+                })
+                save_state(state)
+                log(f"توصية معلّقة: {sig_key} — ستُعاد المحاولة تلقائياً")
 
     async def position_checker():
         while True:

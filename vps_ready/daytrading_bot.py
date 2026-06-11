@@ -992,7 +992,13 @@ def check_exits(st: DayState):
             # Update highest price for trailing
             if price > pos.highest_price:
                 pos.highest_price = price
-                pos.trailing_active = pnl_pct >= TRAILING_ACTIVATE
+                st.positions[sym] = pos.to_dict()
+
+            # Activate trailing once profit crosses the threshold — must be
+            # outside the new-high block so it triggers even when the price
+            # plateaus at or just below the previous high.
+            if not pos.trailing_active and pnl_pct >= TRAILING_ACTIVATE:
+                pos.trailing_active = True
                 st.positions[sym] = pos.to_dict()
 
             exit_reason = None
@@ -1058,8 +1064,10 @@ def check_exits(st: DayState):
                    f"PnL: {pnl_pct:+.2f}% (${pnl_usd:+.2f})\n"
                    f"Daily: ${st.daily_pnl:+.2f}")
 
-            held_min = int((datetime.now(timezone.utc) -
-                           datetime.fromisoformat(pos.opened_at)).total_seconds() / 60)
+            _opened = datetime.fromisoformat(pos.opened_at)
+            if _opened.tzinfo is None:
+                _opened = _opened.replace(tzinfo=timezone.utc)
+            held_min = int((datetime.now(timezone.utc) - _opened).total_seconds() / 60)
             st.history.append({
                 "symbol": sym,
                 "entry": pos.entry_price,
@@ -1105,7 +1113,10 @@ def open_position(st: DayState, signal: Signal):
         logger.info("Size $%.2f < min $%.0f — skip", size, MIN_TRADE_USDT)
         return
 
-    price = signal.price
+    # Use live price for entry, TP/SL — the signal price is a stale candle close
+    price = fetch_price(signal.symbol)
+    if price is None:
+        return
     tp_price = price * (1 + TAKE_PROFIT_PCT / 100)
     sl_price = price * (1 - STOP_LOSS_PCT / 100)
 
@@ -1215,8 +1226,16 @@ def run_cycle(st: DayState):
 
     # Circuit breaker: 3+ stop-losses within 4h = hostile market, pause entries
     now_utc = datetime.now(timezone.utc)
-    recent_sl = [t for t in st.sl_times
-                 if (now_utc - datetime.fromisoformat(t)).total_seconds() < 4 * 3600]
+    recent_sl = []
+    for t in st.sl_times:
+        try:
+            ts = datetime.fromisoformat(t)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if (now_utc - ts).total_seconds() < 4 * 3600:
+                recent_sl.append(t)
+        except Exception:
+            continue
     if len(recent_sl) >= 3:
         if _cycle_count % 6 == 0:
             logger.info("🛑 Circuit breaker: %d SLs in 4h — paused until market calms", len(recent_sl))
