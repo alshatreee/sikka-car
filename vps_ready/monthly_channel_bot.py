@@ -628,7 +628,6 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
         if "permission" in err.lower() or "FORBIDDEN" in err:
             _disabled_exchanges.add(ex_id)
             log(f"تعطيل الشراء من {ex_id} — صلاحيات ناقصة")
-            notify(f"⚠️ تعطيل الشراء من {ex_id} — مفتاح API بدون صلاحية spot write")
         elif "insufficient" in err.lower() or "170131" in err or "200004" in err:
             # رصيد غير كافٍ — رسالة عادية بدون تنبيه
             log(f"تخطي شراء {pair} — رصيد غير كافٍ في {ex_id}")
@@ -790,8 +789,7 @@ def partial_rebuy(state, pair: str, price: float, exchange):
                 pos["partial_taken"] = False
                 pos["partial_usdt"] = 0
                 save_state(state)
-                msg = f"⚠️ إعادة شراء {pair} فشلت {fails} مرات — تم إلغاء الإعادة. تحقق من الرصيد."
-                log(msg); notify(msg)
+                log(f"⚠️ إعادة شراء {pair} فشلت {fails} مرات — تم إلغاء الإعادة. تحقق من الرصيد.")
             return
         rebuy_qty = _safe_float(order.get("filled"), order.get("amount"), default=rebuy_qty)
 
@@ -1017,14 +1015,13 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
     if state.daily_pnl <= -MAX_DAILY_LOSS:
         state.halted = True
         log(f"إيقاف التداول — خسارة يومية ${state.daily_pnl:.2f}")
-        notify(f"إيقاف التداول — خسارة يومية ${state.daily_pnl:.2f}")
 
     if pnl < 0:
         state.consecutive_losses += 1
         if state.consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
             msg_halt = (f"إيقاف التداول — {state.consecutive_losses} خسائر متتالية\n"
                         f"يُستأنف تلقائياً في اليوم التالي")
-            log(msg_halt); notify(msg_halt)
+            log(msg_halt)
     else:
         state.consecutive_losses = 0
 
@@ -1787,7 +1784,6 @@ async def main():
     mode = "ورقي" if PAPER_MODE else "حقيقي"
     log(f"=== بدء البوت الشهري [{mode}] ===")
     log(f"القنوات: {TG_CHANNELS} | رأس المال: ${CAPITAL} | حجم: ${TRADE_SIZE}")
-    notify(f"بدء البوت الشهري [{mode}]\nالقنوات: {', '.join(TG_CHANNELS)}")
 
     state = load_state(); rollover_day(state)
 
@@ -1911,7 +1907,7 @@ async def main():
             try:
                 report = tracker_report()
                 if report:
-                    log(report); notify(report)
+                    log(report)
             except Exception:
                 pass
 
@@ -1926,8 +1922,7 @@ async def main():
             try:
                 summary = await scan_watch_channels(client)
                 if summary:
-                    log("ملخص القنوات اليومي أُرسل")
-                    notify(summary)
+                    log("ملخص القنوات اليومي حُفظ")
             except Exception as e:
                 log(f"خطأ ملخص القنوات: {e}")
 

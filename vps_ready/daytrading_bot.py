@@ -837,7 +837,7 @@ def roll_day(st: DayState):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if st.daily_date != today:
         if st.daily_date and (st.daily_trades > 0):
-            notify(f"📊 Day Trading Daily | trades: {st.daily_trades} | "
+            logger.info(f"📊 Day Trading Daily | trades: {st.daily_trades} | "
                    f"PnL: ${st.daily_pnl:+.2f} | W/L: {st.daily_wins}/{st.daily_losses}")
         st.daily_date = today
         st.daily_trades = 0
@@ -1427,7 +1427,7 @@ def main():
 
     # Main trading loop
     mode = "LIVE" if not PAPER_MODE else "PAPER"
-    notify(f"🚀 Day Trading Bot Started [{mode}]\n"
+    logger.info(f"🚀 Day Trading Bot Started [{mode}]\n"
            f"Strategy: RSI Bounce + EMA Trend\n"
            f"TP: {TAKE_PROFIT_PCT}% | SL: {STOP_LOSS_PCT}% | Trail: {TRAILING_PCT}%\n"
            f"Size: {TRADE_SIZE_PCT}% of balance (min ${MIN_TRADE_USDT}) | Max: {MAX_POSITIONS} positions\n"

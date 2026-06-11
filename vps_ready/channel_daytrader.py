@@ -557,7 +557,7 @@ def roll_day(st: CDTState):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if st.daily_date != today:
         if st.daily_date and st.daily_trades > 0:
-            notify(f"📊 Channel DayTrader | trades: {st.daily_trades} | "
+            logger.info(f"📊 Channel DayTrader | trades: {st.daily_trades} | "
                    f"PnL: ${st.daily_pnl:+.2f} | W/L: {st.daily_wins}/{st.daily_losses}")
         st.daily_date = today
         st.daily_trades = 0
@@ -965,9 +965,9 @@ def main():
         return
 
     mode = "LIVE" if not PAPER_MODE else "PAPER"
-    notify(f"🚀 Channel DayTrader Started [{mode}]\n"
+    logger.info(f"🚀 Channel DayTrader Started [{mode}]\n"
            f"Channels: {len(WATCH_CHANNELS)} | TP: {TAKE_PROFIT_PCT}% | SL: {STOP_LOSS_PCT}%\n"
-           f"Size: ${TRADE_SIZE_USDT} | Max: {MAX_POSITIONS} positions\n"
+           f"Size: {TRADE_SIZE_USDT} | Max: {MAX_POSITIONS} positions\n"
            f"Scan every {SCAN_INTERVAL_SEC // 60} min")
 
     st = load_state()
