@@ -38,6 +38,11 @@ GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
 AI_ANALYSIS_FILE = BASE_DIR / "ai_channel_analysis.json"
 
+# State files for all trading bots — used to cross-check held coins vs AI
+MONTHLY_STATE = BASE_DIR / "monthly_state.json"
+DAYTRADING_STATE = BASE_DIR / "daytrading_state.json"
+CHANNEL_DT_STATE = BASE_DIR / "channel_daytrader_state.json"
+
 CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "900"))
 LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "30"))
 AUTO_RESTART = os.getenv("MONITOR_AUTO_RESTART", "true").lower() == "true"
@@ -482,9 +487,11 @@ _AI_PROMPT = (
     "هودل=HODL, رالي=rally, مون=moon, سبورت=support, ريزستنس=resistance, "
     "تريند=trend, بيرش=bearish, بولش=bullish, اكيوميوليت=accumulate, "
     "دي سي ايه=DCA, ريكفري=recovery\n\n"
+    "عند التوصية بالبيع، حدد نسبة البيع الموصى بها (sell_pct) كرقم 1-100.\n"
+    "مثلاً: بيع 50% من الكمية المحتفظ بها، أو بيع 100% (إغلاق كامل).\n\n"
     "أجب بـ JSON فقط بهذا الشكل:\n"
     '{"buy":[{"symbol":"XRP","confidence":"high","reason":"بول ران + اختراق"}],'
-    '"sell":[{"symbol":"BTC","confidence":"medium","reason":"هبوط"}],'
+    '"sell":[{"symbol":"BTC","confidence":"medium","reason":"هبوط","sell_pct":50}],'
     '"watch":[{"symbol":"ETH","note":"ذكر بدون توصية واضحة"}]}\n\n'
 )
 
@@ -639,12 +646,125 @@ def run_ai_analysis():
             log(f"  🔴 {s.get('symbol')} [{s.get('confidence')}]: {s.get('reason','')}")
 
 
+def _normalize_sym(s: str) -> str:
+    return s.upper().replace("USDT", "").replace("/", "").strip()
+
+
+def get_all_held_coins() -> dict[str, list[str]]:
+    """Return {symbol: [bot_names]} for every coin currently held across all bots."""
+    held: dict[str, list[str]] = {}
+
+    # monthly_channel_bot — open_positions keyed by "SYM/USDT"
+    if MONTHLY_STATE.exists():
+        try:
+            data = json.loads(MONTHLY_STATE.read_text())
+            for pair in data.get("open_positions", {}):
+                sym = _normalize_sym(pair)
+                held.setdefault(sym, []).append("monthly")
+        except Exception:
+            pass
+
+    # daytrading_bot — positions keyed by "SYMUSDT"
+    if DAYTRADING_STATE.exists():
+        try:
+            data = json.loads(DAYTRADING_STATE.read_text())
+            for sym_key in data.get("positions", {}):
+                sym = _normalize_sym(sym_key)
+                held.setdefault(sym, []).append("daytrading")
+        except Exception:
+            pass
+
+    # channel_daytrader — positions keyed by "SYM"
+    if CHANNEL_DT_STATE.exists():
+        try:
+            data = json.loads(CHANNEL_DT_STATE.read_text())
+            for sym_key in data.get("positions", {}):
+                sym = _normalize_sym(sym_key)
+                held.setdefault(sym, []).append("channel_dt")
+        except Exception:
+            pass
+
+    return held
+
+
+def check_held_vs_ai() -> list[str]:
+    """Cross-check every held coin against AI sell recommendations.
+
+    Returns a list of Telegram alert strings for coins the AI flags as SELL.
+    """
+    if not AI_ANALYSIS_FILE.exists():
+        return []
+    try:
+        ai = json.loads(AI_ANALYSIS_FILE.read_text())
+    except Exception:
+        return []
+
+    sell_list = ai.get("sell", [])
+    if not sell_list:
+        return []
+
+    sell_syms = {}
+    for s in sell_list:
+        sym = _normalize_sym(s.get("symbol", ""))
+        if sym:
+            sell_syms[sym] = {
+                "confidence": s.get("confidence", ""),
+                "reason": s.get("reason", ""),
+                "sell_pct": s.get("sell_pct", 100),
+                "ts": s.get("ts", ""),
+            }
+
+    held = get_all_held_coins()
+    if not held:
+        return []
+
+    alerts = []
+    for sym, bots in held.items():
+        if sym in sell_syms:
+            info = sell_syms[sym]
+            bots_str = " + ".join(bots)
+            pct = info["sell_pct"]
+            pct_label = f"بيع {pct}%" if pct < 100 else "بيع كامل"
+            alerts.append(
+                f"🔴 <b>توصية بيع: {sym}USDT ({pct_label})</b>\n"
+                f"البوتات المحتفظة: {bots_str}\n"
+                f"الثقة: {info['confidence']}\n"
+                f"السبب: {info['reason']}\n"
+                f"التحليل: {info['ts']}"
+            )
+            log(f"⚠️ AI يوصي ببيع {pct}% من {sym} — محتفظ في: {bots_str}")
+
+    # Also report coins NOT in AI at all (neither buy nor sell)
+    buy_syms = {_normalize_sym(s.get("symbol", "")) for s in ai.get("buy", [])}
+    for sym, bots in held.items():
+        if sym not in sell_syms and sym not in buy_syms:
+            alerts.append(
+                f"⚪ <b>{sym}USDT</b> — بدون تحليل AI\n"
+                f"البوتات: {' + '.join(bots)}"
+            )
+
+    return alerts
+
+
 def main():
     if "--report" in sys.argv:
         state = load_state()
         report = build_health_report(state)
         log(report.replace("<b>", "").replace("</b>", "").replace("<code>", "").replace("</code>", ""))
         notify(report)
+        return
+
+    if "--review" in sys.argv:
+        run_ai_analysis()
+        alerts = check_held_vs_ai()
+        if alerts:
+            msg = "🔎 <b>مراجعة العملات المحتفظ بها</b>\n\n" + "\n\n".join(alerts)
+            log(msg.replace("<b>", "").replace("</b>", ""))
+            notify(msg)
+        else:
+            msg = "✅ لا توجد توصيات بيع لأي عملة محتفظ بها"
+            log(msg)
+            notify(msg)
         return
 
     if "--once" in sys.argv:
@@ -673,6 +793,13 @@ def main():
         time.sleep(CHECK_INTERVAL)
         try:
             run_ai_analysis()
+            # Cross-check held coins against AI sell recommendations
+            held_alerts = check_held_vs_ai()
+            if held_alerts:
+                sell_only = [a for a in held_alerts if "توصية بيع" in a]
+                if sell_only:
+                    msg = "🔎 <b>تنبيه: AI يوصي ببيع عملات محتفظ بها</b>\n\n" + "\n\n".join(sell_only)
+                    notify(msg)
             alerts = run_checks(state)
             if alerts:
                 import hashlib
