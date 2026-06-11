@@ -76,6 +76,7 @@ def get_kucoin_exchange():
         "apiKey": KUCOIN_KEY,
         "secret": KUCOIN_SECRET,
         "password": KUCOIN_PASS,
+        "enableRateLimit": True,
         "options": {"defaultType": "spot"},
     })
 
@@ -85,6 +86,7 @@ def get_bybit_exchange():
     return ccxt.bybit({
         "apiKey": BYBIT_KEY,
         "secret": BYBIT_SECRET,
+        "enableRateLimit": True,
         "options": {"defaultType": "spot"},
     })
 
@@ -94,6 +96,7 @@ def get_gate_exchange():
     return ccxt.gateio({
         "apiKey": GATE_KEY,
         "secret": GATE_SECRET,
+        "enableRateLimit": True,
         "options": {"defaultType": "spot"},
     })
 
@@ -150,7 +153,11 @@ def load_state() -> PortfolioState:
 
 
 def save_state(state: PortfolioState):
-    STATE_FILE.write_text(json.dumps(asdict(state), ensure_ascii=False, indent=2))
+    # كتابة ذرّية: ملف مؤقت ثم استبدال، حتى لا تتلف الحالة لو قُتل أثناء الكتابة
+    text = json.dumps(asdict(state), ensure_ascii=False, indent=2)
+    tmp = STATE_FILE.with_suffix(STATE_FILE.suffix + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(STATE_FILE)
 
 
 def calc_avg_entry(exchange, symbol: str) -> float | None:
