@@ -368,7 +368,7 @@ class Signal:
     targets: list[dict] = field(default_factory=list)
 
 _COMPLETED_PATTERNS = re.compile(
-    r"✅|✓|☑|تم\s*تحقيق|تحقق\s*الهدف|وصل\s*الهدف|تم\s*الوصول|تم\s*البيع|أغلقت|مغلقة|closed|reached|done",
+    r"تم\s*تحقيق|تحقق\s*الهدف|وصل\s*الهدف|تم\s*الوصول|تم\s*البيع|أغلقت|مغلقة|closed|reached|done",
     re.IGNORECASE,
 )
 
