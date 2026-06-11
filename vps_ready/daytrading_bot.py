@@ -62,7 +62,8 @@ TG_CHAT      = ENV.get("TELEGRAM_CHAT_ID", "")
 # ══════════════════════════════════════════════════════════════
 
 # Position sizing
-TRADE_SIZE_USDT    = float(ENV.get("DT_TRADE_SIZE", "25.0"))
+TRADE_SIZE_PCT     = float(ENV.get("DT_TRADE_SIZE_PCT", "15"))
+MIN_TRADE_USDT     = float(ENV.get("DT_MIN_TRADE", "20.0"))
 MAX_POSITIONS      = int(ENV.get("DT_MAX_POSITIONS", "5"))
 MAX_DAILY_LOSS     = float(ENV.get("DT_MAX_LOSS", "50.0"))
 
@@ -1049,10 +1050,10 @@ def open_position(st: DayState, signal: Signal):
         return
 
     balance = fetch_balance()
-    logger.info("💰 Balance check: $%.2f", balance)
-    size = min(TRADE_SIZE_USDT, balance * 0.95)
-    if size < 5:
-        logger.info("Insufficient balance: $%.2f — need at least $5 in Unified Account", balance)
+    size = round(balance * TRADE_SIZE_PCT / 100, 2)
+    logger.info("💰 Balance: $%.2f | Size: $%.2f (%.0f%%)", balance, size, TRADE_SIZE_PCT)
+    if size < MIN_TRADE_USDT:
+        logger.info("Size $%.2f < min $%.0f — skip", size, MIN_TRADE_USDT)
         return
 
     price = signal.price
@@ -1429,7 +1430,7 @@ def main():
     notify(f"🚀 Day Trading Bot Started [{mode}]\n"
            f"Strategy: RSI Bounce + EMA Trend\n"
            f"TP: {TAKE_PROFIT_PCT}% | SL: {STOP_LOSS_PCT}% | Trail: {TRAILING_PCT}%\n"
-           f"Size: ${TRADE_SIZE_USDT} | Max: {MAX_POSITIONS} positions\n"
+           f"Size: {TRADE_SIZE_PCT}% of balance (min ${MIN_TRADE_USDT}) | Max: {MAX_POSITIONS} positions\n"
            f"Watchlist: {len(WATCHLIST)} coins")
 
     st = load_state()
