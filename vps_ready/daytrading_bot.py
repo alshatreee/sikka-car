@@ -1028,6 +1028,14 @@ def check_exits(st: DayState):
     for sym, pos, price, pnl_pct, pnl_usd, reason in to_close:
         # place_sell caps to the real held balance, so pass the full qty
         success = place_sell(sym, pos.qty) if not PAPER_MODE else True
+        if not success and not PAPER_MODE:
+            # If the real holding is just dust (< $1, below exchange min),
+            # abandon the position instead of retrying the same sell forever.
+            held = fetch_coin_balance(sym)
+            if held * price < 1.0:
+                logger.info("🧹 %s holding is dust (%.8f ≈ $%.4f) — abandoning position",
+                            sym, held, held * price)
+                success = True
         if success or PAPER_MODE:
             del st.positions[sym]
             st.daily_pnl += pnl_usd

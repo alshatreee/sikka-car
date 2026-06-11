@@ -721,6 +721,15 @@ def check_exits(st: CDTState):
 
     for sym, pos, price, pnl_pct, pnl_usd, reason in to_close:
         success = place_sell(sym, pos["qty"]) if not PAPER_MODE else True
+        if not success and not PAPER_MODE:
+            # Sell failed — if the real holding is just dust (< $1, can't meet
+            # the exchange min order), abandon the position instead of retrying
+            # the same failing sell forever.
+            held = fetch_coin_balance(sym)
+            if held * price < 1.0:
+                logger.info("🧹 %s holding is dust (%.8f ≈ $%.4f) — abandoning position",
+                            sym, held, held * price)
+                success = True
         if success or PAPER_MODE:
             del st.positions[sym]
             st.daily_pnl += pnl_usd
