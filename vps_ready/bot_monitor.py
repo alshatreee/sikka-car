@@ -193,11 +193,11 @@ def read_new_lines(state: MonitorState) -> list[str]:
 
 def service_status() -> dict:
     """حالة خدمة systemd"""
-    info = {"active": False, "restarts": 0, "sub": "?", "since": "?"}
+    info = {"active": False, "restarts": 0, "sub": "?", "since": "?", "masked": False}
     try:
         out = subprocess.run(
             ["systemctl", "show", SERVICE_NAME,
-             "-p", "ActiveState,SubState,NRestarts,ActiveEnterTimestamp"],
+             "-p", "ActiveState,SubState,NRestarts,ActiveEnterTimestamp,LoadState,UnitFileState"],
             capture_output=True, text=True, timeout=15,
         ).stdout
         for line in out.splitlines():
@@ -212,6 +212,10 @@ def service_status() -> dict:
                 info["restarts"] = int(v) if v.isdigit() else 0
             elif k == "ActiveEnterTimestamp":
                 info["since"] = v
+            elif k in ("LoadState", "UnitFileState"):
+                # masked / not-found ⇒ الخدمة موقوفة عمداً، لا نراقبها ولا نعيد تشغيلها
+                if v in ("masked", "not-found"):
+                    info["masked"] = True
     except Exception as e:
         log(f"خطأ حالة الخدمة: {e}")
     return info
@@ -258,12 +262,15 @@ def detect_duplicate_buys(buys: list[str]) -> dict:
 
 
 def auto_restart(reason: str) -> bool:
-    """إعادة تشغيل البوت تلقائياً وإرجاع True إذا نجح"""
+    """إعادة تشغيل البوت تلقائياً وإرجاع True فقط إذا نجح الأمر فعلاً"""
     try:
-        subprocess.run(["systemctl", "restart", SERVICE_NAME],
-                       capture_output=True, timeout=30)
-        log(f"✅ إعادة تشغيل تلقائية: {reason}")
-        return True
+        res = subprocess.run(["systemctl", "restart", SERVICE_NAME],
+                             capture_output=True, text=True, timeout=30)
+        if res.returncode == 0:
+            log(f"✅ إعادة تشغيل تلقائية: {reason}")
+            return True
+        log(f"❌ فشل إعادة التشغيل (كود {res.returncode}): {res.stderr.strip()}")
+        return False
     except Exception as e:
         log(f"❌ فشل إعادة التشغيل: {e}")
         return False
@@ -275,6 +282,10 @@ def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
 
     # 1) حالة الخدمة
     svc = service_status()
+    # الخدمة masked/not-found ⇒ موقوفة عمداً (نديرها عبر nohup + watchdog)،
+    # فلا ننبّه ولا نحاول إعادة تشغيلها — لكن تحليل الـ AI يستمر كالمعتاد.
+    if svc.get("masked"):
+        return alerts
     if not svc["active"]:
         if AUTO_RESTART:
             restarted = auto_restart("البوت متوقف")
