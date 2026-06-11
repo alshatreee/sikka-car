@@ -737,16 +737,40 @@ def place_buy(symbol: str, usdt_amount: float, price: float) -> float | None:
     return None
 
 
+def fetch_coin_balance(symbol: str) -> float:
+    """Free (spot-available) balance of a base coin, e.g. 'BTC'. 0.0 on failure."""
+    if PAPER_MODE:
+        return 0.0
+    coin = symbol.upper().replace("USDT", "")
+    data = bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
+    if not data or data.get("retCode") != 0:
+        return 0.0
+    coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
+    for c in coins:
+        if c.get("coin") == coin:
+            for field in ("availableToWithdraw", "free", "walletBalance"):
+                val = _safe_float(c.get(field))
+                if val > 0:
+                    return val
+            return 0.0
+    return 0.0
+
+
 def place_sell(symbol: str, qty: float) -> bool:
     if PAPER_MODE:
         logger.info("📝 PAPER SELL %s — qty %.6f", symbol, qty)
         return True
 
+    # Cap to the real held balance so the order can't be rejected for trying to
+    # sell more than we hold (fees are taken from the base coin on the buy).
+    free = fetch_coin_balance(symbol)
+    if free > 0:
+        qty = min(qty, free)
     step = _get_lot_step(symbol)
     qty = _round_qty(qty, step)
 
     if qty <= 0:
-        logger.error("❌ SELL %s: qty rounded to 0 (step=%s)", symbol, step)
+        logger.error("❌ SELL %s: qty rounded to 0 (step=%s, held=%.8f)", symbol, step, free)
         return False
 
     result = bybit_signed_post({
@@ -776,17 +800,22 @@ class Position:
     usdt_size: float
     tp_price: float
     sl_price: float
-    highest_price: float
-    trailing_active: bool
-    opened_at: str
-    reason: str
+    highest_price: float = 0.0
+    trailing_active: bool = False
+    opened_at: str = ""
+    reason: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Position":
-        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        pos = cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+        if not pos.highest_price:
+            pos.highest_price = pos.entry_price
+        if not pos.opened_at:
+            pos.opened_at = datetime.now(timezone.utc).isoformat()
+        return pos
 
 
 @dataclass
@@ -951,50 +980,54 @@ def check_exits(st: DayState):
     now = datetime.now(timezone.utc)
 
     for sym, pos_dict in list(st.positions.items()):
-        pos = Position.from_dict(pos_dict)
-        price = fetch_price(sym)
-        if price is None:
+        try:
+            pos = Position.from_dict(pos_dict)
+            price = fetch_price(sym)
+            if price is None:
+                continue
+
+            pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
+            pnl_usd = pos.usdt_size * pnl_pct / 100
+
+            # Update highest price for trailing
+            if price > pos.highest_price:
+                pos.highest_price = price
+                pos.trailing_active = pnl_pct >= TRAILING_ACTIVATE
+                st.positions[sym] = pos.to_dict()
+
+            exit_reason = None
+
+            # Take profit
+            if price >= pos.tp_price:
+                exit_reason = "TP"
+
+            # Trailing stop (activated after TRAILING_ACTIVATE%)
+            elif pos.trailing_active:
+                trail_price = pos.highest_price * (1 - TRAILING_PCT / 100)
+                if price <= trail_price:
+                    exit_reason = "TRAIL"
+
+            # Stop loss
+            elif price <= pos.sl_price:
+                exit_reason = "SL"
+
+            # Time expiry
+            else:
+                opened = datetime.fromisoformat(pos.opened_at)
+                if opened.tzinfo is None:
+                    opened = opened.replace(tzinfo=timezone.utc)
+                if (now - opened).total_seconds() > MAX_HOLD_HOURS * 3600:
+                    exit_reason = "EXPIRED"
+
+            if exit_reason:
+                to_close.append((sym, pos, price, pnl_pct, pnl_usd, exit_reason))
+        except Exception as e:
+            logger.error("check_exits error for %s: %s", sym, e)
             continue
 
-        pnl_pct = (price - pos.entry_price) / pos.entry_price * 100
-        pnl_usd = pos.usdt_size * pnl_pct / 100
-
-        # Update highest price for trailing
-        if price > pos.highest_price:
-            pos.highest_price = price
-            pos.trailing_active = pnl_pct >= TRAILING_ACTIVATE
-            st.positions[sym] = pos.to_dict()
-
-        exit_reason = None
-
-        # Take profit
-        if price >= pos.tp_price:
-            exit_reason = "TP"
-
-        # Trailing stop (activated after TRAILING_ACTIVATE%)
-        elif pos.trailing_active:
-            trail_price = pos.highest_price * (1 - TRAILING_PCT / 100)
-            if price <= trail_price:
-                exit_reason = "TRAIL"
-
-        # Stop loss
-        elif price <= pos.sl_price:
-            exit_reason = "SL"
-
-        # Time expiry
-        else:
-            opened = datetime.fromisoformat(pos.opened_at)
-            if opened.tzinfo is None:
-                opened = opened.replace(tzinfo=timezone.utc)
-            if (now - opened).total_seconds() > MAX_HOLD_HOURS * 3600:
-                exit_reason = "EXPIRED"
-
-        if exit_reason:
-            to_close.append((sym, pos, price, pnl_pct, pnl_usd, exit_reason))
-
     for sym, pos, price, pnl_pct, pnl_usd, reason in to_close:
-        sell_qty = pos.qty * 0.998  # account for exchange fees on buy
-        success = place_sell(sym, sell_qty) if not PAPER_MODE else True
+        # place_sell caps to the real held balance, so pass the full qty
+        success = place_sell(sym, pos.qty) if not PAPER_MODE else True
         if success or PAPER_MODE:
             del st.positions[sym]
             st.daily_pnl += pnl_usd
@@ -1032,8 +1065,16 @@ def check_exits(st: DayState):
             if len(st.history) > 200:
                 st.history = st.history[-200:]
 
+            # Persist immediately after each close so a later error in the loop
+            # can't leave the on-disk state showing a position we already sold.
+            save_state(st)
+
             # Learn from this trade
-            learn_from_trade(st, sym, pnl_pct, pnl_usd, reason, held_min)
+            try:
+                learn_from_trade(st, sym, pnl_pct, pnl_usd, reason, held_min)
+                save_state(st)
+            except Exception as e:
+                logger.error("learn_from_trade error for %s: %s", sym, e)
 
     save_state(st)
 

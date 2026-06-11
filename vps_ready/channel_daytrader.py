@@ -68,7 +68,8 @@ TG_CHAT      = ENV.get("TELEGRAM_CHAT_ID", "")
 # STRATEGY PARAMETERS
 # ══════════════════════════════════════════════════════════════
 
-TRADE_SIZE_USDT   = float(ENV.get("CDT_TRADE_SIZE", "25.0"))
+TRADE_SIZE_PCT    = float(ENV.get("CDT_TRADE_SIZE_PCT", "15"))
+MIN_TRADE_USDT    = float(ENV.get("CDT_MIN_TRADE", "20.0"))
 MAX_POSITIONS     = int(ENV.get("CDT_MAX_POSITIONS", "5"))
 MAX_DAILY_LOSS    = float(ENV.get("CDT_MAX_LOSS", "50.0"))
 
@@ -432,6 +433,25 @@ def fetch_balance() -> float:
     return 0.0
 
 
+def fetch_coin_balance(symbol: str) -> float:
+    """Free (spot-available) balance of a base coin, e.g. 'ENJ'. 0.0 on failure."""
+    if PAPER_MODE:
+        return 0.0
+    coin = symbol.upper().replace("USDT", "")
+    data = bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
+    if not data or data.get("retCode") != 0:
+        return 0.0
+    coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
+    for c in coins:
+        if c.get("coin") == coin:
+            for field in ("availableToWithdraw", "free", "walletBalance"):
+                val = _safe_float(c.get(field))
+                if val > 0:
+                    return val
+            return 0.0
+    return 0.0
+
+
 def _get_lot_step(symbol: str) -> float:
     sym = f"{symbol}USDT" if not symbol.endswith("USDT") else symbol
     data = http_get(f"https://api.bybit.com/v5/market/instruments-info?category=spot&symbol={sym}")
@@ -489,11 +509,15 @@ def place_sell(symbol: str, qty: float) -> bool:
     if PAPER_MODE:
         logger.info("📝 PAPER SELL %sUSDT — qty %.6f", symbol, qty)
         return True
-    sell_qty = qty * 0.998
+    # Never try to sell more than we actually hold — the recorded qty can be
+    # slightly above the real fill (fees taken from the base coin), which would
+    # make the order fail and strand the position forever.
+    free = fetch_coin_balance(symbol)
+    sell_qty = min(qty, free) if free > 0 else qty * 0.998
     step = _get_lot_step(symbol)
     sell_qty = _round_qty(sell_qty, step)
     if sell_qty <= 0:
-        logger.error("❌ SELL %s: qty rounded to 0", symbol)
+        logger.error("❌ SELL %s: qty rounded to 0 (held=%.8f)", symbol, free)
         return False
     result = bybit_signed_post({
         "category": "spot", "symbol": f"{symbol}USDT",
@@ -666,30 +690,34 @@ def check_exits(st: CDTState):
     now = datetime.now(timezone.utc)
 
     for sym, pos in list(st.positions.items()):
-        price = fetch_price(sym)
-        if price is None:
+        try:
+            price = fetch_price(sym)
+            if price is None:
+                continue
+
+            pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
+            pnl_usd = pos["size"] * pnl_pct / 100
+
+            exit_reason = None
+            tp = pos.get("tp_pct", TAKE_PROFIT_PCT)
+            sl = pos.get("sl_pct", STOP_LOSS_PCT)
+
+            if pnl_pct >= tp:
+                exit_reason = "TP"
+            elif pnl_pct <= -sl:
+                exit_reason = "SL"
+            else:
+                opened = datetime.fromisoformat(pos["opened_at"])
+                if opened.tzinfo is None:
+                    opened = opened.replace(tzinfo=timezone.utc)
+                if (now - opened).total_seconds() > MAX_HOLD_HOURS * 3600:
+                    exit_reason = "EXPIRED"
+
+            if exit_reason:
+                to_close.append((sym, pos, price, pnl_pct, pnl_usd, exit_reason))
+        except Exception as e:
+            logger.error("check_exits error for %s: %s", sym, e)
             continue
-
-        pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
-        pnl_usd = pos["size"] * pnl_pct / 100
-
-        exit_reason = None
-        tp = pos.get("tp_pct", TAKE_PROFIT_PCT)
-        sl = pos.get("sl_pct", STOP_LOSS_PCT)
-
-        if pnl_pct >= tp:
-            exit_reason = "TP"
-        elif pnl_pct <= -sl:
-            exit_reason = "SL"
-        else:
-            opened = datetime.fromisoformat(pos["opened_at"])
-            if opened.tzinfo is None:
-                opened = opened.replace(tzinfo=timezone.utc)
-            if (now - opened).total_seconds() > MAX_HOLD_HOURS * 3600:
-                exit_reason = "EXPIRED"
-
-        if exit_reason:
-            to_close.append((sym, pos, price, pnl_pct, pnl_usd, exit_reason))
 
     for sym, pos, price, pnl_pct, pnl_usd, reason in to_close:
         success = place_sell(sym, pos["qty"]) if not PAPER_MODE else True
@@ -808,8 +836,9 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
         return
 
     balance = fetch_balance()
-    size = min(TRADE_SIZE_USDT, balance * 0.95)
-    if size < 5:
+    size = round(balance * TRADE_SIZE_PCT / 100, 2)
+    if size < MIN_TRADE_USDT:
+        logger.info("💰 Size $%.2f < min $%.0f — skip %s", size, MIN_TRADE_USDT, sig.symbol)
         return
 
     qty = place_buy(sig.symbol, size, price)
@@ -967,7 +996,7 @@ def main():
     mode = "LIVE" if not PAPER_MODE else "PAPER"
     logger.info(f"🚀 Channel DayTrader Started [{mode}]\n"
            f"Channels: {len(WATCH_CHANNELS)} | TP: {TAKE_PROFIT_PCT}% | SL: {STOP_LOSS_PCT}%\n"
-           f"Size: {TRADE_SIZE_USDT} | Max: {MAX_POSITIONS} positions\n"
+           f"Size: {TRADE_SIZE_PCT}% of balance (min ${MIN_TRADE_USDT}) | Max: {MAX_POSITIONS} positions\n"
            f"Scan every {SCAN_INTERVAL_SEC // 60} min")
 
     st = load_state()

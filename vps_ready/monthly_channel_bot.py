@@ -997,7 +997,11 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
                 sell_qty = available
         except Exception:
             pass
-        if sell_qty > 0:
+        # الكمية الفعلية المتبقية غبار (< $1) — لا يمكن بيعها (أقل من الحد الأدنى).
+        # نعتبرها مغلقة بدل إعادة المحاولة للأبد.
+        if sell_qty * price < 1.0:
+            log(f"كمية {pair} غبار (${sell_qty * price:.4f}) — إغلاق الصفقة بدون بيع")
+        elif sell_qty > 0:
             order = spot_sell(exchange, pair, sell_qty)
             if order is None:
                 # البيع فشل — لا نحذف الصفقة، ستُعاد المحاولة في الدورة القادمة
