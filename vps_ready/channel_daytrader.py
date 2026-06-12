@@ -277,7 +277,7 @@ def scan_channels() -> list[ChannelSignal]:
                     for msg in messages:
                         if not msg.text:
                             continue
-                        if msg.date and msg.date.replace(tzinfo=timezone.utc) < since:
+                        if msg.date and msg.date.astimezone(timezone.utc) < since:
                             continue
                         raw_batch.append({
                             "channel": ch_name,
@@ -773,7 +773,9 @@ def check_exits(st: CDTState):
     save_state(st)
 
 
-_btc_trend_cache = {"ts": 0.0, "up": True}
+# Fail closed: default to "not an uptrend" so a BTC API failure blocks buys
+# instead of allowing them during an unknown/possibly-down market.
+_btc_trend_cache = {"ts": 0.0, "up": False}
 
 
 def btc_trend_up() -> bool:
@@ -824,8 +826,14 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
         logger.info("🔴 AI flags %s as SELL — veto entry from %s", sig.symbol, sig.channel)
         return
 
-    # Dedup: don't act on same Telegram message twice
-    sig_key = f"{sig.channel}:{sig.msg_id}"
+    # Dedup: don't act on same Telegram message twice. When msg_id is missing
+    # (0), fall back to a content hash so distinct signals don't collide on
+    # "channel:0" — which would otherwise block all later zero-id signals.
+    if sig.msg_id:
+        sig_key = f"{sig.channel}:{sig.msg_id}"
+    else:
+        digest = hashlib.md5(f"{sig.channel}:{sig.symbol}:{sig.raw_text[:80]}".encode()).hexdigest()[:12]
+        sig_key = f"{sig.channel}:h{digest}"
     if sig_key in st.seen_signals:
         return
 

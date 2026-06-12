@@ -17,6 +17,7 @@ bot_monitor.py — مراقب وتحليل بوت القناة الشهرية
 """
 from __future__ import annotations
 import hashlib, hmac, json, os, re, subprocess, sys, time, threading
+import secrets as _secrets
 import urllib.request as _urllib_req
 from dataclasses import dataclass, field, asdict
 from decimal import Decimal
@@ -739,7 +740,8 @@ def get_all_positions() -> list[dict]:
                 positions.append({
                     "symbol": _normalize_sym(sym_key),
                     "pair": sym_key + "USDT" if "USDT" not in sym_key else sym_key,
-                    "entry": pos.get("entry_price", 0),
+                    # channel_daytrader writes the entry under "entry" (not "entry_price").
+                    "entry": pos.get("entry", pos.get("entry_price", 0)),
                     "qty": pos.get("qty", 0),
                     "bot": "channel_dt",
                     "opened": pos.get("opened_at", ""),
@@ -852,6 +854,10 @@ def _bybit_signed_get(path: str, params: str) -> dict | None:
 
 
 def _bybit_signed_post(params: dict) -> dict | None:
+    # Idempotency: a client order id lets us look the order up later if the
+    # response is lost, and lets the exchange reject an accidental duplicate.
+    params = dict(params)
+    params.setdefault("orderLinkId", f"mon{int(time.time()*1000)}{_secrets.token_hex(3)}")
     ts = str(int(time.time() * 1000))
     recv = "5000"
     body = json.dumps(params)
@@ -869,8 +875,12 @@ def _bybit_signed_post(params: dict) -> dict | None:
         with _urllib_req.urlopen(req, timeout=15) as r:
             return json.loads(r.read())
     except Exception as e:
-        log(f"Bybit POST: {e}")
-        return None
+        # The request may have reached Bybit and executed even though we never
+        # got the reply (e.g. read timeout). NEVER report this as a clean
+        # failure — a blind retry would double-sell. Surface it as ambiguous.
+        log(f"Bybit POST AMBIGUOUS (order may have executed): {e}")
+        return {"retCode": -999, "retMsg": "network error", "_ambiguous": True,
+                "orderLinkId": params.get("orderLinkId", "")}
 
 
 def _get_lot_step(symbol: str) -> float:
@@ -921,7 +931,9 @@ def _fetch_coin_balance(coin: str) -> float:
     coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
     for c in coins:
         if c.get("coin") == coin:
-            for fld in ("availableToWithdraw", "free", "walletBalance"):
+            # Only spendable balance. walletBalance includes funds locked in
+            # open orders — using it could oversell or double-sell.
+            for fld in ("availableToWithdraw", "free"):
                 val = _safe_float(c.get(fld))
                 if val > 0:
                     return val
@@ -1348,16 +1360,17 @@ def _execute_sell(symbol: str, sell_pct: float) -> str:
         return f"❌ لم أستطع جلب سعر {pair}"
 
     sell_qty = free * (sell_pct / 100.0)
-    value_usd = sell_qty * price
-
-    if value_usd < 1.0:
-        return f"❌ قيمة البيع أقل من $1 ({symbol}: {sell_qty:.6f} ≈ ${value_usd:.2f})"
 
     step = _get_lot_step(pair)
     sell_qty = _round_qty(sell_qty, step)
 
     if sell_qty <= 0:
         return f"❌ الكمية صفر بعد التقريب (step={step})"
+
+    # Re-check the $1 minimum AFTER rounding — rounding down can drop it below $1.
+    value_usd = sell_qty * price
+    if value_usd < 1.0:
+        return f"❌ قيمة البيع أقل من $1 ({symbol}: {sell_qty:.6f} ≈ ${value_usd:.2f})"
 
     result = _bybit_signed_post({
         "category": "spot",
@@ -1367,6 +1380,11 @@ def _execute_sell(symbol: str, sell_pct: float) -> str:
         "qty": _qty_str(sell_qty),
         "marketUnit": "baseCoin",
     })
+
+    if result and result.get("_ambiguous"):
+        return (f"⚠️ انقطع الاتصال أثناء بيع {symbol} — قد يكون الأمر نُفِّذ!\n"
+                f"❗️لا تُعد الإرسال. تحقق من الرصيد في Bybit أولاً (أمر «رصيد»).\n"
+                f"orderLinkId: {result.get('orderLinkId','')}")
 
     if result and result.get("retCode") == 0:
         actual_value = sell_qty * price
@@ -1483,7 +1501,7 @@ def _scan_profitable_coins() -> str:
 
 def _execute_profit_sell(symbol: str) -> str:
     """Sell only the profit portion of a coin, keeping the original investment."""
-    if not BYBIT_KEY:
+    if not BYBIT_KEY or not BYBIT_SECRET:
         return "❌ مفاتيح Bybit غير متوفرة"
 
     # Find entry price from bot state files
@@ -1516,16 +1534,17 @@ def _execute_profit_sell(symbol: str) -> str:
         return f"❌ لا يوجد رصيد من {symbol}"
 
     profit_qty = free * (profit_pct / 100.0)
-    profit_value = profit_qty * price
-
-    if profit_value < 1.0:
-        return (f"❌ قيمة الربح أقل من $1\n"
-                f"{symbol}: ربح {profit_pct:.1f}% = {_qty_str(profit_qty)} ≈ ${profit_value:.2f}")
 
     step = _get_lot_step(pair)
     profit_qty = _round_qty(profit_qty, step)
     if profit_qty <= 0:
         return f"❌ كمية الربح صفر بعد التقريب (step={step})"
+
+    # Re-check the $1 minimum AFTER rounding.
+    profit_value = profit_qty * price
+    if profit_value < 1.0:
+        return (f"❌ قيمة الربح أقل من $1\n"
+                f"{symbol}: ربح {profit_pct:.1f}% = {_qty_str(profit_qty)} ≈ ${profit_value:.2f}")
 
     result = _bybit_signed_post({
         "category": "spot",
@@ -1535,6 +1554,11 @@ def _execute_profit_sell(symbol: str) -> str:
         "qty": _qty_str(profit_qty),
         "marketUnit": "baseCoin",
     })
+
+    if result and result.get("_ambiguous"):
+        return (f"⚠️ انقطع الاتصال أثناء بيع ربح {symbol} — قد يكون الأمر نُفِّذ!\n"
+                f"❗️لا تُعد الإرسال. تحقق من الرصيد في Bybit أولاً (أمر «رصيد»).\n"
+                f"orderLinkId: {result.get('orderLinkId','')}")
 
     if result and result.get("retCode") == 0:
         remaining = free - profit_qty
@@ -1664,8 +1688,11 @@ def _handle_command(text: str) -> str | None:
         text, re.IGNORECASE
     )
     if cap_match:
-        dep = float(cap_match.group(1))
-        wd = float(cap_match.group(2)) if cap_match.group(2) else 0
+        try:
+            dep = float(cap_match.group(1))
+            wd = float(cap_match.group(2)) if cap_match.group(2) else 0
+        except ValueError:
+            return "❌ مبلغ غير صالح (مثال: رأس مال 1000 200)"
         if dep <= 0:
             return "❌ المبلغ يجب أن يكون أكبر من صفر"
         cfg = _load_capital()
@@ -1979,6 +2006,11 @@ def _tg_reply(chat_id: str, text: str):
 def _command_loop():
     """Background thread: poll Telegram for commands and execute them."""
     global _tg_update_offset
+    # Fail closed: with no authorized chat id, an empty NOTIFY_CHAT could match a
+    # message whose chat id is missing. Refuse to run the trade interface at all.
+    if not NOTIFY_CHAT:
+        log("CMD: TELEGRAM_CHAT_ID غير مضبوط — واجهة الأوامر معطّلة")
+        return
     # Skip old messages on startup
     log("CMD: بدء واجهة أوامر تيليجرام...")
     try:
