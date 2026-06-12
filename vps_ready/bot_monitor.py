@@ -40,6 +40,9 @@ BYBIT_KEY = os.getenv("BYBIT_API_KEY", "")
 BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
 GATE_KEY = os.getenv("GATE_API_KEY", "")
 GATE_SECRET = os.getenv("GATE_API_SECRET", "")
+KUCOIN_KEY = os.getenv("KUCOIN_API_KEY", "")
+KUCOIN_SECRET = os.getenv("KUCOIN_API_SECRET", "")
+KUCOIN_PASS = os.getenv("KUCOIN_PASSPHRASE", "")
 
 RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
 AI_ANALYSIS_FILE = BASE_DIR / "ai_channel_analysis.json"
@@ -1024,6 +1027,96 @@ def _get_gate_holdings_with_entry() -> list[dict]:
     return holdings
 
 
+def _fetch_kucoin_price(symbol: str) -> float | None:
+    data = _http_get(f"https://api.kucoin.com/api/v1/market/orderbook/level1?symbol={symbol.upper()}-USDT")
+    if data and data.get("code") == "200000":
+        price = data.get("data", {}).get("price")
+        if price:
+            try:
+                return float(price)
+            except ValueError:
+                pass
+    return None
+
+
+def _kucoin_signed_get(path: str) -> dict | None:
+    """KuCoin v2 API signed GET request."""
+    if not KUCOIN_KEY or not KUCOIN_SECRET:
+        return None
+    import base64
+    ts = str(int(time.time() * 1000))
+    sign_str = f"{ts}GET{path}"
+    sig = base64.b64encode(
+        hmac.new(KUCOIN_SECRET.encode(), sign_str.encode(), hashlib.sha256).digest()
+    ).decode()
+    passphrase = base64.b64encode(
+        hmac.new(KUCOIN_SECRET.encode(), KUCOIN_PASS.encode(), hashlib.sha256).digest()
+    ).decode()
+    url = f"https://api.kucoin.com{path}"
+    try:
+        req = _urllib_req.Request(url, headers={
+            "KC-API-KEY": KUCOIN_KEY,
+            "KC-API-SIGN": sig,
+            "KC-API-TIMESTAMP": ts,
+            "KC-API-PASSPHRASE": passphrase,
+            "KC-API-KEY-VERSION": "2",
+            "Content-Type": "application/json",
+        })
+        with _urllib_req.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        log(f"KuCoin GET {path}: {e}")
+        return None
+
+
+def _fetch_kucoin_balances() -> list[dict]:
+    """Fetch KuCoin spot balances with value > $1."""
+    data = _kucoin_signed_get("/api/v1/accounts?type=trade")
+    if not data or data.get("code") != "200000":
+        return []
+    result = []
+    for acc in data.get("data", []):
+        sym = acc.get("currency", "")
+        total = _safe_float(acc.get("balance"))
+        if total <= 0 or sym in ("USDT", "USD", "USDC"):
+            continue
+        price = _fetch_kucoin_price(sym)
+        if not price:
+            continue
+        value = total * price
+        if value < 1.0:
+            continue
+        result.append({"symbol": sym, "amount": total, "price": price, "value": value})
+    return result
+
+
+def _get_kucoin_holdings_with_entry() -> list[dict]:
+    """KuCoin holdings with entry prices from portfolio_state.json + live balances."""
+    kc_bals = _fetch_kucoin_balances()
+    entry_prices = {}
+    if PORTFOLIO_STATE.exists():
+        try:
+            pstate = json.loads(PORTFOLIO_STATE.read_text())
+            for key, entry in pstate.get("entry_prices", {}).items():
+                if "@KuCoin" in key:
+                    sym = key.split("@")[0]
+                    entry_prices[sym] = entry
+        except Exception:
+            pass
+
+    holdings = []
+    for b in kc_bals:
+        sym = b["symbol"]
+        holdings.append({
+            "symbol": sym,
+            "amount": b["amount"],
+            "price": b["price"],
+            "value": b["value"],
+            "entry": entry_prices.get(sym, 0),
+        })
+    return holdings
+
+
 def _execute_sell(symbol: str, sell_pct: float) -> str:
     """Execute a sell order. symbol is base coin (e.g. 'ENJ'). sell_pct is 1-100."""
     if not BYBIT_KEY or not BYBIT_SECRET:
@@ -1171,6 +1264,20 @@ def _handle_command(text: str) -> str | None:
                 lines.append(f"\n<b>━━ Gate.io ━━</b>")
                 lines.append("⚪ لا توجد عملات أو خطأ في الاتصال")
 
+        # KuCoin
+        if KUCOIN_KEY:
+            kc_bals = _fetch_kucoin_balances()
+            if kc_bals:
+                kc_total = sum(b["value"] for b in kc_bals)
+                lines.append(f"\n<b>━━ KuCoin ━━</b>")
+                for b in sorted(kc_bals, key=lambda x: x["value"], reverse=True):
+                    lines.append(f"{b['symbol']}: {_qty_str(b['amount'])} ≈ ${b['value']:,.2f}")
+                lines.append(f"<b>KuCoin: ${kc_total:,.2f}</b>")
+                grand_total += kc_total
+            else:
+                lines.append(f"\n<b>━━ KuCoin ━━</b>")
+                lines.append("⚪ لا توجد عملات أو خطأ في الاتصال")
+
         lines.append(f"\n<b>الإجمالي: ${grand_total:,.2f}</b>")
         return "\n".join(lines)
 
@@ -1253,6 +1360,40 @@ def _handle_command(text: str) -> str | None:
                     g_pnl_pct = ((gate_value - gate_cost) / gate_cost) * 100
                     g_pnl_usd = gate_value - gate_cost
                     lines.append(f"  <b>Gate.io: {g_pnl_pct:+.2f}% (${g_pnl_usd:+,.2f})</b>")
+
+        # ── KuCoin ──
+        if KUCOIN_KEY:
+            kc_holdings = _get_kucoin_holdings_with_entry()
+            if kc_holdings:
+                lines.append("\n<b>━━ KuCoin ━━</b>")
+                kc_cost = 0.0
+                kc_value = 0.0
+                for h in sorted(kc_holdings, key=lambda x: x["symbol"]):
+                    sym = h["symbol"]
+                    entry = h["entry"]
+                    price = h["price"]
+                    amount = h["amount"]
+                    value = h["value"]
+                    if entry and entry > 0:
+                        pnl_pct = ((price - entry) / entry) * 100
+                        pnl_usd = (price - entry) * amount
+                        icon = "🟢" if pnl_pct >= 0 else "🔴"
+                        kc_cost += entry * amount
+                        kc_value += value
+                        lines.append(
+                            f"  {icon} <b>{sym}</b>\n"
+                            f"      دخول: ${entry:,.6f} → حالي: ${price:,.6f}\n"
+                            f"      الربح: {pnl_pct:+.2f}% (${pnl_usd:+,.2f})"
+                        )
+                    else:
+                        lines.append(
+                            f"  ⚪ <b>{sym}</b>: ${price:,.6f} × {_qty_str(amount)} = ${value:,.2f}\n"
+                            f"      سعر الدخول غير متوفر"
+                        )
+                if kc_cost > 0:
+                    k_pnl_pct = ((kc_value - kc_cost) / kc_cost) * 100
+                    k_pnl_usd = kc_value - kc_cost
+                    lines.append(f"  <b>KuCoin: {k_pnl_pct:+.2f}% (${k_pnl_usd:+,.2f})</b>")
 
         if total_cost > 0:
             total_pnl_pct = ((total_value - total_cost) / total_cost) * 100
