@@ -958,9 +958,13 @@ def _gate_signed_get(path: str) -> list | dict | None:
     """Gate.io v4 API signed GET request."""
     if not GATE_KEY or not GATE_SECRET:
         return None
+    if "?" in path:
+        url_path, query_string = path.split("?", 1)
+    else:
+        url_path, query_string = path, ""
     ts = str(int(time.time()))
     hashed_body = hashlib.sha512(b"").hexdigest()
-    sign_str = f"GET\n{path}\n\n{hashed_body}\n{ts}"
+    sign_str = f"GET\n{url_path}\n{query_string}\n{hashed_body}\n{ts}"
     sig = hmac.new(GATE_SECRET.encode(), sign_str.encode(), hashlib.sha512).hexdigest()
     url = f"https://api.gateio.ws{path}"
     try:
@@ -975,6 +979,17 @@ def _gate_signed_get(path: str) -> list | dict | None:
     except Exception as e:
         log(f"Gate GET {path}: {e}")
         return None
+
+
+def _fetch_gate_usdt() -> float:
+    """Fetch Gate.io USDT balance."""
+    data = _gate_signed_get("/api/v4/spot/accounts")
+    if not data or not isinstance(data, list):
+        return 0.0
+    for coin in data:
+        if coin.get("currency") == "USDT":
+            return _safe_float(coin.get("available")) + _safe_float(coin.get("locked"))
+    return 0.0
 
 
 def _fetch_gate_balances() -> list[dict]:
@@ -1139,15 +1154,21 @@ def _fetch_bybit_deposits_withdrawals() -> tuple[float, float]:
         if cursor:
             params += f"&cursor={cursor}"
         data = _bybit_signed_get("/v5/asset/deposit/query-record", params)
-        if not data or data.get("retCode") != 0:
+        if not data:
+            log("Bybit deposit API: no response")
+            break
+        if data.get("retCode") != 0:
+            log(f"Bybit deposit API: {data.get('retCode')} — {data.get('retMsg', '')}")
             break
         rows = data.get("result", {}).get("rows", [])
         for r in rows:
-            if r.get("status") in (3, "3"):
+            status = r.get("status")
+            if status in (3, "3", 4, "4", 1, "1", 10000, "10000"):
                 total_dep += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
         cursor = data.get("result", {}).get("nextPageCursor", "")
         if not cursor or not rows:
             break
+    log(f"Bybit deposits: ${total_dep:,.2f}")
 
     total_wd = 0.0
     cursor = ""
@@ -1156,15 +1177,21 @@ def _fetch_bybit_deposits_withdrawals() -> tuple[float, float]:
         if cursor:
             params += f"&cursor={cursor}"
         data = _bybit_signed_get("/v5/asset/withdraw/query-record", params)
-        if not data or data.get("retCode") != 0:
+        if not data:
+            log("Bybit withdraw API: no response")
+            break
+        if data.get("retCode") != 0:
+            log(f"Bybit withdraw API: {data.get('retCode')} — {data.get('retMsg', '')}")
             break
         rows = data.get("result", {}).get("rows", [])
         for r in rows:
-            if r.get("status") in ("success", "BlockchainConfirmed"):
+            status = str(r.get("status", ""))
+            if status.lower() in ("success", "blockchainconfirmed"):
                 total_wd += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
         cursor = data.get("result", {}).get("nextPageCursor", "")
         if not cursor or not rows:
             break
+    log(f"Bybit withdrawals: ${total_wd:,.2f}")
 
     return total_dep, total_wd
 
@@ -1177,18 +1204,32 @@ def _fetch_gate_deposits_withdrawals() -> tuple[float, float]:
     to = str(int(time.time()))
 
     total_dep = 0.0
-    data = _gate_signed_get(f"/api/v4/wallet/deposits?from={frm}&to={to}&limit=100")
-    if data and isinstance(data, list):
+    offset = 0
+    for _ in range(10):
+        data = _gate_signed_get(f"/api/v4/wallet/deposits?from={frm}&to={to}&limit=100&offset={offset}")
+        if not data or not isinstance(data, list):
+            break
         for r in data:
             if r.get("status") == "DONE":
                 total_dep += _coin_to_usdt(r.get("currency", ""), _safe_float(r.get("amount")))
+        if len(data) < 100:
+            break
+        offset += 100
+    log(f"Gate deposits: ${total_dep:,.2f}")
 
     total_wd = 0.0
-    data = _gate_signed_get(f"/api/v4/wallet/withdrawals?from={frm}&to={to}&limit=100")
-    if data and isinstance(data, list):
+    offset = 0
+    for _ in range(10):
+        data = _gate_signed_get(f"/api/v4/wallet/withdrawals?from={frm}&to={to}&limit=100&offset={offset}")
+        if not data or not isinstance(data, list):
+            break
         for r in data:
             if r.get("status") == "DONE":
                 total_wd += _coin_to_usdt(r.get("currency", ""), _safe_float(r.get("amount")))
+        if len(data) < 100:
+            break
+        offset += 100
+    log(f"Gate withdrawals: ${total_wd:,.2f}")
 
     return total_dep, total_wd
 
@@ -1385,31 +1426,34 @@ def _handle_command(text: str) -> str | None:
 
         # Gate.io
         if GATE_KEY:
+            gate_usdt = _fetch_gate_usdt()
             gate_bals = _fetch_gate_balances()
-            if gate_bals:
-                gate_total = sum(b["value"] for b in gate_bals)
-                lines.append(f"\n<b>━━ Gate.io ━━</b>")
-                for b in sorted(gate_bals, key=lambda x: x["value"], reverse=True):
-                    lines.append(f"{b['symbol']}: {_qty_str(b['amount'])} ≈ ${b['value']:,.2f}")
-                lines.append(f"<b>Gate.io: ${gate_total:,.2f}</b>")
-                grand_total += gate_total
-            else:
-                lines.append(f"\n<b>━━ Gate.io ━━</b>")
-                lines.append("⚪ لا توجد عملات أو خطأ في الاتصال")
+            gate_total = gate_usdt + sum(b["value"] for b in gate_bals)
+            lines.append(f"\n<b>━━ Gate.io ━━</b>")
+            if gate_usdt >= 1:
+                lines.append(f"💵 USDT: ${gate_usdt:,.2f}")
+            for b in sorted(gate_bals, key=lambda x: x["value"], reverse=True):
+                lines.append(f"{b['symbol']}: {_qty_str(b['amount'])} ≈ ${b['value']:,.2f}")
+            lines.append(f"<b>Gate.io: ${gate_total:,.2f}</b>")
+            grand_total += gate_total
 
         # KuCoin
         if KUCOIN_KEY:
             kc_bals = _fetch_kucoin_balances()
-            if kc_bals:
-                kc_total = sum(b["value"] for b in kc_bals)
-                lines.append(f"\n<b>━━ KuCoin ━━</b>")
-                for b in sorted(kc_bals, key=lambda x: x["value"], reverse=True):
-                    lines.append(f"{b['symbol']}: {_qty_str(b['amount'])} ≈ ${b['value']:,.2f}")
-                lines.append(f"<b>KuCoin: ${kc_total:,.2f}</b>")
-                grand_total += kc_total
-            else:
-                lines.append(f"\n<b>━━ KuCoin ━━</b>")
-                lines.append("⚪ لا توجد عملات أو خطأ في الاتصال")
+            kc_usdt = 0.0
+            kc_data = _kucoin_signed_get("/api/v1/accounts?type=trade")
+            if kc_data and kc_data.get("code") == "200000":
+                for acc in kc_data.get("data", []):
+                    if acc.get("currency") == "USDT":
+                        kc_usdt = _safe_float(acc.get("balance"))
+            kc_total = kc_usdt + sum(b["value"] for b in kc_bals)
+            lines.append(f"\n<b>━━ KuCoin ━━</b>")
+            if kc_usdt >= 1:
+                lines.append(f"💵 USDT: ${kc_usdt:,.2f}")
+            for b in sorted(kc_bals, key=lambda x: x["value"], reverse=True):
+                lines.append(f"{b['symbol']}: {_qty_str(b['amount'])} ≈ ${b['value']:,.2f}")
+            lines.append(f"<b>KuCoin: ${kc_total:,.2f}</b>")
+            grand_total += kc_total
 
         lines.append(f"\n<b>القيمة الحالية: ${grand_total:,.2f}</b>")
 
