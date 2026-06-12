@@ -52,6 +52,7 @@ MONTHLY_STATE = BASE_DIR / "monthly_state.json"
 DAYTRADING_STATE = BASE_DIR / "daytrading_state.json"
 CHANNEL_DT_STATE = BASE_DIR / "channel_daytrader_state.json"
 PORTFOLIO_STATE = BASE_DIR / "portfolio_state.json"
+CAPITAL_CONFIG = BASE_DIR / "capital_config.json"
 
 CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "900"))
 LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "30"))
@@ -1132,6 +1133,21 @@ def _get_kucoin_holdings_with_entry() -> list[dict]:
     return holdings
 
 
+def _load_capital() -> dict:
+    if CAPITAL_CONFIG.exists():
+        try:
+            return json.loads(CAPITAL_CONFIG.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_capital(cfg: dict):
+    tmp = CAPITAL_CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+    os.replace(tmp, CAPITAL_CONFIG)
+
+
 def _coin_to_usdt(coin: str, amount: float) -> float:
     """Convert a coin amount to USDT value. Returns 0 if price unavailable."""
     if coin in ("USDT", "USDC", "USD", "BUSD", "DAI"):
@@ -1140,59 +1156,77 @@ def _coin_to_usdt(coin: str, amount: float) -> float:
     return amount * price if price else 0.0
 
 
+def _bybit_paginated_get(path: str, base_params: str, label: str) -> list[dict]:
+    """Fetch all pages from a Bybit endpoint."""
+    all_rows = []
+    cursor = ""
+    for _ in range(20):
+        params = base_params
+        if cursor:
+            params += f"&cursor={cursor}"
+        data = _bybit_signed_get(path, params)
+        if not data:
+            log(f"Bybit {label}: no response")
+            break
+        if data.get("retCode") != 0:
+            log(f"Bybit {label}: {data.get('retCode')} — {data.get('retMsg', '')}")
+            break
+        rows = data.get("result", {}).get("rows", [])
+        all_rows.extend(rows)
+        cursor = data.get("result", {}).get("nextPageCursor", "")
+        if not cursor or not rows:
+            break
+    return all_rows
+
+
 def _fetch_bybit_deposits_withdrawals() -> tuple[float, float]:
-    """Fetch total deposits and withdrawals from Bybit (last 6 months)."""
+    """Fetch total deposits and withdrawals from Bybit (last 6 months).
+    Includes on-chain deposits AND internal transfers (P2P, sub-account)."""
     if not BYBIT_KEY:
         return 0.0, 0.0
     start_ms = str(int((time.time() - 180 * 86400) * 1000))
     end_ms = str(int(time.time() * 1000))
+    base = f"startTime={start_ms}&endTime={end_ms}&limit=50"
 
     total_dep = 0.0
-    cursor = ""
-    for _ in range(20):
-        params = f"startTime={start_ms}&endTime={end_ms}&limit=50"
-        if cursor:
-            params += f"&cursor={cursor}"
-        data = _bybit_signed_get("/v5/asset/deposit/query-record", params)
-        if not data:
-            log("Bybit deposit API: no response")
-            break
-        if data.get("retCode") != 0:
-            log(f"Bybit deposit API: {data.get('retCode')} — {data.get('retMsg', '')}")
-            break
-        rows = data.get("result", {}).get("rows", [])
-        for r in rows:
-            status = r.get("status")
-            if status in (3, "3", 4, "4", 1, "1", 10000, "10000"):
-                total_dep += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
-        cursor = data.get("result", {}).get("nextPageCursor", "")
-        if not cursor or not rows:
-            break
-    log(f"Bybit deposits: ${total_dep:,.2f}")
+
+    # On-chain deposits
+    rows = _bybit_paginated_get("/v5/asset/deposit/query-record", base, "on-chain deposits")
+    for r in rows:
+        if r.get("status") in (3, "3", 4, "4", 1, "1", 10000, "10000"):
+            total_dep += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
+    log(f"Bybit on-chain deposits: ${total_dep:,.2f} ({len(rows)} records)")
+
+    # Internal deposits (P2P, sub-account transfers, etc.)
+    internal_dep = 0.0
+    rows = _bybit_paginated_get("/v5/asset/deposit/query-internal-record", base, "internal deposits")
+    for r in rows:
+        if r.get("status") in (3, "3", 1, "1"):
+            internal_dep += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
+    total_dep += internal_dep
+    log(f"Bybit internal deposits: ${internal_dep:,.2f} ({len(rows)} records)")
 
     total_wd = 0.0
-    cursor = ""
-    for _ in range(20):
-        params = f"startTime={start_ms}&endTime={end_ms}&limit=50&withdrawType=2"
-        if cursor:
-            params += f"&cursor={cursor}"
-        data = _bybit_signed_get("/v5/asset/withdraw/query-record", params)
-        if not data:
-            log("Bybit withdraw API: no response")
-            break
-        if data.get("retCode") != 0:
-            log(f"Bybit withdraw API: {data.get('retCode')} — {data.get('retMsg', '')}")
-            break
-        rows = data.get("result", {}).get("rows", [])
-        for r in rows:
-            status = str(r.get("status", ""))
-            if status.lower() in ("success", "blockchainconfirmed"):
-                total_wd += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
-        cursor = data.get("result", {}).get("nextPageCursor", "")
-        if not cursor or not rows:
-            break
-    log(f"Bybit withdrawals: ${total_wd:,.2f}")
 
+    # On-chain withdrawals
+    rows = _bybit_paginated_get("/v5/asset/withdraw/query-record",
+                                base + "&withdrawType=2", "on-chain withdrawals")
+    for r in rows:
+        status = str(r.get("status", "")).lower()
+        if status in ("success", "blockchainconfirmed"):
+            total_wd += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
+    log(f"Bybit on-chain withdrawals: ${total_wd:,.2f} ({len(rows)} records)")
+
+    # Internal withdrawals
+    internal_wd = 0.0
+    rows = _bybit_paginated_get("/v5/asset/withdraw/query-internal-record", base, "internal withdrawals")
+    for r in rows:
+        if r.get("status") in (3, "3", 1, "1"):
+            internal_wd += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
+    total_wd += internal_wd
+    log(f"Bybit internal withdrawals: ${internal_wd:,.2f} ({len(rows)} records)")
+
+    log(f"Bybit TOTAL: deposits=${total_dep:,.2f}, withdrawals=${total_wd:,.2f}")
     return total_dep, total_wd
 
 
@@ -1273,8 +1307,9 @@ def _fetch_kucoin_deposits_withdrawals() -> tuple[float, float]:
 
 
 def _fetch_all_deposits_withdrawals() -> dict:
-    """Fetch deposits/withdrawals from all exchanges. Returns summary dict."""
-    result = {"exchanges": {}, "total_deposited": 0.0, "total_withdrawn": 0.0}
+    """Fetch deposits/withdrawals from all exchanges. Returns summary dict.
+    If manual capital is set, uses that as total_deposited instead."""
+    result = {"exchanges": {}, "total_deposited": 0.0, "total_withdrawn": 0.0, "manual": False}
 
     for name, fetcher in [("Bybit", _fetch_bybit_deposits_withdrawals),
                           ("Gate.io", _fetch_gate_deposits_withdrawals),
@@ -1287,6 +1322,13 @@ def _fetch_all_deposits_withdrawals() -> dict:
         except Exception as e:
             log(f"خطأ جلب إيداعات/سحوبات {name}: {e}")
             result["exchanges"][name] = {"deposited": 0, "withdrawn": 0, "error": str(e)}
+
+    cap = _load_capital()
+    if cap.get("total_deposited"):
+        result["total_deposited"] = cap["total_deposited"]
+        result["manual"] = True
+    if cap.get("total_withdrawn"):
+        result["total_withdrawn"] = cap["total_withdrawn"]
 
     return result
 
@@ -1390,6 +1432,28 @@ def _handle_command(text: str) -> str | None:
             return "❌ النسبة يجب أن تكون بين 1 و 100"
         return _execute_sell(symbol, pct)
 
+    # ── رأس مال / capital ──
+    cap_match = re.match(
+        r"(?:رأس مال|راس مال|رأسمال|capital)\s+([\d.]+)(?:\s+([\d.]+))?",
+        text, re.IGNORECASE
+    )
+    if cap_match:
+        dep = float(cap_match.group(1))
+        wd = float(cap_match.group(2)) if cap_match.group(2) else 0
+        if dep <= 0:
+            return "❌ المبلغ يجب أن يكون أكبر من صفر"
+        cfg = _load_capital()
+        cfg["total_deposited"] = dep
+        if wd > 0:
+            cfg["total_withdrawn"] = wd
+        cfg["updated"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        _save_capital(cfg)
+        msg = f"✅ تم تسجيل رأس المال: ${dep:,.2f}"
+        if wd > 0:
+            msg += f"\nسحوبات: ${wd:,.2f}"
+        msg += "\nسيُستخدم في حساب الربح الإجمالي بدلاً من بيانات API"
+        return msg
+
     # ── مراجعة / review ──
     if text in ("مراجعة", "review", "/review"):
         run_ai_analysis()
@@ -1466,18 +1530,22 @@ def _handle_command(text: str) -> str | None:
             pnl = grand_total + total_wd - total_dep
             pnl_pct = (pnl / total_dep * 100) if total_dep > 0 else 0
             icon = "🟢" if pnl >= 0 else "🔴"
+            source = "يدوي" if dw["manual"] else "من API"
             lines.append(
-                f"\n<b>━━ ملخص رأس المال (6 أشهر) ━━</b>\n"
+                f"\n<b>━━ ملخص رأس المال ({source}) ━━</b>\n"
                 f"إجمالي الإيداع: ${total_dep:,.2f}"
             )
-            for ex, info in dw["exchanges"].items():
-                if info["deposited"] > 0 or info["withdrawn"] > 0:
-                    lines.append(f"  {ex}: إيداع ${info['deposited']:,.2f} | سحب ${info['withdrawn']:,.2f}")
+            if not dw["manual"]:
+                for ex, info in dw["exchanges"].items():
+                    if info["deposited"] > 0 or info["withdrawn"] > 0:
+                        lines.append(f"  {ex}: إيداع ${info['deposited']:,.2f} | سحب ${info['withdrawn']:,.2f}")
             lines.append(
                 f"إجمالي السحب: ${total_wd:,.2f}\n"
                 f"صافي الاستثمار: ${net:,.2f}\n"
                 f"{icon} <b>الربح/الخسارة: {pnl_pct:+.2f}% (${pnl:+,.2f})</b>"
             )
+            if not dw["manual"]:
+                lines.append("\n💡 لضبط يدوي: <code>رأس مال 35000 2000</code>\n(إيداع سحب)")
 
         return "\n".join(lines)
 
@@ -1646,6 +1714,9 @@ def _handle_command(text: str) -> str | None:
             "<code>أرباح</code> — ربح/خسارة كل عملة + إجمالي\n"
             "<code>رصيد</code> — رصيد + إيداعات/سحوبات كل المنصات\n"
             "<code>عملات</code> — العملات المحتفظ بها\n\n"
+            "<b>رأس المال:</b>\n"
+            "<code>رأس مال 35000</code> — ضبط إجمالي الإيداع\n"
+            "<code>رأس مال 35000 2000</code> — إيداع + سحب\n\n"
             "<b>أخرى:</b>\n"
             "<code>مراجعة</code> — مراجعة AI للعملات\n"
             "<code>حالة</code> — تقرير صحة البوتات\n"
