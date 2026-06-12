@@ -1414,11 +1414,152 @@ def _tg_get_updates() -> list[dict]:
         return []
 
 
+def _scan_profitable_coins() -> str:
+    """Scan all held Bybit coins, rank by profit from entry, suggest profit-only sells."""
+    positions = get_all_positions()
+    if not positions:
+        return "📭 لا توجد مراكز مفتوحة"
+
+    profitable = []
+    losing = []
+    for p in positions:
+        entry = p["entry"]
+        qty = p["qty"]
+        if not entry or not qty:
+            continue
+        price = _fetch_price(p["pair"])
+        if not price:
+            continue
+        pnl_pct = ((price - entry) / entry) * 100
+        cost = entry * qty
+        value = price * qty
+        pnl_usd = value - cost
+        # profit sell %: portion of holdings that is pure profit
+        # sell this % to keep original investment in coins
+        profit_sell_pct = max(0, ((price - entry) / price) * 100)
+        p.update({
+            "price": price, "pnl_pct": pnl_pct, "pnl_usd": pnl_usd,
+            "value": value, "cost": cost, "profit_sell_pct": profit_sell_pct,
+        })
+        if pnl_pct > 0:
+            profitable.append(p)
+        else:
+            losing.append(p)
+
+    profitable.sort(key=lambda x: x["pnl_pct"], reverse=True)
+    losing.sort(key=lambda x: x["pnl_pct"])
+
+    lines = ["<b>💰 فرص البيع — مرتبة بالربح</b>\n"]
+
+    if profitable:
+        lines.append("<b>🟢 عملات مرتفعة:</b>")
+        for p in profitable:
+            sell_pct = round(p["profit_sell_pct"])
+            if sell_pct < 1:
+                sell_pct = 1
+            lines.append(
+                f"\n  <b>{p['symbol']}</b> ({p['bot']}) — <b>{p['pnl_pct']:+.1f}%</b>\n"
+                f"  دخول: ${p['entry']:,.4f} → حالي: ${p['price']:,.4f}\n"
+                f"  الربح: ${p['pnl_usd']:+,.2f}\n"
+                f"  ✂️ بيع الربح فقط: <code>بيع ربح {p['symbol']}</code> ({sell_pct}%)\n"
+                f"  🔄 بيع نسبة: <code>بيع {p['symbol']} 50%</code>"
+            )
+    else:
+        lines.append("⚪ لا توجد عملات مرتفعة حالياً")
+
+    if losing:
+        lines.append(f"\n<b>🔴 عملات منخفضة ({len(losing)}):</b>")
+        for p in losing[:5]:
+            lines.append(
+                f"  {p['symbol']} ({p['bot']}): {p['pnl_pct']:+.1f}% (${p['pnl_usd']:+,.2f})"
+            )
+
+    return "\n".join(lines)
+
+
+def _execute_profit_sell(symbol: str) -> str:
+    """Sell only the profit portion of a coin, keeping the original investment."""
+    if not BYBIT_KEY:
+        return "❌ مفاتيح Bybit غير متوفرة"
+
+    # Find entry price from bot state files
+    entry = 0.0
+    bot_name = ""
+    for p in get_all_positions():
+        if p["symbol"] == symbol.upper():
+            entry = p["entry"]
+            bot_name = p["bot"]
+            break
+
+    if not entry:
+        return f"❌ لم أجد سعر دخول لـ {symbol}"
+
+    pair = f"{symbol.upper()}USDT"
+    price = _fetch_price(pair)
+    if not price:
+        return f"❌ لم أستطع جلب سعر {pair}"
+
+    if price <= entry:
+        pnl_pct = ((price - entry) / entry) * 100
+        return f"❌ {symbol} حالياً في خسارة ({pnl_pct:+.1f}%)\nدخول: ${entry:,.4f} → حالي: ${price:,.4f}"
+
+    # Calculate profit-only sell percentage
+    # If entry=$2, current=$2.50, profit portion = ($2.50-$2.00)/$2.50 = 20%
+    profit_pct = ((price - entry) / price) * 100
+
+    free = _fetch_coin_balance(symbol)
+    if free <= 0:
+        return f"❌ لا يوجد رصيد من {symbol}"
+
+    profit_qty = free * (profit_pct / 100.0)
+    profit_value = profit_qty * price
+
+    if profit_value < 1.0:
+        return (f"❌ قيمة الربح أقل من $1\n"
+                f"{symbol}: ربح {profit_pct:.1f}% = {_qty_str(profit_qty)} ≈ ${profit_value:.2f}")
+
+    step = _get_lot_step(pair)
+    profit_qty = _round_qty(profit_qty, step)
+    if profit_qty <= 0:
+        return f"❌ كمية الربح صفر بعد التقريب (step={step})"
+
+    result = _bybit_signed_post({
+        "category": "spot",
+        "symbol": pair,
+        "side": "Sell",
+        "orderType": "Market",
+        "qty": _qty_str(profit_qty),
+        "marketUnit": "baseCoin",
+    })
+
+    if result and result.get("retCode") == 0:
+        remaining = free - profit_qty
+        msg = (f"✅ تم بيع ربح {symbol} فقط\n"
+               f"الكمية المباعة: {_qty_str(profit_qty)} ({profit_pct:.1f}%)\n"
+               f"القيمة: ${profit_value:,.2f}\n"
+               f"المتبقي: {_qty_str(remaining)} {symbol} (رأس المال الأصلي)\n"
+               f"دخول: ${entry:,.4f} | بيع: ${price:,.4f}")
+        log(f"PROFIT SELL: {symbol} — qty={profit_qty} ({profit_pct:.1f}%) @ ${price}")
+        return msg
+
+    err_msg = result.get("retMsg", "unknown") if result else "no response"
+    return f"❌ فشل البيع: {err_msg}"
+
+
 def _handle_command(text: str) -> str | None:
     """Parse and execute a Telegram command. Returns reply text or None."""
     text = text.strip()
     if not text:
         return None
+
+    # ── بيع ربح / sell profit ──
+    profit_sell = re.match(
+        r"(?:بيع ربح|sell profit)\s+([A-Za-z]+)",
+        text, re.IGNORECASE
+    )
+    if profit_sell:
+        symbol = profit_sell.group(1).upper()
+        return _execute_profit_sell(symbol)
 
     # ── بيع / sell ──
     sell_match = re.match(
@@ -1431,6 +1572,10 @@ def _handle_command(text: str) -> str | None:
         if pct < 1 or pct > 100:
             return "❌ النسبة يجب أن تكون بين 1 و 100"
         return _execute_sell(symbol, pct)
+
+    # ── فرص / opportunities ──
+    if text in ("فرص", "opportunities", "/opportunities", "ارباح اليوم"):
+        return _scan_profitable_coins()
 
     # ── تقرير / report ──
     if text in ("تقرير", "report", "/report"):
@@ -1785,6 +1930,8 @@ def _handle_command(text: str) -> str | None:
         return (
             "<b>📋 الأوامر المتاحة:</b>\n\n"
             "<b>تداول:</b>\n"
+            "<code>فرص</code> — عملات مرتفعة + اقتراح بيع الربح\n"
+            "<code>بيع ربح NEAR</code> — بيع الربح فقط (حفظ رأس المال)\n"
             "<code>بيع ENJ 50%</code> — بيع 50% من ENJ\n"
             "<code>بيع ENJ</code> — بيع 100%\n\n"
             "<b>محفظة:</b>\n"
