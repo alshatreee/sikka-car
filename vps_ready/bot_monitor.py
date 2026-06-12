@@ -52,6 +52,7 @@ MONTHLY_STATE = BASE_DIR / "monthly_state.json"
 DAYTRADING_STATE = BASE_DIR / "daytrading_state.json"
 CHANNEL_DT_STATE = BASE_DIR / "channel_daytrader_state.json"
 PORTFOLIO_STATE = BASE_DIR / "portfolio_state.json"
+DEPOSIT_CONFIG = BASE_DIR / "deposit_config.json"
 
 CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "900"))
 LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "30"))
@@ -1117,6 +1118,51 @@ def _get_kucoin_holdings_with_entry() -> list[dict]:
     return holdings
 
 
+def _load_deposit_config() -> dict:
+    if DEPOSIT_CONFIG.exists():
+        try:
+            return json.loads(DEPOSIT_CONFIG.read_text())
+        except Exception:
+            pass
+    return {"deposits": [], "withdrawals": []}
+
+
+def _save_deposit_config(cfg: dict):
+    tmp = DEPOSIT_CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
+    os.replace(tmp, DEPOSIT_CONFIG)
+
+
+def _add_deposit(amount: float) -> str:
+    cfg = _load_deposit_config()
+    cfg.setdefault("deposits", []).append({
+        "amount": amount,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    })
+    _save_deposit_config(cfg)
+    total = sum(d["amount"] for d in cfg["deposits"])
+    return f"✅ تم تسجيل إيداع ${amount:,.2f}\nإجمالي الإيداعات: ${total:,.2f}"
+
+
+def _add_withdrawal(amount: float) -> str:
+    cfg = _load_deposit_config()
+    cfg.setdefault("withdrawals", []).append({
+        "amount": amount,
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    })
+    _save_deposit_config(cfg)
+    total = sum(w["amount"] for w in cfg["withdrawals"])
+    return f"✅ تم تسجيل سحب ${amount:,.2f}\nإجمالي السحوبات: ${total:,.2f}"
+
+
+def _get_net_invested() -> tuple[float, float, float]:
+    """Returns (total_deposited, total_withdrawn, net_invested)."""
+    cfg = _load_deposit_config()
+    deposited = sum(d["amount"] for d in cfg.get("deposits", []))
+    withdrawn = sum(w["amount"] for w in cfg.get("withdrawals", []))
+    return deposited, withdrawn, deposited - withdrawn
+
+
 def _execute_sell(symbol: str, sell_pct: float) -> str:
     """Execute a sell order. symbol is base coin (e.g. 'ENJ'). sell_pct is 1-100."""
     if not BYBIT_KEY or not BYBIT_SECRET:
@@ -1215,6 +1261,22 @@ def _handle_command(text: str) -> str | None:
         if pct < 1 or pct > 100:
             return "❌ النسبة يجب أن تكون بين 1 و 100"
         return _execute_sell(symbol, pct)
+
+    # ── إيداع / deposit ──
+    dep_match = re.match(r"(?:إيداع|ايداع|deposit)\s+([\d.]+)", text, re.IGNORECASE)
+    if dep_match:
+        amount = float(dep_match.group(1))
+        if amount <= 0:
+            return "❌ المبلغ يجب أن يكون أكبر من صفر"
+        return _add_deposit(amount)
+
+    # ── سحب / withdraw ──
+    wd_match = re.match(r"(?:سحب|withdraw)\s+([\d.]+)", text, re.IGNORECASE)
+    if wd_match:
+        amount = float(wd_match.group(1))
+        if amount <= 0:
+            return "❌ المبلغ يجب أن يكون أكبر من صفر"
+        return _add_withdrawal(amount)
 
     # ── مراجعة / review ──
     if text in ("مراجعة", "review", "/review"):
@@ -1399,19 +1461,57 @@ def _handle_command(text: str) -> str | None:
             total_pnl_pct = ((total_value - total_cost) / total_cost) * 100
             total_pnl_usd = total_value - total_cost
             lines.append(f"\n<b>إجمالي Bybit: {total_pnl_pct:+.2f}% (${total_pnl_usd:+,.2f})</b>")
+
+        # ── الربح الإجمالي من رأس المال ──
+        deposited, withdrawn, net_invested = _get_net_invested()
+        if net_invested > 0:
+            # حساب القيمة الحالية لكل المنصات
+            portfolio_value = 0.0
+            if BYBIT_KEY:
+                portfolio_value += _fetch_usdt_balance()
+                for sym, _ in get_all_held_coins().items():
+                    bal = _fetch_coin_balance(sym)
+                    price = _fetch_price(f"{sym}USDT")
+                    if bal and price:
+                        portfolio_value += bal * price
+            if GATE_KEY:
+                for b in _fetch_gate_balances():
+                    portfolio_value += b["value"]
+            if KUCOIN_KEY:
+                for b in _fetch_kucoin_balances():
+                    portfolio_value += b["value"]
+
+            overall_pnl = portfolio_value + withdrawn - deposited
+            overall_pct = (overall_pnl / deposited) * 100
+            icon = "🟢" if overall_pnl >= 0 else "🔴"
+            lines.append(
+                f"\n{icon} <b>━━ الربح الإجمالي ━━</b>\n"
+                f"إجمالي الإيداع: ${deposited:,.2f}\n"
+                f"إجمالي السحب: ${withdrawn:,.2f}\n"
+                f"صافي الاستثمار: ${net_invested:,.2f}\n"
+                f"القيمة الحالية: ${portfolio_value:,.2f}\n"
+                f"<b>الربح/الخسارة: {overall_pct:+.2f}% (${overall_pnl:+,.2f})</b>"
+            )
+
         return "\n".join(lines)
 
     # ── أوامر / help ──
     if text in ("أوامر", "help", "/help", "مساعدة"):
         return (
             "<b>📋 الأوامر المتاحة:</b>\n\n"
+            "<b>تداول:</b>\n"
             "<code>بيع ENJ 50%</code> — بيع 50% من ENJ\n"
-            "<code>بيع ENJ</code> — بيع 100% من ENJ\n"
+            "<code>بيع ENJ</code> — بيع 100%\n\n"
+            "<b>محفظة:</b>\n"
+            "<code>أرباح</code> — ربح/خسارة كل عملة + إجمالي\n"
+            "<code>رصيد</code> — رصيد كل المنصات\n"
+            "<code>عملات</code> — العملات المحتفظ بها\n\n"
+            "<b>رأس المال:</b>\n"
+            "<code>إيداع 35000</code> — تسجيل إيداع\n"
+            "<code>سحب 2000</code> — تسجيل سحب\n\n"
+            "<b>أخرى:</b>\n"
             "<code>مراجعة</code> — مراجعة AI للعملات\n"
-            "<code>أرباح</code> — نسبة الربح/الخسارة لكل عملة\n"
             "<code>حالة</code> — تقرير صحة البوتات\n"
-            "<code>رصيد</code> — رصيد المحفظة\n"
-            "<code>عملات</code> — العملات المحتفظ بها\n"
             "<code>أوامر</code> — هذه القائمة"
         )
 
