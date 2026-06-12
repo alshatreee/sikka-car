@@ -46,6 +46,7 @@ AI_ANALYSIS_FILE = BASE_DIR / "ai_channel_analysis.json"
 MONTHLY_STATE = BASE_DIR / "monthly_state.json"
 DAYTRADING_STATE = BASE_DIR / "daytrading_state.json"
 CHANNEL_DT_STATE = BASE_DIR / "channel_daytrader_state.json"
+PORTFOLIO_STATE = BASE_DIR / "portfolio_state.json"
 
 CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "900"))
 LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "30"))
@@ -937,6 +938,38 @@ def _fetch_usdt_balance() -> float:
     return 0.0
 
 
+def _fetch_gate_price(symbol: str) -> float | None:
+    pair = f"{symbol.upper()}_USDT"
+    data = _http_get(f"https://api.gateio.ws/api/v4/spot/tickers?currency_pair={pair}")
+    if data and isinstance(data, list) and data:
+        try:
+            return float(data[0].get("last", 0))
+        except (ValueError, KeyError):
+            pass
+    return None
+
+
+def _get_gate_holdings() -> list[dict]:
+    """Read Gate.io holdings and entry prices from portfolio_state.json."""
+    if not PORTFOLIO_STATE.exists():
+        return []
+    try:
+        pstate = json.loads(PORTFOLIO_STATE.read_text())
+    except Exception:
+        return []
+
+    entry_prices = pstate.get("entry_prices", {})
+    holdings = []
+    for key, entry in entry_prices.items():
+        if "@Gate" not in key:
+            continue
+        sym = key.split("@")[0]
+        if not sym or not entry:
+            continue
+        holdings.append({"symbol": sym, "entry": entry})
+    return holdings
+
+
 def _execute_sell(symbol: str, sell_pct: float) -> str:
     """Execute a sell order. symbol is base coin (e.g. 'ENJ'). sell_pct is 1-100."""
     if not BYBIT_KEY or not BYBIT_SECRET:
@@ -1079,38 +1112,62 @@ def _handle_command(text: str) -> str | None:
     # ── أرباح / pnl ──
     if text in ("أرباح", "ارباح", "pnl", "/pnl", "ربح"):
         positions = get_all_positions()
-        if not positions:
+        gate_holdings = _get_gate_holdings()
+        if not positions and not gate_holdings:
             return "📭 لا توجد مراكز مفتوحة"
         lines = ["<b>📈 أرباح/خسائر المراكز المفتوحة</b>\n"]
         total_cost = 0.0
         total_value = 0.0
-        for p in sorted(positions, key=lambda x: x["symbol"]):
-            entry = p["entry"]
-            qty = p["qty"]
-            pair = p["pair"]
-            if not entry or not qty:
-                lines.append(f"  ⚪ {p['symbol']} ({p['bot']}) — بيانات ناقصة")
-                continue
-            price = _fetch_price(pair)
-            if not price:
-                lines.append(f"  ⚪ {p['symbol']} ({p['bot']}) — سعر غير متوفر")
-                continue
-            cost = entry * qty
-            value = price * qty
-            pnl_pct = ((price - entry) / entry) * 100
-            pnl_usd = value - cost
-            total_cost += cost
-            total_value += value
-            icon = "🟢" if pnl_pct >= 0 else "🔴"
-            lines.append(
-                f"  {icon} <b>{p['symbol']}</b> ({p['bot']})\n"
-                f"      دخول: ${entry:,.6f} → حالي: ${price:,.6f}\n"
-                f"      الربح: {pnl_pct:+.2f}% (${pnl_usd:+,.2f})"
-            )
+
+        # ── Bybit bots ──
+        if positions:
+            lines.append("<b>━━ Bybit ━━</b>")
+            for p in sorted(positions, key=lambda x: x["symbol"]):
+                entry = p["entry"]
+                qty = p["qty"]
+                pair = p["pair"]
+                if not entry or not qty:
+                    lines.append(f"  ⚪ {p['symbol']} ({p['bot']}) — بيانات ناقصة")
+                    continue
+                price = _fetch_price(pair)
+                if not price:
+                    lines.append(f"  ⚪ {p['symbol']} ({p['bot']}) — سعر غير متوفر")
+                    continue
+                cost = entry * qty
+                value = price * qty
+                pnl_pct = ((price - entry) / entry) * 100
+                pnl_usd = value - cost
+                total_cost += cost
+                total_value += value
+                icon = "🟢" if pnl_pct >= 0 else "🔴"
+                lines.append(
+                    f"  {icon} <b>{p['symbol']}</b> ({p['bot']})\n"
+                    f"      دخول: ${entry:,.6f} → حالي: ${price:,.6f}\n"
+                    f"      الربح: {pnl_pct:+.2f}% (${pnl_usd:+,.2f})"
+                )
+
+        # ── Gate.io ──
+        if gate_holdings:
+            lines.append("\n<b>━━ Gate.io ━━</b>")
+            for h in sorted(gate_holdings, key=lambda x: x["symbol"]):
+                sym = h["symbol"]
+                entry = h["entry"]
+                price = _fetch_gate_price(sym)
+                if not price:
+                    lines.append(f"  ⚪ {sym} — سعر غير متوفر")
+                    continue
+                pnl_pct = ((price - entry) / entry) * 100
+                icon = "🟢" if pnl_pct >= 0 else "🔴"
+                lines.append(
+                    f"  {icon} <b>{sym}</b>\n"
+                    f"      دخول: ${entry:,.6f} → حالي: ${price:,.6f}\n"
+                    f"      الربح: {pnl_pct:+.2f}%"
+                )
+
         if total_cost > 0:
             total_pnl_pct = ((total_value - total_cost) / total_cost) * 100
             total_pnl_usd = total_value - total_cost
-            lines.append(f"\n<b>الإجمالي: {total_pnl_pct:+.2f}% (${total_pnl_usd:+,.2f})</b>")
+            lines.append(f"\n<b>إجمالي Bybit: {total_pnl_pct:+.2f}% (${total_pnl_usd:+,.2f})</b>")
         return "\n".join(lines)
 
     # ── أوامر / help ──
