@@ -925,35 +925,40 @@ def _fetch_price(symbol: str) -> float | None:
 
 def _fetch_coin_balance(coin: str) -> float:
     coin = coin.upper().replace("USDT", "")
-    data = _bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
-    if not data or data.get("retCode") != 0:
-        return 0.0
-    coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
-    for c in coins:
-        if c.get("coin") == coin:
-            # Only spendable balance. walletBalance includes funds locked in
-            # open orders — using it could oversell or double-sell.
-            for fld in ("availableToWithdraw", "free"):
-                val = _safe_float(c.get(fld))
-                if val > 0:
-                    return val
-            return 0.0
-    return 0.0
+    total = 0.0
+    for acct in ("UNIFIED", "FUND"):
+        data = _bybit_signed_get("/v5/account/wallet-balance", f"accountType={acct}")
+        if not data or data.get("retCode") != 0:
+            if acct == "FUND":
+                data = _bybit_signed_get("/v5/asset/transfer/query-asset-info", f"coin={coin}")
+                if data and data.get("retCode") == 0:
+                    for item in data.get("result", {}).get("list", []):
+                        if item.get("coin") == coin:
+                            total += _safe_float(item.get("availableToWithdraw", item.get("walletBalance")))
+            continue
+        coins_list = data.get("result", {}).get("list", [{}])[0].get("coin", [])
+        for c in coins_list:
+            if c.get("coin") == coin:
+                val = _safe_float(c.get("availableToWithdraw")) or _safe_float(c.get("free"))
+                total += val
+    return total
 
 
 def _fetch_usdt_balance() -> float:
-    data = _bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
-    if not data or data.get("retCode") != 0:
-        return 0.0
-    coins = data.get("result", {}).get("list", [{}])[0].get("coin", [])
-    for c in coins:
-        if c.get("coin") == "USDT":
-            for fld in ("availableToWithdraw", "walletBalance", "equity"):
-                val = _safe_float(c.get(fld))
-                if val > 0:
-                    return val
-            return 0.0
-    return 0.0
+    total = 0.0
+    for acct in ("UNIFIED", "FUND"):
+        data = _bybit_signed_get("/v5/account/wallet-balance", f"accountType={acct}")
+        if data and data.get("retCode") == 0:
+            for c in data.get("result", {}).get("list", [{}])[0].get("coin", []):
+                if c.get("coin") == "USDT":
+                    total += _safe_float(c.get("walletBalance")) or _safe_float(c.get("equity"))
+        elif acct == "FUND":
+            data = _bybit_signed_get("/v5/asset/transfer/query-asset-info", "coin=USDT")
+            if data and data.get("retCode") == 0:
+                for item in data.get("result", {}).get("list", []):
+                    if item.get("coin") == "USDT":
+                        total += _safe_float(item.get("walletBalance"))
+    return total
 
 
 def _fetch_gate_price(symbol: str) -> float | None:
@@ -995,28 +1000,36 @@ def _gate_signed_get(path: str) -> list | dict | None:
 
 
 def _fetch_gate_usdt() -> float:
-    """Fetch Gate.io USDT balance."""
-    data = _gate_signed_get("/api/v4/spot/accounts")
-    if not data or not isinstance(data, list):
-        return 0.0
-    for coin in data:
-        if coin.get("currency") == "USDT":
-            return _safe_float(coin.get("available")) + _safe_float(coin.get("locked"))
-    return 0.0
+    """Fetch Gate.io USDT balance across spot + earn + margin."""
+    total = 0.0
+    for path in ("/api/v4/spot/accounts", "/api/v4/earn/uni/interests", "/api/v4/margin/accounts"):
+        data = _gate_signed_get(path)
+        if not data or not isinstance(data, list):
+            continue
+        for coin in data:
+            cur = coin.get("currency", coin.get("coin", ""))
+            if cur == "USDT":
+                total += _safe_float(coin.get("available", coin.get("amount", 0)))
+                total += _safe_float(coin.get("locked", 0))
+    return total
 
 
 def _fetch_gate_balances() -> list[dict]:
-    """Fetch all Gate.io spot balances with value > $1."""
-    data = _gate_signed_get("/api/v4/spot/accounts")
-    if not data or not isinstance(data, list):
-        return []
+    """Fetch all Gate.io balances across spot + earn."""
+    merged: dict[str, float] = {}
+    for path in ("/api/v4/spot/accounts", "/api/v4/earn/uni/interests"):
+        data = _gate_signed_get(path)
+        if not data or not isinstance(data, list):
+            continue
+        for coin in data:
+            sym = coin.get("currency", coin.get("coin", ""))
+            available = _safe_float(coin.get("available", coin.get("amount", 0)))
+            locked = _safe_float(coin.get("locked", 0))
+            if sym and sym not in ("USDT", "USD", "USDC"):
+                merged[sym] = merged.get(sym, 0) + available + locked
     result = []
-    for coin in data:
-        sym = coin.get("currency", "")
-        available = _safe_float(coin.get("available"))
-        locked = _safe_float(coin.get("locked"))
-        total = available + locked
-        if total <= 0 or sym in ("USDT", "USD", "USDC"):
+    for sym, total in merged.items():
+        if total <= 0:
             continue
         price = _fetch_gate_price(sym)
         if not price:
@@ -1098,15 +1111,20 @@ def _kucoin_signed_get(path: str) -> dict | None:
 
 
 def _fetch_kucoin_balances() -> list[dict]:
-    """Fetch KuCoin spot balances with value > $1."""
-    data = _kucoin_signed_get("/api/v1/accounts?type=trade")
-    if not data or data.get("code") != "200000":
-        return []
+    """Fetch KuCoin balances across trade + main accounts with value > $1."""
+    merged: dict[str, float] = {}
+    for acct_type in ("trade", "main"):
+        data = _kucoin_signed_get(f"/api/v1/accounts?type={acct_type}")
+        if not data or data.get("code") != "200000":
+            continue
+        for acc in data.get("data", []):
+            sym = acc.get("currency", "")
+            bal = _safe_float(acc.get("balance"))
+            if bal > 0 and sym not in ("USDT", "USD", "USDC"):
+                merged[sym] = merged.get(sym, 0) + bal
     result = []
-    for acc in data.get("data", []):
-        sym = acc.get("currency", "")
-        total = _safe_float(acc.get("balance"))
-        if total <= 0 or sym in ("USDT", "USD", "USDC"):
+    for sym, total in merged.items():
+        if total <= 0:
             continue
         price = _fetch_kucoin_price(sym)
         if not price:
@@ -1760,11 +1778,12 @@ def _handle_command(text: str) -> str | None:
         if KUCOIN_KEY:
             kc_bals = _fetch_kucoin_balances()
             kc_usdt = 0.0
-            kc_data = _kucoin_signed_get("/api/v1/accounts?type=trade")
-            if kc_data and kc_data.get("code") == "200000":
-                for acc in kc_data.get("data", []):
-                    if acc.get("currency") == "USDT":
-                        kc_usdt = _safe_float(acc.get("balance"))
+            for acct_type in ("trade", "main"):
+                kc_data = _kucoin_signed_get(f"/api/v1/accounts?type={acct_type}")
+                if kc_data and kc_data.get("code") == "200000":
+                    for acc in kc_data.get("data", []):
+                        if acc.get("currency") == "USDT":
+                            kc_usdt += _safe_float(acc.get("balance"))
             kc_total = kc_usdt + sum(b["value"] for b in kc_bals)
             lines.append(f"\n<b>━━ KuCoin ━━</b>")
             if kc_usdt >= 1:
