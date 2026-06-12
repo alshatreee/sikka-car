@@ -38,6 +38,8 @@ CEREBRAS_KEY = os.getenv("CEREBRAS_API_KEY", "")
 GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
 BYBIT_KEY = os.getenv("BYBIT_API_KEY", "")
 BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
+GATE_KEY = os.getenv("GATE_API_KEY", "")
+GATE_SECRET = os.getenv("GATE_API_SECRET", "")
 
 RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
 AI_ANALYSIS_FILE = BASE_DIR / "ai_channel_analysis.json"
@@ -949,24 +951,76 @@ def _fetch_gate_price(symbol: str) -> float | None:
     return None
 
 
-def _get_gate_holdings() -> list[dict]:
-    """Read Gate.io holdings and entry prices from portfolio_state.json."""
-    if not PORTFOLIO_STATE.exists():
-        return []
+def _gate_signed_get(path: str) -> list | dict | None:
+    """Gate.io v4 API signed GET request."""
+    if not GATE_KEY or not GATE_SECRET:
+        return None
+    ts = str(int(time.time()))
+    hashed_body = hashlib.sha512(b"").hexdigest()
+    sign_str = f"GET\n{path}\n\n{hashed_body}\n{ts}"
+    sig = hmac.new(GATE_SECRET.encode(), sign_str.encode(), hashlib.sha512).hexdigest()
+    url = f"https://api.gateio.ws{path}"
     try:
-        pstate = json.loads(PORTFOLIO_STATE.read_text())
-    except Exception:
-        return []
+        req = _urllib_req.Request(url, headers={
+            "KEY": GATE_KEY,
+            "SIGN": sig,
+            "Timestamp": ts,
+            "Content-Type": "application/json",
+        })
+        with _urllib_req.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        log(f"Gate GET {path}: {e}")
+        return None
 
-    entry_prices = pstate.get("entry_prices", {})
+
+def _fetch_gate_balances() -> list[dict]:
+    """Fetch all Gate.io spot balances with value > $1."""
+    data = _gate_signed_get("/api/v4/spot/accounts")
+    if not data or not isinstance(data, list):
+        return []
+    result = []
+    for coin in data:
+        sym = coin.get("currency", "")
+        available = _safe_float(coin.get("available"))
+        locked = _safe_float(coin.get("locked"))
+        total = available + locked
+        if total <= 0 or sym in ("USDT", "USD", "USDC"):
+            continue
+        price = _fetch_gate_price(sym)
+        if not price:
+            continue
+        value = total * price
+        if value < 1.0:
+            continue
+        result.append({"symbol": sym, "amount": total, "price": price, "value": value})
+    return result
+
+
+def _get_gate_holdings_with_entry() -> list[dict]:
+    """Gate.io holdings with entry prices from portfolio_state.json + live balances."""
+    gate_bals = _fetch_gate_balances()
+    entry_prices = {}
+    if PORTFOLIO_STATE.exists():
+        try:
+            pstate = json.loads(PORTFOLIO_STATE.read_text())
+            for key, entry in pstate.get("entry_prices", {}).items():
+                if "@Gate" in key:
+                    sym = key.split("@")[0]
+                    entry_prices[sym] = entry
+        except Exception:
+            pass
+
     holdings = []
-    for key, entry in entry_prices.items():
-        if "@Gate" not in key:
-            continue
-        sym = key.split("@")[0]
-        if not sym or not entry:
-            continue
-        holdings.append({"symbol": sym, "entry": entry})
+    for b in gate_bals:
+        sym = b["symbol"]
+        holdings.append({
+            "symbol": sym,
+            "amount": b["amount"],
+            "price": b["price"],
+            "value": b["value"],
+            "entry": entry_prices.get(sym, 0),
+        })
     return holdings
 
 
@@ -1084,19 +1138,40 @@ def _handle_command(text: str) -> str | None:
 
     # ── رصيد / balance ──
     if text in ("رصيد", "balance", "/balance"):
-        if not BYBIT_KEY:
-            return "❌ مفاتيح Bybit غير متوفرة"
-        usdt = _fetch_usdt_balance()
-        held = get_all_held_coins()
-        lines = [f"<b>💰 رصيد المحفظة</b>\n", f"USDT: ${usdt:,.2f}"]
-        total = usdt
-        for sym, bots in sorted(held.items()):
-            bal = _fetch_coin_balance(sym)
-            price = _fetch_price(f"{sym}USDT")
-            val = bal * price if (bal and price) else 0
-            total += val
-            lines.append(f"{sym}: {_qty_str(bal)} ≈ ${val:,.2f}  ({', '.join(bots)})")
-        lines.append(f"\n<b>الإجمالي: ${total:,.2f}</b>")
+        lines = [f"<b>💰 رصيد المحفظة</b>\n"]
+        grand_total = 0.0
+
+        # Bybit
+        if BYBIT_KEY:
+            usdt = _fetch_usdt_balance()
+            held = get_all_held_coins()
+            bybit_total = usdt
+            lines.append("<b>━━ Bybit ━━</b>")
+            lines.append(f"💵 USDT: ${usdt:,.2f}")
+            for sym, bots in sorted(held.items()):
+                bal = _fetch_coin_balance(sym)
+                price = _fetch_price(f"{sym}USDT")
+                val = bal * price if (bal and price) else 0
+                bybit_total += val
+                lines.append(f"{sym}: {_qty_str(bal)} ≈ ${val:,.2f}  ({', '.join(bots)})")
+            lines.append(f"<b>Bybit: ${bybit_total:,.2f}</b>")
+            grand_total += bybit_total
+
+        # Gate.io
+        if GATE_KEY:
+            gate_bals = _fetch_gate_balances()
+            if gate_bals:
+                gate_total = sum(b["value"] for b in gate_bals)
+                lines.append(f"\n<b>━━ Gate.io ━━</b>")
+                for b in sorted(gate_bals, key=lambda x: x["value"], reverse=True):
+                    lines.append(f"{b['symbol']}: {_qty_str(b['amount'])} ≈ ${b['value']:,.2f}")
+                lines.append(f"<b>Gate.io: ${gate_total:,.2f}</b>")
+                grand_total += gate_total
+            else:
+                lines.append(f"\n<b>━━ Gate.io ━━</b>")
+                lines.append("⚪ لا توجد عملات أو خطأ في الاتصال")
+
+        lines.append(f"\n<b>الإجمالي: ${grand_total:,.2f}</b>")
         return "\n".join(lines)
 
     # ── عملات / coins / holdings ──
@@ -1112,8 +1187,7 @@ def _handle_command(text: str) -> str | None:
     # ── أرباح / pnl ──
     if text in ("أرباح", "ارباح", "pnl", "/pnl", "ربح"):
         positions = get_all_positions()
-        gate_holdings = _get_gate_holdings()
-        if not positions and not gate_holdings:
+        if not positions and not GATE_KEY:
             return "📭 لا توجد مراكز مفتوحة"
         lines = ["<b>📈 أرباح/خسائر المراكز المفتوحة</b>\n"]
         total_cost = 0.0
@@ -1147,22 +1221,38 @@ def _handle_command(text: str) -> str | None:
                 )
 
         # ── Gate.io ──
-        if gate_holdings:
-            lines.append("\n<b>━━ Gate.io ━━</b>")
-            for h in sorted(gate_holdings, key=lambda x: x["symbol"]):
-                sym = h["symbol"]
-                entry = h["entry"]
-                price = _fetch_gate_price(sym)
-                if not price:
-                    lines.append(f"  ⚪ {sym} — سعر غير متوفر")
-                    continue
-                pnl_pct = ((price - entry) / entry) * 100
-                icon = "🟢" if pnl_pct >= 0 else "🔴"
-                lines.append(
-                    f"  {icon} <b>{sym}</b>\n"
-                    f"      دخول: ${entry:,.6f} → حالي: ${price:,.6f}\n"
-                    f"      الربح: {pnl_pct:+.2f}%"
-                )
+        if GATE_KEY:
+            gate_holdings = _get_gate_holdings_with_entry()
+            if gate_holdings:
+                lines.append("\n<b>━━ Gate.io ━━</b>")
+                gate_cost = 0.0
+                gate_value = 0.0
+                for h in sorted(gate_holdings, key=lambda x: x["symbol"]):
+                    sym = h["symbol"]
+                    entry = h["entry"]
+                    price = h["price"]
+                    amount = h["amount"]
+                    value = h["value"]
+                    if entry and entry > 0:
+                        pnl_pct = ((price - entry) / entry) * 100
+                        pnl_usd = (price - entry) * amount
+                        icon = "🟢" if pnl_pct >= 0 else "🔴"
+                        gate_cost += entry * amount
+                        gate_value += value
+                        lines.append(
+                            f"  {icon} <b>{sym}</b>\n"
+                            f"      دخول: ${entry:,.6f} → حالي: ${price:,.6f}\n"
+                            f"      الربح: {pnl_pct:+.2f}% (${pnl_usd:+,.2f})"
+                        )
+                    else:
+                        lines.append(
+                            f"  ⚪ <b>{sym}</b>: ${price:,.6f} × {_qty_str(amount)} = ${value:,.2f}\n"
+                            f"      سعر الدخول غير متوفر"
+                        )
+                if gate_cost > 0:
+                    g_pnl_pct = ((gate_value - gate_cost) / gate_cost) * 100
+                    g_pnl_usd = gate_value - gate_cost
+                    lines.append(f"  <b>Gate.io: {g_pnl_pct:+.2f}% (${g_pnl_usd:+,.2f})</b>")
 
         if total_cost > 0:
             total_pnl_pct = ((total_value - total_cost) / total_cost) * 100
