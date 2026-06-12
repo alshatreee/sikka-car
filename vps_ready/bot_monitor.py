@@ -1432,6 +1432,83 @@ def _handle_command(text: str) -> str | None:
             return "❌ النسبة يجب أن تكون بين 1 و 100"
         return _execute_sell(symbol, pct)
 
+    # ── تقرير / report ──
+    if text in ("تقرير", "report", "/report"):
+        lines = ["<b>📊 تقرير أداء البوتات الإجمالي</b>\n"]
+
+        # daytrading_bot
+        if DAYTRADING_STATE.exists():
+            try:
+                ds = json.loads(DAYTRADING_STATE.read_text())
+                tp = ds.get("total_pnl", 0)
+                tt = ds.get("total_trades", 0)
+                w = ds.get("wins", 0)
+                l = ds.get("losses", 0)
+                wr = (w / max(w + l, 1)) * 100
+                dp = ds.get("daily_pnl", 0)
+                icon = "🟢" if tp >= 0 else "🔴"
+                lines.append(
+                    f"{icon} <b>━━ Day Trading Bot ━━</b>\n"
+                    f"  إجمالي الصفقات: {tt}\n"
+                    f"  ربح: {w} | خسارة: {l} | نسبة الفوز: {wr:.0f}%\n"
+                    f"  الربح الإجمالي: <b>${tp:+,.2f}</b>\n"
+                    f"  ربح اليوم: ${dp:+,.2f}"
+                )
+            except Exception:
+                lines.append("⚪ Day Trading Bot — بيانات غير متوفرة")
+
+        # channel_daytrader
+        if CHANNEL_DT_STATE.exists():
+            try:
+                cs = json.loads(CHANNEL_DT_STATE.read_text())
+                tp = cs.get("total_pnl", 0)
+                tt = cs.get("total_trades", 0)
+                w = cs.get("wins", 0)
+                l = cs.get("losses", 0)
+                wr = (w / max(w + l, 1)) * 100
+                dp = cs.get("daily_pnl", 0)
+                icon = "🟢" if tp >= 0 else "🔴"
+                lines.append(
+                    f"\n{icon} <b>━━ Channel Day Trader ━━</b>\n"
+                    f"  إجمالي الصفقات: {tt}\n"
+                    f"  ربح: {w} | خسارة: {l} | نسبة الفوز: {wr:.0f}%\n"
+                    f"  الربح الإجمالي: <b>${tp:+,.2f}</b>\n"
+                    f"  ربح اليوم: ${dp:+,.2f}"
+                )
+            except Exception:
+                lines.append("⚪ Channel Day Trader — بيانات غير متوفرة")
+
+        # monthly_channel_bot
+        if MONTHLY_STATE.exists():
+            try:
+                ms = json.loads(MONTHLY_STATE.read_text())
+                history = ms.get("trade_history", [])
+                positions = ms.get("open_positions", {})
+                total_closed = len(history)
+                total_pnl = sum(t.get("pnl", 0) for t in history)
+                wins = sum(1 for t in history if t.get("pnl", 0) >= 0)
+                losses = total_closed - wins
+                wr = (wins / max(total_closed, 1)) * 100
+                open_count = len(positions)
+                icon = "🟢" if total_pnl >= 0 else "🔴"
+                lines.append(
+                    f"\n{icon} <b>━━ Monthly Channel Bot ━━</b>\n"
+                    f"  صفقات مغلقة: {total_closed} | مفتوحة: {open_count}\n"
+                    f"  ربح: {wins} | خسارة: {losses} | نسبة الفوز: {wr:.0f}%\n"
+                    f"  الربح الإجمالي (مغلقة): <b>${total_pnl:+,.2f}</b>"
+                )
+                if history:
+                    best = max(history, key=lambda t: t.get("pnl", 0))
+                    worst = min(history, key=lambda t: t.get("pnl", 0))
+                    lines.append(
+                        f"  أفضل صفقة: {best.get('pair','')} ${best.get('pnl',0):+,.2f}\n"
+                        f"  أسوأ صفقة: {worst.get('pair','')} ${worst.get('pnl',0):+,.2f}"
+                    )
+            except Exception:
+                lines.append("⚪ Monthly Channel Bot — بيانات غير متوفرة")
+
+        return "\n".join(lines)
+
     # ── رأس مال / capital ──
     cap_match = re.match(
         r"(?:رأس مال|راس مال|رأسمال|capital)\s+([\d.]+)(?:\s+([\d.]+))?",
@@ -1712,6 +1789,7 @@ def _handle_command(text: str) -> str | None:
             "<code>بيع ENJ</code> — بيع 100%\n\n"
             "<b>محفظة:</b>\n"
             "<code>أرباح</code> — ربح/خسارة كل عملة + إجمالي\n"
+            "<code>تقرير</code> — أداء كل بوت منذ التفعيل\n"
             "<code>رصيد</code> — رصيد + إيداعات/سحوبات كل المنصات\n"
             "<code>عملات</code> — العملات المحتفظ بها\n\n"
             "<b>رأس المال:</b>\n"
