@@ -52,7 +52,6 @@ MONTHLY_STATE = BASE_DIR / "monthly_state.json"
 DAYTRADING_STATE = BASE_DIR / "daytrading_state.json"
 CHANNEL_DT_STATE = BASE_DIR / "channel_daytrader_state.json"
 PORTFOLIO_STATE = BASE_DIR / "portfolio_state.json"
-DEPOSIT_CONFIG = BASE_DIR / "deposit_config.json"
 
 CHECK_INTERVAL = int(os.getenv("MONITOR_CHECK_SEC", "900"))
 LOG_STALE_MIN = int(os.getenv("MONITOR_LOG_STALE_MIN", "30"))
@@ -1118,49 +1117,137 @@ def _get_kucoin_holdings_with_entry() -> list[dict]:
     return holdings
 
 
-def _load_deposit_config() -> dict:
-    if DEPOSIT_CONFIG.exists():
+def _coin_to_usdt(coin: str, amount: float) -> float:
+    """Convert a coin amount to USDT value. Returns 0 if price unavailable."""
+    if coin in ("USDT", "USDC", "USD", "BUSD", "DAI"):
+        return amount
+    price = _fetch_price(f"{coin}USDT") or _fetch_gate_price(coin) or _fetch_kucoin_price(coin)
+    return amount * price if price else 0.0
+
+
+def _fetch_bybit_deposits_withdrawals() -> tuple[float, float]:
+    """Fetch total deposits and withdrawals from Bybit (last 6 months)."""
+    if not BYBIT_KEY:
+        return 0.0, 0.0
+    start_ms = str(int((time.time() - 180 * 86400) * 1000))
+    end_ms = str(int(time.time() * 1000))
+
+    total_dep = 0.0
+    cursor = ""
+    for _ in range(20):
+        params = f"startTime={start_ms}&endTime={end_ms}&limit=50"
+        if cursor:
+            params += f"&cursor={cursor}"
+        data = _bybit_signed_get("/v5/asset/deposit/query-record", params)
+        if not data or data.get("retCode") != 0:
+            break
+        rows = data.get("result", {}).get("rows", [])
+        for r in rows:
+            if r.get("status") in (3, "3"):
+                total_dep += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
+        cursor = data.get("result", {}).get("nextPageCursor", "")
+        if not cursor or not rows:
+            break
+
+    total_wd = 0.0
+    cursor = ""
+    for _ in range(20):
+        params = f"startTime={start_ms}&endTime={end_ms}&limit=50&withdrawType=2"
+        if cursor:
+            params += f"&cursor={cursor}"
+        data = _bybit_signed_get("/v5/asset/withdraw/query-record", params)
+        if not data or data.get("retCode") != 0:
+            break
+        rows = data.get("result", {}).get("rows", [])
+        for r in rows:
+            if r.get("status") in ("success", "BlockchainConfirmed"):
+                total_wd += _coin_to_usdt(r.get("coin", ""), _safe_float(r.get("amount")))
+        cursor = data.get("result", {}).get("nextPageCursor", "")
+        if not cursor or not rows:
+            break
+
+    return total_dep, total_wd
+
+
+def _fetch_gate_deposits_withdrawals() -> tuple[float, float]:
+    """Fetch total deposits and withdrawals from Gate.io (last 6 months)."""
+    if not GATE_KEY:
+        return 0.0, 0.0
+    frm = str(int(time.time() - 180 * 86400))
+    to = str(int(time.time()))
+
+    total_dep = 0.0
+    data = _gate_signed_get(f"/api/v4/wallet/deposits?from={frm}&to={to}&limit=100")
+    if data and isinstance(data, list):
+        for r in data:
+            if r.get("status") == "DONE":
+                total_dep += _coin_to_usdt(r.get("currency", ""), _safe_float(r.get("amount")))
+
+    total_wd = 0.0
+    data = _gate_signed_get(f"/api/v4/wallet/withdrawals?from={frm}&to={to}&limit=100")
+    if data and isinstance(data, list):
+        for r in data:
+            if r.get("status") == "DONE":
+                total_wd += _coin_to_usdt(r.get("currency", ""), _safe_float(r.get("amount")))
+
+    return total_dep, total_wd
+
+
+def _fetch_kucoin_deposits_withdrawals() -> tuple[float, float]:
+    """Fetch total deposits and withdrawals from KuCoin (last 6 months)."""
+    if not KUCOIN_KEY:
+        return 0.0, 0.0
+    start_at = str(int((time.time() - 180 * 86400) * 1000))
+    end_at = str(int(time.time() * 1000))
+
+    total_dep = 0.0
+    for page in range(1, 11):
+        data = _kucoin_signed_get(
+            f"/api/v1/deposits?startAt={start_at}&endAt={end_at}&pageSize=100&currentPage={page}"
+        )
+        if not data or data.get("code") != "200000":
+            break
+        items = data.get("data", {}).get("items", [])
+        for r in items:
+            if r.get("status") == "SUCCESS":
+                total_dep += _coin_to_usdt(r.get("currency", ""), _safe_float(r.get("amount")))
+        if page >= data.get("data", {}).get("totalPage", 1):
+            break
+
+    total_wd = 0.0
+    for page in range(1, 11):
+        data = _kucoin_signed_get(
+            f"/api/v1/withdrawals?startAt={start_at}&endAt={end_at}&pageSize=100&currentPage={page}"
+        )
+        if not data or data.get("code") != "200000":
+            break
+        items = data.get("data", {}).get("items", [])
+        for r in items:
+            if r.get("status") == "SUCCESS":
+                total_wd += _coin_to_usdt(r.get("currency", ""), _safe_float(r.get("amount")))
+        if page >= data.get("data", {}).get("totalPage", 1):
+            break
+
+    return total_dep, total_wd
+
+
+def _fetch_all_deposits_withdrawals() -> dict:
+    """Fetch deposits/withdrawals from all exchanges. Returns summary dict."""
+    result = {"exchanges": {}, "total_deposited": 0.0, "total_withdrawn": 0.0}
+
+    for name, fetcher in [("Bybit", _fetch_bybit_deposits_withdrawals),
+                          ("Gate.io", _fetch_gate_deposits_withdrawals),
+                          ("KuCoin", _fetch_kucoin_deposits_withdrawals)]:
         try:
-            return json.loads(DEPOSIT_CONFIG.read_text())
-        except Exception:
-            pass
-    return {"deposits": [], "withdrawals": []}
+            dep, wd = fetcher()
+            result["exchanges"][name] = {"deposited": dep, "withdrawn": wd}
+            result["total_deposited"] += dep
+            result["total_withdrawn"] += wd
+        except Exception as e:
+            log(f"خطأ جلب إيداعات/سحوبات {name}: {e}")
+            result["exchanges"][name] = {"deposited": 0, "withdrawn": 0, "error": str(e)}
 
-
-def _save_deposit_config(cfg: dict):
-    tmp = DEPOSIT_CONFIG.with_suffix(".tmp")
-    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2))
-    os.replace(tmp, DEPOSIT_CONFIG)
-
-
-def _add_deposit(amount: float) -> str:
-    cfg = _load_deposit_config()
-    cfg.setdefault("deposits", []).append({
-        "amount": amount,
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-    })
-    _save_deposit_config(cfg)
-    total = sum(d["amount"] for d in cfg["deposits"])
-    return f"✅ تم تسجيل إيداع ${amount:,.2f}\nإجمالي الإيداعات: ${total:,.2f}"
-
-
-def _add_withdrawal(amount: float) -> str:
-    cfg = _load_deposit_config()
-    cfg.setdefault("withdrawals", []).append({
-        "amount": amount,
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-    })
-    _save_deposit_config(cfg)
-    total = sum(w["amount"] for w in cfg["withdrawals"])
-    return f"✅ تم تسجيل سحب ${amount:,.2f}\nإجمالي السحوبات: ${total:,.2f}"
-
-
-def _get_net_invested() -> tuple[float, float, float]:
-    """Returns (total_deposited, total_withdrawn, net_invested)."""
-    cfg = _load_deposit_config()
-    deposited = sum(d["amount"] for d in cfg.get("deposits", []))
-    withdrawn = sum(w["amount"] for w in cfg.get("withdrawals", []))
-    return deposited, withdrawn, deposited - withdrawn
+    return result
 
 
 def _execute_sell(symbol: str, sell_pct: float) -> str:
@@ -1262,22 +1349,6 @@ def _handle_command(text: str) -> str | None:
             return "❌ النسبة يجب أن تكون بين 1 و 100"
         return _execute_sell(symbol, pct)
 
-    # ── إيداع / deposit ──
-    dep_match = re.match(r"(?:إيداع|ايداع|deposit)\s+([\d.]+)", text, re.IGNORECASE)
-    if dep_match:
-        amount = float(dep_match.group(1))
-        if amount <= 0:
-            return "❌ المبلغ يجب أن يكون أكبر من صفر"
-        return _add_deposit(amount)
-
-    # ── سحب / withdraw ──
-    wd_match = re.match(r"(?:سحب|withdraw)\s+([\d.]+)", text, re.IGNORECASE)
-    if wd_match:
-        amount = float(wd_match.group(1))
-        if amount <= 0:
-            return "❌ المبلغ يجب أن يكون أكبر من صفر"
-        return _add_withdrawal(amount)
-
     # ── مراجعة / review ──
     if text in ("مراجعة", "review", "/review"):
         run_ai_analysis()
@@ -1340,7 +1411,30 @@ def _handle_command(text: str) -> str | None:
                 lines.append(f"\n<b>━━ KuCoin ━━</b>")
                 lines.append("⚪ لا توجد عملات أو خطأ في الاتصال")
 
-        lines.append(f"\n<b>الإجمالي: ${grand_total:,.2f}</b>")
+        lines.append(f"\n<b>القيمة الحالية: ${grand_total:,.2f}</b>")
+
+        # إيداعات وسحوبات
+        dw = _fetch_all_deposits_withdrawals()
+        total_dep = dw["total_deposited"]
+        total_wd = dw["total_withdrawn"]
+        if total_dep > 0 or total_wd > 0:
+            net = total_dep - total_wd
+            pnl = grand_total + total_wd - total_dep
+            pnl_pct = (pnl / total_dep * 100) if total_dep > 0 else 0
+            icon = "🟢" if pnl >= 0 else "🔴"
+            lines.append(
+                f"\n<b>━━ ملخص رأس المال (6 أشهر) ━━</b>\n"
+                f"إجمالي الإيداع: ${total_dep:,.2f}"
+            )
+            for ex, info in dw["exchanges"].items():
+                if info["deposited"] > 0 or info["withdrawn"] > 0:
+                    lines.append(f"  {ex}: إيداع ${info['deposited']:,.2f} | سحب ${info['withdrawn']:,.2f}")
+            lines.append(
+                f"إجمالي السحب: ${total_wd:,.2f}\n"
+                f"صافي الاستثمار: ${net:,.2f}\n"
+                f"{icon} <b>الربح/الخسارة: {pnl_pct:+.2f}% (${pnl:+,.2f})</b>"
+            )
+
         return "\n".join(lines)
 
     # ── عملات / coins / holdings ──
@@ -1463,9 +1557,10 @@ def _handle_command(text: str) -> str | None:
             lines.append(f"\n<b>إجمالي Bybit: {total_pnl_pct:+.2f}% (${total_pnl_usd:+,.2f})</b>")
 
         # ── الربح الإجمالي من رأس المال ──
-        deposited, withdrawn, net_invested = _get_net_invested()
-        if net_invested > 0:
-            # حساب القيمة الحالية لكل المنصات
+        dw = _fetch_all_deposits_withdrawals()
+        deposited = dw["total_deposited"]
+        withdrawn = dw["total_withdrawn"]
+        if deposited > 0:
             portfolio_value = 0.0
             if BYBIT_KEY:
                 portfolio_value += _fetch_usdt_balance()
@@ -1481,14 +1576,15 @@ def _handle_command(text: str) -> str | None:
                 for b in _fetch_kucoin_balances():
                     portfolio_value += b["value"]
 
+            net = deposited - withdrawn
             overall_pnl = portfolio_value + withdrawn - deposited
             overall_pct = (overall_pnl / deposited) * 100
             icon = "🟢" if overall_pnl >= 0 else "🔴"
             lines.append(
-                f"\n{icon} <b>━━ الربح الإجمالي ━━</b>\n"
+                f"\n{icon} <b>━━ الربح الإجمالي (6 أشهر) ━━</b>\n"
                 f"إجمالي الإيداع: ${deposited:,.2f}\n"
                 f"إجمالي السحب: ${withdrawn:,.2f}\n"
-                f"صافي الاستثمار: ${net_invested:,.2f}\n"
+                f"صافي الاستثمار: ${net:,.2f}\n"
                 f"القيمة الحالية: ${portfolio_value:,.2f}\n"
                 f"<b>الربح/الخسارة: {overall_pct:+.2f}% (${overall_pnl:+,.2f})</b>"
             )
@@ -1504,11 +1600,8 @@ def _handle_command(text: str) -> str | None:
             "<code>بيع ENJ</code> — بيع 100%\n\n"
             "<b>محفظة:</b>\n"
             "<code>أرباح</code> — ربح/خسارة كل عملة + إجمالي\n"
-            "<code>رصيد</code> — رصيد كل المنصات\n"
+            "<code>رصيد</code> — رصيد + إيداعات/سحوبات كل المنصات\n"
             "<code>عملات</code> — العملات المحتفظ بها\n\n"
-            "<b>رأس المال:</b>\n"
-            "<code>إيداع 35000</code> — تسجيل إيداع\n"
-            "<code>سحب 2000</code> — تسجيل سحب\n\n"
             "<b>أخرى:</b>\n"
             "<code>مراجعة</code> — مراجعة AI للعملات\n"
             "<code>حالة</code> — تقرير صحة البوتات\n"
