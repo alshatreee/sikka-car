@@ -1427,19 +1427,23 @@ def _scan_profitable_coins() -> str:
         qty = p["qty"]
         if not entry or not qty:
             continue
+        bal = _fetch_coin_balance(p["symbol"])
+        if not bal or bal * (entry or 1) < 1.0:
+            continue
         price = _fetch_price(p["pair"])
         if not price:
             continue
+        value = price * bal
+        if value < 1.0:
+            continue
         pnl_pct = ((price - entry) / entry) * 100
-        cost = entry * qty
-        value = price * qty
+        cost = entry * bal
         pnl_usd = value - cost
-        # profit sell %: portion of holdings that is pure profit
-        # sell this % to keep original investment in coins
         profit_sell_pct = max(0, ((price - entry) / price) * 100)
         p.update({
             "price": price, "pnl_pct": pnl_pct, "pnl_usd": pnl_usd,
             "value": value, "cost": cost, "profit_sell_pct": profit_sell_pct,
+            "qty": bal,
         })
         if pnl_pct > 0:
             profitable.append(p)
@@ -1705,6 +1709,8 @@ def _handle_command(text: str) -> str | None:
                 bal = _fetch_coin_balance(sym)
                 price = _fetch_price(f"{sym}USDT")
                 val = bal * price if (bal and price) else 0
+                if val < 1.0:
+                    continue
                 bybit_total += val
                 lines.append(f"{sym}: {_qty_str(bal)} ≈ ${val:,.2f}  ({', '.join(bots)})")
             lines.append(f"<b>Bybit: ${bybit_total:,.2f}</b>")
@@ -1798,14 +1804,18 @@ def _handle_command(text: str) -> str | None:
                 qty = p["qty"]
                 pair = p["pair"]
                 if not entry or not qty:
-                    lines.append(f"  ⚪ {p['symbol']} ({p['bot']}) — بيانات ناقصة")
+                    continue
+                bal = _fetch_coin_balance(p["symbol"])
+                if not bal or bal * (entry or 1) < 1.0:
                     continue
                 price = _fetch_price(pair)
                 if not price:
                     lines.append(f"  ⚪ {p['symbol']} ({p['bot']}) — سعر غير متوفر")
                     continue
-                cost = entry * qty
-                value = price * qty
+                value = price * bal
+                if value < 1.0:
+                    continue
+                cost = entry * bal
                 pnl_pct = ((price - entry) / entry) * 100
                 pnl_usd = value - cost
                 total_cost += cost
