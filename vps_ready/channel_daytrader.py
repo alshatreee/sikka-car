@@ -675,8 +675,8 @@ def verify_technical(symbol: str) -> tuple[bool, str]:
             return False, f"RSI {rsi:.0f} — falling knife, wait for bounce"
     # Coin must be in 1h uptrend — same rule as daytrading_bot
     trend = _coin_trend_up(symbol)
-    if trend is False:
-        return False, "1h downtrend"
+    if trend is not True:
+        return False, "1h downtrend or no data"
     rsi_txt = f"RSI {rsi:.0f}" if rsi is not None else "no RSI"
     return True, f"{rsi_txt}, trend ok"
 

@@ -613,7 +613,7 @@ def analyze_symbol(symbol: str) -> Signal | None:
     if intel_reasons:
         reason_parts.extend(intel_reasons)
 
-    if score < 58:
+    if score < 50:
         return None
 
     return Signal(
@@ -873,6 +873,7 @@ def roll_day(st: DayState):
         st.daily_pnl = 0.0
         st.daily_wins = 0
         st.daily_losses = 0
+        st.streak = {}  # fresh day, clear streak penalties
 
 
 # ══════════════════════════════════════════════════════════════
