@@ -1943,9 +1943,16 @@ def _handle_command(text: str) -> str | None:
 
         # ── Bybit ──
         if BYBIT_KEY:
+            # Always render the section so the platform is visible even with no
+            # open coin positions (e.g. bots holding only USDT cash).
+            lines.append("<b>━━ Bybit ━━</b>")
+            bybit_usdt = _fetch_usdt_balance()
+            if bybit_usdt >= 1:
+                lines.append(f"  💵 USDT متاح: ${bybit_usdt:,.2f}")
             bybit_holdings = _get_bybit_holdings_with_entry()
-            if bybit_holdings:
-                lines.append("<b>━━ Bybit ━━</b>")
+            if not bybit_holdings:
+                lines.append("  📭 لا توجد مراكز عملات مفتوحة")
+            else:
                 bybit_cost = 0.0
                 bybit_value = 0.0
                 for h in sorted(bybit_holdings, key=lambda x: x["symbol"]):
