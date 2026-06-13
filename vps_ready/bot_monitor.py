@@ -1173,7 +1173,71 @@ def _get_kucoin_holdings_with_entry() -> list[dict]:
     return holdings
 
 
-def _load_capital() -> dict:
+def _get_bybit_holdings_with_entry() -> list[dict]:
+    """Bybit holdings with entry prices from bot states + portfolio_state.json."""
+    if not BYBIT_KEY:
+        return []
+
+    # Collect entry prices from bot state files first (most accurate)
+    entry_prices: dict[str, tuple[float, str]] = {}
+    positions = get_all_positions()
+    for p in positions:
+        sym = p["symbol"]
+        entry = p.get("entry", 0)
+        if entry and entry > 0:
+            entry_prices[sym] = (entry, p.get("bot", ""))
+
+    # Fallback: portfolio_state.json @Bybit entries
+    if PORTFOLIO_STATE.exists():
+        try:
+            pstate = json.loads(PORTFOLIO_STATE.read_text())
+            for key, entry in pstate.get("entry_prices", {}).items():
+                if "@Bybit" in key:
+                    sym = key.split("@")[0]
+                    if sym not in entry_prices:
+                        entry_prices[sym] = (entry, "")
+        except Exception:
+            pass
+
+    # Scan actual Bybit wallet
+    coins: dict[str, float] = {}
+    data = _bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
+    if data and data.get("retCode") == 0:
+        for c in data.get("result", {}).get("list", [{}])[0].get("coin", []):
+            sym = c.get("coin", "")
+            if sym in ("USDT", "USD", "USDC") or not sym:
+                continue
+            bal = _safe_float(c.get("walletBalance"))
+            if bal > 0:
+                coins[sym] = coins.get(sym, 0) + bal
+    fund = _bybit_signed_get("/v5/asset/transfer/query-asset-info", "coin=")
+    if fund and fund.get("retCode") == 0:
+        for item in fund.get("result", {}).get("list", []):
+            sym = item.get("coin", "")
+            if sym in ("USDT", "USD", "USDC") or not sym:
+                continue
+            bal = _safe_float(item.get("availableToWithdraw"))
+            if bal > 0:
+                coins[sym] = coins.get(sym, 0) + bal
+
+    holdings = []
+    for sym, amount in coins.items():
+        price = _fetch_price(f"{sym}USDT")
+        if not price:
+            continue
+        value = amount * price
+        if value < 1.0:
+            continue
+        entry, bot = entry_prices.get(sym, (0, ""))
+        holdings.append({
+            "symbol": sym,
+            "amount": amount,
+            "price": price,
+            "value": value,
+            "entry": entry,
+            "bot": bot,
+        })
+    return holdings
     if CAPITAL_CONFIG.exists():
         try:
             return json.loads(CAPITAL_CONFIG.read_text())
@@ -1873,45 +1937,47 @@ def _handle_command(text: str) -> str | None:
 
     # ── أرباح / pnl ──
     if text in ("أرباح", "ارباح", "pnl", "/pnl", "ربح"):
-        positions = get_all_positions()
-        if not positions and not GATE_KEY:
-            return "📭 لا توجد مراكز مفتوحة"
         lines = ["<b>📈 أرباح/خسائر المراكز المفتوحة</b>\n"]
         total_cost = 0.0
         total_value = 0.0
 
-        # ── Bybit bots ──
-        if positions:
-            lines.append("<b>━━ Bybit ━━</b>")
-            for p in sorted(positions, key=lambda x: x["symbol"]):
-                entry = p["entry"]
-                qty = p["qty"]
-                pair = p["pair"]
-                if not entry or not qty:
-                    continue
-                if entry <= 0:
-                    continue
-                bal = _fetch_coin_balance(p["symbol"])
-                if not bal or bal * entry < 1.0:
-                    continue
-                price = _fetch_price(pair)
-                if not price:
-                    lines.append(f"  ⚪ {p['symbol']} ({p['bot']}) — سعر غير متوفر")
-                    continue
-                value = price * bal
-                if value < 1.0:
-                    continue
-                cost = entry * bal
-                pnl_pct = ((price - entry) / entry) * 100
-                pnl_usd = value - cost
-                total_cost += cost
-                total_value += value
-                icon = "🟢" if pnl_pct >= 0 else "🔴"
-                lines.append(
-                    f"  {icon} <b>{p['symbol']}</b> ({p['bot']})\n"
-                    f"      دخول: ${entry:,.6f} → حالي: ${price:,.6f}\n"
-                    f"      الربح: {pnl_pct:+.2f}% (${pnl_usd:+,.2f})"
-                )
+        # ── Bybit ──
+        if BYBIT_KEY:
+            bybit_holdings = _get_bybit_holdings_with_entry()
+            if bybit_holdings:
+                lines.append("<b>━━ Bybit ━━</b>")
+                bybit_cost = 0.0
+                bybit_value = 0.0
+                for h in sorted(bybit_holdings, key=lambda x: x["symbol"]):
+                    sym = h["symbol"]
+                    entry = h["entry"]
+                    price = h["price"]
+                    amount = h["amount"]
+                    value = h["value"]
+                    bot = h.get("bot", "")
+                    bot_label = f" ({bot})" if bot else ""
+                    if entry and entry > 0:
+                        pnl_pct = ((price - entry) / entry) * 100
+                        pnl_usd = (price - entry) * amount
+                        icon = "🟢" if pnl_pct >= 0 else "🔴"
+                        bybit_cost += entry * amount
+                        bybit_value += value
+                        lines.append(
+                            f"  {icon} <b>{sym}</b>{bot_label}\n"
+                            f"      دخول: ${entry:,.6f} → حالي: ${price:,.6f}\n"
+                            f"      الربح: {pnl_pct:+.2f}% (${pnl_usd:+,.2f})"
+                        )
+                    else:
+                        lines.append(
+                            f"  ⚪ <b>{sym}</b>{bot_label}: ${price:,.6f} × {_qty_str(amount)} = ${value:,.2f}\n"
+                            f"      سعر الدخول غير متوفر"
+                        )
+                if bybit_cost > 0:
+                    b_pnl_pct = ((bybit_value - bybit_cost) / bybit_cost) * 100
+                    b_pnl_usd = bybit_value - bybit_cost
+                    total_cost += bybit_cost
+                    total_value += bybit_value
+                    lines.append(f"  <b>Bybit: {b_pnl_pct:+.2f}% (${b_pnl_usd:+,.2f})</b>")
 
         # ── Gate.io ──
         if GATE_KEY:
@@ -1980,11 +2046,6 @@ def _handle_command(text: str) -> str | None:
                     k_pnl_pct = ((kc_value - kc_cost) / kc_cost) * 100
                     k_pnl_usd = kc_value - kc_cost
                     lines.append(f"  <b>KuCoin: {k_pnl_pct:+.2f}% (${k_pnl_usd:+,.2f})</b>")
-
-        if total_cost > 0:
-            total_pnl_pct = ((total_value - total_cost) / total_cost) * 100
-            total_pnl_usd = total_value - total_cost
-            lines.append(f"\n<b>إجمالي Bybit: {total_pnl_pct:+.2f}% (${total_pnl_usd:+,.2f})</b>")
 
         # ── الربح الإجمالي من رأس المال ──
         dw = _fetch_all_deposits_withdrawals()
