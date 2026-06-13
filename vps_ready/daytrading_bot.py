@@ -20,7 +20,7 @@ Usage:
     python daytrading_bot.py --backtest   # test on historical data
 """
 from __future__ import annotations
-import argparse, json, hashlib, hmac, logging, os, sys, time, statistics
+import argparse, fcntl, json, hashlib, hmac, logging, os, sys, time, statistics
 import urllib.request
 from dataclasses import dataclass, field, asdict
 from decimal import Decimal
@@ -43,11 +43,12 @@ def load_env() -> dict:
     env = {}
     for f in [ENV_FILE, BASE_DIR / ".env_dca"]:
         if f.exists():
-            for line in open(f):
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    env[k.strip()] = v.strip()
+            with open(f, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        env[k.strip()] = v.strip()
             break
     return env
 
@@ -130,8 +131,8 @@ def notify(msg: str):
             f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
             data=data, headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Telegram notify error: %s", e)
 
 
 # ── HTTP ──
@@ -1045,6 +1046,8 @@ def check_exits(st: DayState):
                 success = True
         if success or PAPER_MODE:
             del st.positions[sym]
+            save_state(st)
+
             st.daily_pnl += pnl_usd
             st.total_pnl += pnl_usd
             st.total_trades += 1
@@ -1082,8 +1085,6 @@ def check_exits(st: DayState):
             if len(st.history) > 200:
                 st.history = st.history[-200:]
 
-            # Persist immediately after each close so a later error in the loop
-            # can't leave the on-disk state showing a position we already sold.
             save_state(st)
 
             # Learn from this trade
@@ -1108,8 +1109,13 @@ def open_position(st: DayState, signal: Signal):
         return
 
     balance = fetch_balance()
-    size = round(balance * TRADE_SIZE_PCT / 100, 2)
-    logger.info("💰 Balance: $%.2f | Size: $%.2f (%.0f%%)", balance, size, TRADE_SIZE_PCT)
+    reserved = sum(p.usdt_size for p in st.positions.values() if isinstance(p, Position))
+    if not reserved:
+        reserved = sum(p.get("usdt_size", 0) for p in st.positions.values() if isinstance(p, dict))
+    available = max(0, balance - reserved)
+    size = round(available * TRADE_SIZE_PCT / 100, 2)
+    logger.info("💰 Balance: $%.2f | Reserved: $%.2f | Available: $%.2f | Size: $%.2f (%.0f%%)",
+                balance, reserved, available, size, TRADE_SIZE_PCT)
     if size < MIN_TRADE_USDT:
         logger.info("Size $%.2f < min $%.0f — skip", size, MIN_TRADE_USDT)
         return
@@ -1492,6 +1498,14 @@ def main():
             print(f"  📊 Cross-bot intel loaded: {len(intel)} coins with data")
         print(f"{'═' * 55}\n")
         return
+
+    # Prevent duplicate instances
+    _lock_file = open(BASE_DIR / ".daytrading_bot.lock", "w")
+    try:
+        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        logger.error("❌ نسخة أخرى من daytrading_bot تعمل بالفعل — إيقاف")
+        sys.exit(1)
 
     # Main trading loop
     mode = "LIVE" if not PAPER_MODE else "PAPER"

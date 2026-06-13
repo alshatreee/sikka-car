@@ -16,7 +16,7 @@ bot_monitor.py — مراقب وتحليل بوت القناة الشهرية
     pip install python-dotenv requests
 """
 from __future__ import annotations
-import hashlib, hmac, json, os, re, subprocess, sys, time, threading
+import fcntl, hashlib, hmac, json, os, re, subprocess, sys, time, threading
 import secrets as _secrets
 import urllib.request as _urllib_req
 from dataclasses import dataclass, field, asdict
@@ -556,7 +556,8 @@ def _gemini_analyze(messages_text: str) -> dict | None:
                 detail = " | " + e.read().decode()[:300]
             except Exception:
                 pass
-        log(f"Gemini AI error: {e}{detail}")
+        err_msg = str(e).replace(GEMINI_KEY, "***") if GEMINI_KEY else str(e)
+        log(f"Gemini AI error: {err_msg}{detail}")
     return None
 
 
@@ -798,8 +799,8 @@ def check_held_vs_ai() -> list[str]:
         day_bots = [b for b in bots if b in _DAY_BOTS]
         monthly_only = not day_bots
 
-        conf = str(info.get("confidence", "")).lower()
-        high_conf = conf in ("high", "عالي", "عالية", "very high")
+        conf = str(info.get("confidence", "")).lower().strip()
+        high_conf = conf in ("high", "عالي", "عالية", "very high", "عاليه") or conf.startswith("very high") or conf.startswith("high")
 
         if monthly_only:
             alerts.append(
@@ -1905,8 +1906,10 @@ def _handle_command(text: str) -> str | None:
                 pair = p["pair"]
                 if not entry or not qty:
                     continue
+                if entry <= 0:
+                    continue
                 bal = _fetch_coin_balance(p["symbol"])
-                if not bal or bal * (entry or 1) < 1.0:
+                if not bal or bal * entry < 1.0:
                     continue
                 price = _fetch_price(pair)
                 if not price:
@@ -2144,6 +2147,13 @@ def main():
             log("لا مشاكل")
         return
 
+    _lock_file = open(BASE_DIR / ".bot_monitor.lock", "w")
+    try:
+        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        log("❌ نسخة أخرى من bot_monitor تعمل بالفعل — إيقاف")
+        sys.exit(1)
+
     log(f"بدء مراقبة {SERVICE_NAME} | فحص كل {CHECK_INTERVAL}s")
     state = load_state()
 
@@ -2175,7 +2185,7 @@ def main():
                 current_hashes = set(state.last_alert_hashes[-200:]) if state.last_alert_hashes else set()
                 new_hashes = list(state.last_alert_hashes[-200:]) if state.last_alert_hashes else []
                 for a in all_raw:
-                    h = hashlib.md5(a[:80].encode()).hexdigest()[:12]
+                    h = hashlib.sha256(a.encode()).hexdigest()[:16]
                     if h not in current_hashes:
                         new_alerts.append(a)
                     current_hashes.add(h)

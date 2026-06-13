@@ -19,7 +19,7 @@ Usage:
     python channel_daytrader.py --scan       # scan channels once
 """
 from __future__ import annotations
-import argparse, json, hashlib, hmac, logging, os, re, sys, time
+import argparse, fcntl, json, hashlib, hmac, logging, os, re, sys, time
 import urllib.request
 from dataclasses import dataclass, field, asdict
 from decimal import Decimal
@@ -49,11 +49,12 @@ RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
 def load_env() -> dict:
     env = {}
     if ENV_FILE.exists():
-        for line in open(ENV_FILE):
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
+        with open(ENV_FILE, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip()
     return env
 
 ENV = load_env()
@@ -513,6 +514,9 @@ def place_sell(symbol: str, qty: float) -> bool:
     # slightly above the real fill (fees taken from the base coin), which would
     # make the order fail and strand the position forever.
     free = fetch_coin_balance(symbol)
+    if free <= 0:
+        time.sleep(1)
+        free = fetch_coin_balance(symbol)
     sell_qty = min(qty, free) if free > 0 else qty * 0.998
     step = _get_lot_step(symbol)
     sell_qty = _round_qty(sell_qty, step)
@@ -594,6 +598,8 @@ def roll_day(st: CDTState):
 # SIGNAL SCORING & FILTERING
 # ══════════════════════════════════════════════════════════════
 
+_ai_cache = {"ts": 0.0, "data": None}
+
 def score_signal(st: CDTState, sig: ChannelSignal) -> float:
     score = 50.0
 
@@ -631,24 +637,27 @@ def score_signal(st: CDTState, sig: ChannelSignal) -> float:
     elif sig.tp_pct > 15:
         score -= 5
 
-    # AI analysis boost (from bot_monitor Cerebras)
-    # Normalize: AI file stores "ENJUSDT", channel signals store "ENJ"
-    ai_file = BASE_DIR / "ai_channel_analysis.json"
-    if ai_file.exists():
-        try:
-            sig_sym = sig.symbol.upper().replace("USDT", "")
-            ai = json.loads(ai_file.read_text())
-            for s in ai.get("buy", []):
-                if s.get("symbol", "").upper().replace("USDT", "") == sig_sym:
-                    conf = s.get("confidence", "low")
-                    score += {"high": 12, "medium": 8, "low": 4}.get(conf, 4)
-                    break
-            for s in ai.get("sell", []):
-                if s.get("symbol", "").upper().replace("USDT", "") == sig_sym:
-                    score -= 15
-                    break
-        except Exception:
-            pass
+    now = time.time()
+    if now - _ai_cache["ts"] > 120 or _ai_cache["data"] is None:
+        ai_file = BASE_DIR / "ai_channel_analysis.json"
+        if ai_file.exists():
+            try:
+                _ai_cache["data"] = json.loads(ai_file.read_text())
+                _ai_cache["ts"] = now
+            except Exception:
+                _ai_cache["data"] = None
+    ai = _ai_cache["data"]
+    if ai:
+        sig_sym = sig.symbol.upper().replace("USDT", "")
+        for s in ai.get("buy", []):
+            if s.get("symbol", "").upper().replace("USDT", "") == sig_sym:
+                conf = s.get("confidence", "low")
+                score += {"high": 12, "medium": 8, "low": 4}.get(conf, 4)
+                break
+        for s in ai.get("sell", []):
+            if s.get("symbol", "").upper().replace("USDT", "") == sig_sym:
+                score -= 15
+                break
 
     return score
 
@@ -732,6 +741,8 @@ def check_exits(st: CDTState):
                 success = True
         if success or PAPER_MODE:
             del st.positions[sym]
+            save_state(st)
+
             st.daily_pnl += pnl_usd
             st.total_pnl += pnl_usd
             st.total_trades += 1
@@ -744,7 +755,6 @@ def check_exits(st: CDTState):
                 st.losses += 1
                 st.daily_losses += 1
 
-            # Learn from trade
             ch = pos.get("channel", "")
             if ch not in st.channel_stats:
                 st.channel_stats[ch] = {"wins": 0, "losses": 0, "pnl": 0.0}
@@ -770,7 +780,7 @@ def check_exits(st: CDTState):
             if len(st.history) > 200:
                 st.history = st.history[-200:]
 
-    save_state(st)
+            save_state(st)
 
 
 # Fail closed: default to "not an uptrend" so a BTC API failure blocks buys
@@ -848,7 +858,9 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
         return
 
     balance = fetch_balance()
-    size = round(balance * TRADE_SIZE_PCT / 100, 2)
+    reserved = sum(p.get("size", 0) for p in st.positions.values())
+    available = max(0, balance - reserved)
+    size = round(available * TRADE_SIZE_PCT / 100, 2)
     if size < MIN_TRADE_USDT:
         logger.info("💰 Size $%.2f < min $%.0f — skip %s", size, MIN_TRADE_USDT, sig.symbol)
         return
@@ -1008,6 +1020,14 @@ def main():
                       f"TP: +{sig.tp_pct:.1f}% | SL: -{sig.sl_pct:.1f}%")
         print(f"{'═' * 50}\n")
         return
+
+    # Prevent duplicate instances
+    _lock_file = open(BASE_DIR / ".channel_daytrader.lock", "w")
+    try:
+        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        logger.error("❌ نسخة أخرى من channel_daytrader تعمل بالفعل — إيقاف")
+        sys.exit(1)
 
     mode = "LIVE" if not PAPER_MODE else "PAPER"
     logger.info(f"🚀 Channel DayTrader Started [{mode}]\n"
