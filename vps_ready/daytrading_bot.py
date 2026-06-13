@@ -977,6 +977,32 @@ def get_memory_boost(st: DayState, symbol: str) -> tuple[float, list[str]]:
 # POSITION MANAGEMENT
 # ══════════════════════════════════════════════════════════════
 
+_ai_sell_cache = {"ts": 0.0, "syms": set()}
+
+def _ai_says_sell_strong(symbol: str) -> bool:
+    """True if bot_monitor's AI flagged this coin as a HIGH-confidence SELL.
+
+    Cached for 120s. Fail-safe: on missing/unreadable data, returns False so a
+    transient glitch never force-closes a position.
+    """
+    now = time.time()
+    if now - _ai_sell_cache["ts"] > 120:
+        syms = set()
+        if AI_ANALYSIS_FILE.exists():
+            try:
+                ai = json.loads(AI_ANALYSIS_FILE.read_text())
+                for s in ai.get("sell", []):
+                    conf = str(s.get("confidence", "")).lower().strip()
+                    if (conf.startswith("high") or conf.startswith("very high")
+                            or conf in ("عالي", "عالية", "عاليه")):
+                        syms.add(s.get("symbol", "").upper().replace("USDT", ""))
+            except Exception:
+                pass
+        _ai_sell_cache["syms"] = syms
+        _ai_sell_cache["ts"] = now
+    return symbol.upper().replace("USDT", "") in _ai_sell_cache["syms"]
+
+
 def check_exits(st: DayState):
     to_close = []
     now = datetime.now(timezone.utc)
@@ -1026,6 +1052,12 @@ def check_exits(st: DayState):
                     opened = opened.replace(tzinfo=timezone.utc)
                 if (now - opened).total_seconds() > MAX_HOLD_HOURS * 3600:
                     exit_reason = "EXPIRED"
+
+            # AI high-confidence sell — only when no price-based exit fired
+            # (TP/SL/TRAIL take precedence). Closing here keeps THIS bot's state
+            # consistent instead of bot_monitor selling behind its back.
+            if exit_reason is None and _ai_says_sell_strong(sym):
+                exit_reason = "AI_SELL"
 
             if exit_reason:
                 to_close.append((sym, pos, price, pnl_pct, pnl_usd, exit_reason))
@@ -1099,6 +1131,12 @@ def check_exits(st: DayState):
 
 def open_position(st: DayState, signal: Signal):
     if signal.symbol in st.positions:
+        return
+
+    # Don't buy a coin AI strongly flags as a sell — it would be force-closed by
+    # AI_SELL next cycle, wasting a buy+sell fee round-trip.
+    if _ai_says_sell_strong(signal.symbol):
+        logger.info("⛔ %s — AI يوصي بالبيع بثقة عالية، تخطّي الشراء", signal.symbol)
         return
 
     if len(st.positions) >= MAX_POSITIONS:

@@ -177,9 +177,6 @@ class MonitorState:
     last_summary_day: str = ""
     last_alert_hashes: list[str] = field(default_factory=list)
     error_counts: dict[str, int] = field(default_factory=dict)
-    # Keys ("SYM:ts") of AI sell recommendations already auto-executed, so a
-    # single recommendation is never sold more than once across cycles.
-    auto_sold_keys: list[str] = field(default_factory=list)
 
 
 def load_state() -> MonitorState:
@@ -762,13 +759,12 @@ def get_all_positions() -> list[dict]:
 _DAY_BOTS = {"daytrading", "channel_dt"}
 
 
-def check_held_vs_ai(state=None) -> list[str]:
+def check_held_vs_ai() -> list[str]:
     """Cross-check every held coin against AI sell recommendations.
 
-    For day-trading bots: auto-execute the sell ONCE per distinct AI
-    recommendation (keyed by symbol + recommendation timestamp), so the same
-    standing recommendation can't drain a position 50% every cycle.
-    For monthly bot: alert only (user decides).
+    Day-trading bots consume AI sells themselves and close their own positions,
+    so bot_monitor only ALERTS — and only for coins held outside those bots
+    (monthly / manual holdings). It never auto-executes.
     """
     if not AI_ANALYSIS_FILE.exists():
         return []
@@ -805,56 +801,25 @@ def check_held_vs_ai(state=None) -> list[str]:
         pct = info["sell_pct"]
         pct_label = f"بيع {pct}%" if pct < 100 else "بيع كامل"
         day_bots = [b for b in bots if b in _DAY_BOTS]
-        monthly_only = not day_bots
 
-        conf = str(info.get("confidence", "")).lower().strip()
-        high_conf = conf in ("high", "عالي", "عالية", "very high", "عاليه") or conf.startswith("very high") or conf.startswith("high")
+        if day_bots:
+            # Day-trading bots consume the AI sell signal themselves and close
+            # their OWN positions (so their state stays consistent). bot_monitor
+            # must NOT execute here — selling out from under a bot would desync
+            # its position records. Stay silent; the bot sends its own CLOSE.
+            log(f"AI يوصي ببيع {sym} — متروك لبوت التداول ({', '.join(day_bots)})")
+            continue
 
-        if monthly_only:
-            alerts.append(
-                f"🔴 <b>توصية بيع: {sym}USDT ({pct_label})</b>\n"
-                f"البوتات المحتفظة: {bots_str}\n"
-                f"الثقة: {info['confidence']}\n"
-                f"السبب: {info['reason']}"
-            )
-            log(f"⚠️ AI يوصي ببيع {sym} — monthly فقط — تنبيه بدون تنفيذ")
-        elif not high_conf:
-            alerts.append(
-                f"🟡 <b>توصية بيع (ثقة منخفضة): {sym}USDT</b>\n"
-                f"البوتات: {bots_str}\n"
-                f"الثقة: {info['confidence']}\n"
-                f"السبب: {info['reason']}\n"
-                f"💡 لم يُنفَّذ تلقائياً — أرسل <code>بيع {sym}</code> إذا أردت"
-            )
-            log(f"⚠️ AI يوصي ببيع {sym} — ثقة {conf} — تنبيه بدون تنفيذ")
-        elif not (BYBIT_KEY and BYBIT_SECRET):
-            alerts.append(
-                f"🔴 <b>توصية بيع: {sym}USDT ({pct_label})</b>\n"
-                f"البوتات: {bots_str}\n"
-                f"السبب: {info['reason']}\n"
-                f"❌ مفاتيح Bybit غير متوفرة — لم يُنفَّذ"
-            )
-        else:
-            # Execute at most once per distinct recommendation. Record the key
-            # BEFORE placing the order: if we crash mid-order, we'd rather skip a
-            # sell than risk re-selling (double-sell) on restart.
-            sell_key = f"{sym}:{info.get('ts','')}"
-            already = state is not None and sell_key in state.auto_sold_keys
-            if already:
-                log(f"⏭️ AI auto-sell {sym} — نُفِّذ مسبقاً لهذه التوصية ({info.get('ts','')}) — تخطٍّ")
-                continue
-            sell_pct = min(pct, 50)
-            log(f"🤖 AI auto-sell: {sym} {sell_pct}% (capped) — بوتات: {bots_str}")
-            if state is not None:
-                state.auto_sold_keys = (state.auto_sold_keys + [sell_key])[-300:]
-                save_state(state)
-            result = _execute_sell(sym, sell_pct)
-            alerts.append(
-                f"🤖 <b>بيع تلقائي AI: {sym}USDT ({sell_pct}%)</b>\n"
-                f"البوتات: {bots_str}\n"
-                f"السبب: {info['reason']}\n"
-                f"النتيجة: {result}"
-            )
+        # Held only outside the day-trading bots (monthly / manual) → alert,
+        # user decides. AI never auto-executes on these.
+        alerts.append(
+            f"🔴 <b>توصية بيع: {sym}USDT ({pct_label})</b>\n"
+            f"البوتات المحتفظة: {bots_str}\n"
+            f"الثقة: {info['confidence']}\n"
+            f"السبب: {info['reason']}\n"
+            f"💡 أرسل <code>بيع {sym}</code> للتنفيذ اليدوي"
+        )
+        log(f"⚠️ AI يوصي ببيع {sym} — تنبيه بدون تنفيذ (محفظة غير مُدارة)")
 
     return alerts
 
@@ -2143,7 +2108,7 @@ def main():
 
     if "--review" in sys.argv:
         run_ai_analysis()
-        alerts = check_held_vs_ai(load_state())
+        alerts = check_held_vs_ai()
         if alerts:
             msg = "🔎 <b>مراجعة العملات المحتفظ بها</b>\n\n" + "\n\n".join(alerts)
             log(msg.replace("<b>", "").replace("</b>", ""))
@@ -2190,7 +2155,7 @@ def main():
         time.sleep(CHECK_INTERVAL)
         try:
             run_ai_analysis()
-            held_alerts = check_held_vs_ai(state)
+            held_alerts = check_held_vs_ai()
             alerts = run_checks(state)
             all_raw = []
             if held_alerts:

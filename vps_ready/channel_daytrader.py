@@ -722,6 +722,11 @@ def check_exits(st: CDTState):
                 if (now - opened).total_seconds() > MAX_HOLD_HOURS * 3600:
                     exit_reason = "EXPIRED"
 
+            # AI high-confidence sell — only when no price-based exit fired.
+            # This bot closes its own position so its state stays consistent.
+            if exit_reason is None and _ai_says_sell_strong(sym):
+                exit_reason = "AI_SELL"
+
             if exit_reason:
                 to_close.append((sym, pos, price, pnl_pct, pnl_usd, exit_reason))
         except Exception as e:
@@ -817,6 +822,34 @@ def _ai_says_sell(symbol: str) -> bool:
                 return True
     except Exception:
         pass
+    return False
+
+
+def _ai_says_sell_strong(symbol: str) -> bool:
+    """True if AI flagged this coin as a HIGH-confidence SELL — triggers an exit.
+
+    Reuses the 120s _ai_cache. Fail-safe: missing data → False (never force-close
+    on a transient glitch).
+    """
+    now = time.time()
+    if now - _ai_cache["ts"] > 120 or _ai_cache["data"] is None:
+        ai_file = BASE_DIR / "ai_channel_analysis.json"
+        if ai_file.exists():
+            try:
+                _ai_cache["data"] = json.loads(ai_file.read_text())
+                _ai_cache["ts"] = now
+            except Exception:
+                _ai_cache["data"] = None
+    ai = _ai_cache["data"]
+    if not ai:
+        return False
+    sig_sym = symbol.upper().replace("USDT", "")
+    for s in ai.get("sell", []):
+        if s.get("symbol", "").upper().replace("USDT", "") == sig_sym:
+            conf = str(s.get("confidence", "")).lower().strip()
+            if (conf.startswith("high") or conf.startswith("very high")
+                    or conf in ("عالي", "عالية", "عاليه")):
+                return True
     return False
 
 
