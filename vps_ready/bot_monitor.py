@@ -1238,6 +1238,9 @@ def _get_bybit_holdings_with_entry() -> list[dict]:
             "bot": bot,
         })
     return holdings
+
+
+def _load_capital() -> dict:
     if CAPITAL_CONFIG.exists():
         try:
             return json.loads(CAPITAL_CONFIG.read_text())
