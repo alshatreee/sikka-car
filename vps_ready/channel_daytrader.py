@@ -857,10 +857,11 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
     if price is None:
         return
 
+    # fetch_balance() returns FREE USDT (already excludes USDT spent on open
+    # positions), so 15% of it is self-limiting. Subtracting open sizes would
+    # double-count. MAX_POSITIONS caps total exposure.
     balance = fetch_balance()
-    reserved = sum(p.get("size", 0) for p in st.positions.values())
-    available = max(0, balance - reserved)
-    size = round(available * TRADE_SIZE_PCT / 100, 2)
+    size = round(balance * TRADE_SIZE_PCT / 100, 2)
     if size < MIN_TRADE_USDT:
         logger.info("💰 Size $%.2f < min $%.0f — skip %s", size, MIN_TRADE_USDT, sig.symbol)
         return

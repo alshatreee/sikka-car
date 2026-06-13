@@ -1108,14 +1108,13 @@ def open_position(st: DayState, signal: Signal):
         logger.info("Daily loss limit reached: $%.2f", st.daily_pnl)
         return
 
+    # fetch_balance() returns FREE USDT (already excludes money spent on open
+    # positions — those USDT are now held as coins), so 15% of it is naturally
+    # self-limiting. MAX_POSITIONS caps total exposure. Do NOT subtract open
+    # position sizes here — that would double-count and shrink sizes wrongly.
     balance = fetch_balance()
-    reserved = sum(p.usdt_size for p in st.positions.values() if isinstance(p, Position))
-    if not reserved:
-        reserved = sum(p.get("usdt_size", 0) for p in st.positions.values() if isinstance(p, dict))
-    available = max(0, balance - reserved)
-    size = round(available * TRADE_SIZE_PCT / 100, 2)
-    logger.info("💰 Balance: $%.2f | Reserved: $%.2f | Available: $%.2f | Size: $%.2f (%.0f%%)",
-                balance, reserved, available, size, TRADE_SIZE_PCT)
+    size = round(balance * TRADE_SIZE_PCT / 100, 2)
+    logger.info("💰 Free USDT: $%.2f | Size: $%.2f (%.0f%%)", balance, size, TRADE_SIZE_PCT)
     if size < MIN_TRADE_USDT:
         logger.info("Size $%.2f < min $%.0f — skip", size, MIN_TRADE_USDT)
         return

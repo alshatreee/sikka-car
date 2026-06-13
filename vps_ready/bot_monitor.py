@@ -177,6 +177,9 @@ class MonitorState:
     last_summary_day: str = ""
     last_alert_hashes: list[str] = field(default_factory=list)
     error_counts: dict[str, int] = field(default_factory=dict)
+    # Keys ("SYM:ts") of AI sell recommendations already auto-executed, so a
+    # single recommendation is never sold more than once across cycles.
+    auto_sold_keys: list[str] = field(default_factory=list)
 
 
 def load_state() -> MonitorState:
@@ -625,9 +628,12 @@ def run_ai_analysis():
     # Expire sell signals older than 24h so a single stale AI SELL
     # doesn't permanently veto a coin in channel_daytrader.
     cutoff = time.time() - 86400
-    sell_signals = [s for s in sell_signals
-                    if time.mktime(time.strptime(s.get("ts", "2000-01-01T00:00:00"),
-                       "%Y-%m-%dT%H:%M:%S")) > cutoff]
+    def _ts_ok(s) -> bool:
+        try:
+            return time.mktime(time.strptime(s.get("ts", ""), "%Y-%m-%dT%H:%M:%S")) > cutoff
+        except (ValueError, TypeError):
+            return False  # malformed ts → treat as expired, never crash analysis
+    sell_signals = [s for s in sell_signals if _ts_ok(s)]
 
     for sig in result.get("watch", []):
         sym = sig.get("symbol", "").upper()
@@ -756,10 +762,12 @@ def get_all_positions() -> list[dict]:
 _DAY_BOTS = {"daytrading", "channel_dt"}
 
 
-def check_held_vs_ai() -> list[str]:
+def check_held_vs_ai(state=None) -> list[str]:
     """Cross-check every held coin against AI sell recommendations.
 
-    For day-trading bots: auto-execute the sell.
+    For day-trading bots: auto-execute the sell ONCE per distinct AI
+    recommendation (keyed by symbol + recommendation timestamp), so the same
+    standing recommendation can't drain a position 50% every cycle.
     For monthly bot: alert only (user decides).
     """
     if not AI_ANALYSIS_FILE.exists():
@@ -819,24 +827,34 @@ def check_held_vs_ai() -> list[str]:
                 f"💡 لم يُنفَّذ تلقائياً — أرسل <code>بيع {sym}</code> إذا أردت"
             )
             log(f"⚠️ AI يوصي ببيع {sym} — ثقة {conf} — تنبيه بدون تنفيذ")
+        elif not (BYBIT_KEY and BYBIT_SECRET):
+            alerts.append(
+                f"🔴 <b>توصية بيع: {sym}USDT ({pct_label})</b>\n"
+                f"البوتات: {bots_str}\n"
+                f"السبب: {info['reason']}\n"
+                f"❌ مفاتيح Bybit غير متوفرة — لم يُنفَّذ"
+            )
         else:
+            # Execute at most once per distinct recommendation. Record the key
+            # BEFORE placing the order: if we crash mid-order, we'd rather skip a
+            # sell than risk re-selling (double-sell) on restart.
+            sell_key = f"{sym}:{info.get('ts','')}"
+            already = state is not None and sell_key in state.auto_sold_keys
+            if already:
+                log(f"⏭️ AI auto-sell {sym} — نُفِّذ مسبقاً لهذه التوصية ({info.get('ts','')}) — تخطٍّ")
+                continue
             sell_pct = min(pct, 50)
             log(f"🤖 AI auto-sell: {sym} {sell_pct}% (capped) — بوتات: {bots_str}")
-            if BYBIT_KEY and BYBIT_SECRET:
-                result = _execute_sell(sym, sell_pct)
-                alerts.append(
-                    f"🤖 <b>بيع تلقائي AI: {sym}USDT ({sell_pct}%)</b>\n"
-                    f"البوتات: {bots_str}\n"
-                    f"السبب: {info['reason']}\n"
-                    f"النتيجة: {result}"
-                )
-            else:
-                alerts.append(
-                    f"🔴 <b>توصية بيع: {sym}USDT ({pct_label})</b>\n"
-                    f"البوتات: {bots_str}\n"
-                    f"السبب: {info['reason']}\n"
-                    f"❌ مفاتيح Bybit غير متوفرة — لم يُنفَّذ"
-                )
+            if state is not None:
+                state.auto_sold_keys = (state.auto_sold_keys + [sell_key])[-300:]
+                save_state(state)
+            result = _execute_sell(sym, sell_pct)
+            alerts.append(
+                f"🤖 <b>بيع تلقائي AI: {sym}USDT ({sell_pct}%)</b>\n"
+                f"البوتات: {bots_str}\n"
+                f"السبب: {info['reason']}\n"
+                f"النتيجة: {result}"
+            )
 
     return alerts
 
@@ -2125,7 +2143,7 @@ def main():
 
     if "--review" in sys.argv:
         run_ai_analysis()
-        alerts = check_held_vs_ai()
+        alerts = check_held_vs_ai(load_state())
         if alerts:
             msg = "🔎 <b>مراجعة العملات المحتفظ بها</b>\n\n" + "\n\n".join(alerts)
             log(msg.replace("<b>", "").replace("</b>", ""))
@@ -2172,7 +2190,7 @@ def main():
         time.sleep(CHECK_INTERVAL)
         try:
             run_ai_analysis()
-            held_alerts = check_held_vs_ai()
+            held_alerts = check_held_vs_ai(state)
             alerts = run_checks(state)
             all_raw = []
             if held_alerts:
