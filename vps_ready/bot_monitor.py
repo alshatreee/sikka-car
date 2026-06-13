@@ -1146,6 +1146,18 @@ def _fetch_kucoin_balances() -> list[dict]:
     return result
 
 
+def _fetch_kucoin_usdt() -> float:
+    """Fetch KuCoin USDT balance across trade + main accounts."""
+    total = 0.0
+    for acct_type in ("trade", "main"):
+        data = _kucoin_signed_get(f"/api/v1/accounts?type={acct_type}")
+        if data and data.get("code") == "200000":
+            for acc in data.get("data", []):
+                if acc.get("currency") == "USDT":
+                    total += _safe_float(acc.get("balance"))
+    return total
+
+
 def _get_kucoin_holdings_with_entry() -> list[dict]:
     """KuCoin holdings with entry prices from portfolio_state.json + live balances."""
     kc_bals = _fetch_kucoin_balances()
@@ -1882,13 +1894,7 @@ def _handle_command(text: str) -> str | None:
         # KuCoin
         if KUCOIN_KEY:
             kc_bals = _fetch_kucoin_balances()
-            kc_usdt = 0.0
-            for acct_type in ("trade", "main"):
-                kc_data = _kucoin_signed_get(f"/api/v1/accounts?type={acct_type}")
-                if kc_data and kc_data.get("code") == "200000":
-                    for acc in kc_data.get("data", []):
-                        if acc.get("currency") == "USDT":
-                            kc_usdt += _safe_float(acc.get("balance"))
+            kc_usdt = _fetch_kucoin_usdt()
             kc_total = kc_usdt + sum(b["value"] for b in kc_bals)
             lines.append(f"\n<b>━━ KuCoin ━━</b>")
             if kc_usdt >= 1:
@@ -2064,18 +2070,17 @@ def _handle_command(text: str) -> str | None:
         if deposited > 0:
             portfolio_value = 0.0
             if BYBIT_KEY:
-                portfolio_value += _fetch_usdt_balance()
-                for sym, _ in get_all_held_coins().items():
-                    bal = _fetch_coin_balance(sym)
-                    price = _fetch_price(f"{sym}USDT")
-                    if bal and price:
-                        portfolio_value += bal * price
+                portfolio_value += bybit_usdt
+                for h in bybit_holdings:
+                    portfolio_value += h["value"]
             if GATE_KEY:
-                for b in _fetch_gate_balances():
-                    portfolio_value += b["value"]
+                portfolio_value += _fetch_gate_usdt()
+                for h in gate_holdings:
+                    portfolio_value += h["value"]
             if KUCOIN_KEY:
-                for b in _fetch_kucoin_balances():
-                    portfolio_value += b["value"]
+                portfolio_value += _fetch_kucoin_usdt()
+                for h in kc_holdings:
+                    portfolio_value += h["value"]
 
             net = deposited - withdrawn
             overall_pnl = portfolio_value + withdrawn - deposited

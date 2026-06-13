@@ -364,6 +364,8 @@ def fetch_rsi(symbol: str) -> float | None:
 # ══════════════════════════════════════════════════════════════
 
 def bybit_signed_post(params: dict) -> dict | None:
+    params = dict(params)
+    params.setdefault("orderLinkId", f"cd{int(time.time()*1000)}{os.urandom(4).hex()}")
     ts = str(int(time.time() * 1000))
     recv = "5000"
     body = json.dumps(params)

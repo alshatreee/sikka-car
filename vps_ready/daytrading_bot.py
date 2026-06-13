@@ -312,11 +312,6 @@ def load_bot_intel() -> dict:
             for sym, data in ml.get("per_symbol", ml).items():
                 sym_upper = sym.upper().replace("/USDT", "").replace("USDT", "")
                 if isinstance(data, dict):
-                    def _safe_float(v, default=0.0):
-                        try:
-                            return float(v) if v != "" else default
-                        except (ValueError, TypeError):
-                            return default
                     intel[sym_upper] = {
                         "ml_profit": _safe_float(data.get("max_profit_pct", data.get("entry_saving_pct", 0))),
                         "ml_drawdown": abs(_safe_float(data.get("max_drawdown_pct", 0))),
@@ -654,6 +649,8 @@ def bybit_signed_get(path: str, params: str) -> dict | None:
 
 
 def bybit_signed_post(params: dict) -> dict | None:
+    params = dict(params)
+    params.setdefault("orderLinkId", f"dt{int(time.time()*1000)}{os.urandom(4).hex()}")
     ts = str(int(time.time() * 1000))
     recv = "5000"
     body = json.dumps(params)
