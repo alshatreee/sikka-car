@@ -926,38 +926,35 @@ def _fetch_price(symbol: str) -> float | None:
 def _fetch_coin_balance(coin: str) -> float:
     coin = coin.upper().replace("USDT", "")
     total = 0.0
-    for acct in ("UNIFIED", "FUND"):
-        data = _bybit_signed_get("/v5/account/wallet-balance", f"accountType={acct}")
-        if not data or data.get("retCode") != 0:
-            if acct == "FUND":
-                data = _bybit_signed_get("/v5/asset/transfer/query-asset-info", f"coin={coin}")
-                if data and data.get("retCode") == 0:
-                    for item in data.get("result", {}).get("list", []):
-                        if item.get("coin") == coin:
-                            total += _safe_float(item.get("availableToWithdraw", item.get("walletBalance")))
-            continue
-        coins_list = data.get("result", {}).get("list", [{}])[0].get("coin", [])
-        for c in coins_list:
+    # UNIFIED account (trading)
+    data = _bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
+    if data and data.get("retCode") == 0:
+        for c in data.get("result", {}).get("list", [{}])[0].get("coin", []):
             if c.get("coin") == coin:
-                val = _safe_float(c.get("availableToWithdraw")) or _safe_float(c.get("free"))
-                total += val
+                total += _safe_float(c.get("availableToWithdraw")) or _safe_float(c.get("free"))
+    # Funding account (deposits, earn, etc.)
+    fund = _bybit_signed_get("/v5/asset/transfer/query-asset-info", f"coin={coin}")
+    if fund and fund.get("retCode") == 0:
+        for item in fund.get("result", {}).get("list", []):
+            if item.get("coin") == coin:
+                total += _safe_float(item.get("availableToWithdraw"))
     return total
 
 
 def _fetch_usdt_balance() -> float:
     total = 0.0
-    for acct in ("UNIFIED", "FUND"):
-        data = _bybit_signed_get("/v5/account/wallet-balance", f"accountType={acct}")
-        if data and data.get("retCode") == 0:
-            for c in data.get("result", {}).get("list", [{}])[0].get("coin", []):
-                if c.get("coin") == "USDT":
-                    total += _safe_float(c.get("walletBalance")) or _safe_float(c.get("equity"))
-        elif acct == "FUND":
-            data = _bybit_signed_get("/v5/asset/transfer/query-asset-info", "coin=USDT")
-            if data and data.get("retCode") == 0:
-                for item in data.get("result", {}).get("list", []):
-                    if item.get("coin") == "USDT":
-                        total += _safe_float(item.get("walletBalance"))
+    # UNIFIED account
+    data = _bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
+    if data and data.get("retCode") == 0:
+        for c in data.get("result", {}).get("list", [{}])[0].get("coin", []):
+            if c.get("coin") == "USDT":
+                total += _safe_float(c.get("walletBalance")) or _safe_float(c.get("equity"))
+    # Funding account
+    fund = _bybit_signed_get("/v5/asset/transfer/query-asset-info", "coin=USDT")
+    if fund and fund.get("retCode") == 0:
+        for item in fund.get("result", {}).get("list", []):
+            if item.get("coin") == "USDT":
+                total += _safe_float(item.get("walletBalance"))
     return total
 
 
@@ -1750,14 +1747,42 @@ def _handle_command(text: str) -> str | None:
             bybit_total = usdt
             lines.append("<b>━━ Bybit ━━</b>")
             lines.append(f"💵 USDT: ${usdt:,.2f}")
-            for sym, bots in sorted(held.items()):
-                bal = _fetch_coin_balance(sym)
-                price = _fetch_price(f"{sym}USDT")
-                val = bal * price if (bal and price) else 0
-                if val < 1.0:
-                    continue
-                bybit_total += val
-                lines.append(f"{sym}: {_qty_str(bal)} ≈ ${val:,.2f}  ({', '.join(bots)})")
+            shown_syms = set()
+            # All coins from UNIFIED account
+            data = _bybit_signed_get("/v5/account/wallet-balance", "accountType=UNIFIED")
+            if data and data.get("retCode") == 0:
+                for c in data.get("result", {}).get("list", [{}])[0].get("coin", []):
+                    sym = c.get("coin", "")
+                    if sym in ("USDT", "USD", "USDC") or not sym:
+                        continue
+                    bal = _safe_float(c.get("walletBalance"))
+                    if bal <= 0:
+                        continue
+                    price = _fetch_price(f"{sym}USDT")
+                    val = bal * price if price else 0
+                    if val < 1.0:
+                        continue
+                    shown_syms.add(sym)
+                    bots = held.get(sym, [])
+                    bot_label = f"  ({', '.join(bots)})" if bots else ""
+                    bybit_total += val
+                    lines.append(f"{sym}: {_qty_str(bal)} ≈ ${val:,.2f}{bot_label}")
+            # Funding account coins not already shown
+            fund = _bybit_signed_get("/v5/asset/transfer/query-asset-info", "coin=")
+            if fund and fund.get("retCode") == 0:
+                for item in fund.get("result", {}).get("list", []):
+                    sym = item.get("coin", "")
+                    if sym in ("USDT", "USD", "USDC") or sym in shown_syms or not sym:
+                        continue
+                    bal = _safe_float(item.get("availableToWithdraw"))
+                    if bal <= 0:
+                        continue
+                    price = _fetch_price(f"{sym}USDT")
+                    val = bal * price if price else 0
+                    if val < 1.0:
+                        continue
+                    bybit_total += val
+                    lines.append(f"{sym}: {_qty_str(bal)} ≈ ${val:,.2f}  (funding)")
             lines.append(f"<b>Bybit: ${bybit_total:,.2f}</b>")
             grand_total += bybit_total
 
@@ -2108,18 +2133,18 @@ def main():
         time.sleep(CHECK_INTERVAL)
         try:
             run_ai_analysis()
-            # Cross-check held coins against AI sell recommendations
             held_alerts = check_held_vs_ai()
+            alerts = run_checks(state)
+            all_raw = []
             if held_alerts:
                 sell_only = [a for a in held_alerts if "توصية بيع" in a]
-                if sell_only:
-                    msg = "🔎 <b>تنبيه: AI يوصي ببيع عملات محتفظ بها</b>\n\n" + "\n\n".join(sell_only)
-                    notify(msg)
-            alerts = run_checks(state)
+                all_raw.extend(sell_only)
             if alerts:
+                all_raw.extend(alerts)
+            if all_raw:
                 new_alerts = []
                 new_hashes = []
-                for a in alerts:
+                for a in all_raw:
                     h = hashlib.md5(a[:80].encode()).hexdigest()[:12]
                     new_hashes.append(h)
                     if h not in state.last_alert_hashes:
@@ -2127,9 +2152,13 @@ def main():
                 state.last_alert_hashes = new_hashes
                 save_state(state)
                 if new_alerts:
-                    msg = "⚠️ <b>تنبيه مراقبة البوت</b>\n\n" + "\n\n".join(new_alerts)
+                    ai_alerts = [a for a in new_alerts if "توصية بيع" in a]
+                    sys_alerts = [a for a in new_alerts if "توصية بيع" not in a]
+                    if ai_alerts:
+                        notify("🔎 <b>تنبيه: AI يوصي ببيع عملات محتفظ بها</b>\n\n" + "\n\n".join(ai_alerts))
+                    if sys_alerts:
+                        notify("⚠️ <b>تنبيه مراقبة البوت</b>\n\n" + "\n\n".join(sys_alerts))
                     log(f"تنبيهات ({len(new_alerts)}): {[a[:40] for a in new_alerts]}")
-                    notify(msg)
             else:
                 if state.last_alert_hashes:
                     state.last_alert_hashes = []
