@@ -2130,9 +2130,10 @@ def main():
             log("لا مشاكل")
         return
 
-    _lock_file = open(BASE_DIR / ".bot_monitor.lock", "w")
+    global _lock_fh
+    _lock_fh = open(BASE_DIR / ".bot_monitor.lock", "w")
     try:
-        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         log("❌ نسخة أخرى من bot_monitor تعمل بالفعل — إيقاف")
         sys.exit(1)

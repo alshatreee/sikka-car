@@ -20,7 +20,7 @@ Usage:
     python daytrading_bot.py --backtest   # test on historical data
 """
 from __future__ import annotations
-import argparse, fcntl, json, hashlib, hmac, logging, os, sys, time, statistics
+import argparse, fcntl, json, hashlib, hmac, logging, os, signal, sys, time, statistics
 import urllib.request
 from dataclasses import dataclass, field, asdict
 from decimal import Decimal
@@ -1536,17 +1536,18 @@ def main():
         print(f"{'═' * 55}\n")
         return
 
-    # Prevent duplicate instances
-    _lock_file = open(BASE_DIR / ".daytrading_bot.lock", "w")
+    # Prevent duplicate instances — store handle on module so GC can't release the lock
+    global _lock_fh
+    _lock_fh = open(BASE_DIR / ".daytrading_bot.lock", "w")
     try:
-        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         logger.error("❌ نسخة أخرى من daytrading_bot تعمل بالفعل — إيقاف")
         sys.exit(1)
 
     # Main trading loop
     mode = "LIVE" if not PAPER_MODE else "PAPER"
-    logger.info(f"🚀 Day Trading Bot Started [{mode}]\n"
+    logger.info(f"🚀 Day Trading Bot Started [{mode}] PID={os.getpid()}\n"
            f"Strategy: RSI Bounce + EMA Trend\n"
            f"TP: {TAKE_PROFIT_PCT}% | SL: {STOP_LOSS_PCT}% | Trail: {TRAILING_PCT}%\n"
            f"Size: {TRADE_SIZE_PCT}% of balance (min ${MIN_TRADE_USDT}) | Max: {MAX_POSITIONS} positions\n"
@@ -1556,6 +1557,12 @@ def main():
     st.mode = mode
     save_state(st)
 
+    def _shutdown(signum, _frame):
+        logger.info("Signal %s received — saving state and exiting", signum)
+        save_state(st)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, _shutdown)
+
     while True:
         try:
             run_cycle(st)
@@ -1563,6 +1570,8 @@ def main():
             logger.info("Shutting down...")
             save_state(st)
             break
+        except SystemExit:
+            logger.error("Unexpected SystemExit inside run_cycle — ignoring")
         except Exception as e:
             import traceback
             logger.error("Cycle error: %s\n%s", e, traceback.format_exc())
@@ -1571,4 +1580,11 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException:
+        import traceback
+        logger.critical("FATAL: %s", traceback.format_exc())
+        raise

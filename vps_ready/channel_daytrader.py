@@ -19,7 +19,7 @@ Usage:
     python channel_daytrader.py --scan       # scan channels once
 """
 from __future__ import annotations
-import argparse, fcntl, json, hashlib, hmac, logging, os, re, sys, time
+import argparse, fcntl, json, hashlib, hmac, logging, os, re, signal, sys, time
 import urllib.request
 from dataclasses import dataclass, field, asdict
 from decimal import Decimal
@@ -1055,16 +1055,17 @@ def main():
         print(f"{'═' * 50}\n")
         return
 
-    # Prevent duplicate instances
-    _lock_file = open(BASE_DIR / ".channel_daytrader.lock", "w")
+    # Prevent duplicate instances — store handle on module so GC can't release the lock
+    global _lock_fh
+    _lock_fh = open(BASE_DIR / ".channel_daytrader.lock", "w")
     try:
-        fcntl.flock(_lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(_lock_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         logger.error("❌ نسخة أخرى من channel_daytrader تعمل بالفعل — إيقاف")
         sys.exit(1)
 
     mode = "LIVE" if not PAPER_MODE else "PAPER"
-    logger.info(f"🚀 Channel DayTrader Started [{mode}]\n"
+    logger.info(f"🚀 Channel DayTrader Started [{mode}] PID={os.getpid()}\n"
            f"Channels: {len(WATCH_CHANNELS)} | TP: {TAKE_PROFIT_PCT}% | SL: {STOP_LOSS_PCT}%\n"
            f"Size: {TRADE_SIZE_PCT}% of balance (min ${MIN_TRADE_USDT}) | Max: {MAX_POSITIONS} positions\n"
            f"Scan every {SCAN_INTERVAL_SEC // 60} min")
@@ -1073,16 +1074,32 @@ def main():
     st.mode = mode
     save_state(st)
 
+    def _shutdown(signum, _frame):
+        logger.info("Signal %s received — saving state and exiting", signum)
+        save_state(st)
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, _shutdown)
+
     while True:
         try:
             run_cycle(st)
         except KeyboardInterrupt:
             save_state(st)
             break
+        except SystemExit:
+            logger.error("Unexpected SystemExit inside run_cycle — ignoring")
         except Exception as e:
-            logger.error("Cycle error: %s", e)
+            import traceback
+            logger.error("Cycle error: %s\n%s", e, traceback.format_exc())
         time.sleep(SCAN_INTERVAL_SEC)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException:
+        import traceback
+        logger.critical("FATAL: %s", traceback.format_exc())
+        raise
