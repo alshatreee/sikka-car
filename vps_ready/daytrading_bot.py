@@ -1220,6 +1220,7 @@ def scan_markets(st: DayState) -> list[Signal]:
 
 
 _cycle_count = 0
+_shutdown_requested = False
 
 _btc_trend_cache = {"ts": 0.0, "up": True}
 
@@ -1558,6 +1559,8 @@ def main():
     save_state(st)
 
     def _shutdown(signum, _frame):
+        global _shutdown_requested
+        _shutdown_requested = True
         logger.info("Signal %s received — saving state and exiting", signum)
         save_state(st)
         sys.exit(0)
@@ -1571,6 +1574,10 @@ def main():
             save_state(st)
             break
         except SystemExit:
+            # Honor an intentional shutdown (SIGTERM); only swallow a stray
+            # SystemExit raised by library code mid-cycle.
+            if _shutdown_requested:
+                raise
             logger.error("Unexpected SystemExit inside run_cycle — ignoring")
         except Exception as e:
             import traceback
