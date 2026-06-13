@@ -752,10 +752,14 @@ def get_all_positions() -> list[dict]:
     return positions
 
 
+_DAY_BOTS = {"daytrading", "channel_dt"}
+
+
 def check_held_vs_ai() -> list[str]:
     """Cross-check every held coin against AI sell recommendations.
 
-    Returns a list of Telegram alert strings for coins the AI flags as SELL.
+    For day-trading bots: auto-execute the sell.
+    For monthly bot: alert only (user decides).
     """
     if not AI_ANALYSIS_FILE.exists():
         return []
@@ -785,28 +789,40 @@ def check_held_vs_ai() -> list[str]:
 
     alerts = []
     for sym, bots in held.items():
-        if sym in sell_syms:
-            info = sell_syms[sym]
-            bots_str = " + ".join(bots)
-            pct = info["sell_pct"]
-            pct_label = f"بيع {pct}%" if pct < 100 else "بيع كامل"
+        if sym not in sell_syms:
+            continue
+        info = sell_syms[sym]
+        bots_str = " + ".join(bots)
+        pct = info["sell_pct"]
+        pct_label = f"بيع {pct}%" if pct < 100 else "بيع كامل"
+        day_bots = [b for b in bots if b in _DAY_BOTS]
+        monthly_only = not day_bots
+
+        if monthly_only:
             alerts.append(
                 f"🔴 <b>توصية بيع: {sym}USDT ({pct_label})</b>\n"
                 f"البوتات المحتفظة: {bots_str}\n"
                 f"الثقة: {info['confidence']}\n"
-                f"السبب: {info['reason']}\n"
-                f"التحليل: {info['ts']}"
+                f"السبب: {info['reason']}"
             )
-            log(f"⚠️ AI يوصي ببيع {pct}% من {sym} — محتفظ في: {bots_str}")
-
-    # Also report coins NOT in AI at all (neither buy nor sell)
-    buy_syms = {_normalize_sym(s.get("symbol", "")) for s in ai.get("buy", [])}
-    for sym, bots in held.items():
-        if sym not in sell_syms and sym not in buy_syms:
-            alerts.append(
-                f"⚪ <b>{sym}USDT</b> — بدون تحليل AI\n"
-                f"البوتات: {' + '.join(bots)}"
-            )
+            log(f"⚠️ AI يوصي ببيع {sym} — monthly فقط — تنبيه بدون تنفيذ")
+        else:
+            log(f"🤖 AI auto-sell: {sym} {pct}% — بوتات: {bots_str}")
+            if BYBIT_KEY and BYBIT_SECRET:
+                result = _execute_sell(sym, pct)
+                alerts.append(
+                    f"🤖 <b>بيع تلقائي AI: {sym}USDT ({pct_label})</b>\n"
+                    f"البوتات: {bots_str}\n"
+                    f"السبب: {info['reason']}\n"
+                    f"النتيجة: {result}"
+                )
+            else:
+                alerts.append(
+                    f"🔴 <b>توصية بيع: {sym}USDT ({pct_label})</b>\n"
+                    f"البوتات: {bots_str}\n"
+                    f"السبب: {info['reason']}\n"
+                    f"❌ مفاتيح Bybit غير متوفرة — لم يُنفَّذ"
+                )
 
     return alerts
 
