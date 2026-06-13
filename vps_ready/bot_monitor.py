@@ -2108,17 +2108,47 @@ def _handle_command(text: str) -> str | None:
     return None
 
 
+def _split_for_telegram(text: str, limit: int = 3900) -> list[str]:
+    """Split a long message into <=limit chunks on line boundaries.
+
+    Telegram rejects messages over 4096 chars with a 400 error and sends
+    nothing — which silently breaks long reports like أرباح. Splitting on
+    newlines keeps each coin block intact.
+    """
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    current = ""
+    for line in text.split("\n"):
+        # A single line longer than the limit (rare) is hard-split.
+        while len(line) > limit:
+            if current:
+                chunks.append(current)
+                current = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if len(current) + len(line) + 1 > limit:
+            chunks.append(current)
+            current = line
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _tg_reply(chat_id: str, text: str):
-    """Send a reply to a specific chat."""
+    """Send a reply to a specific chat, splitting over-long messages."""
     if not NOTIFY_TOKEN:
         return
     try:
         import requests
-        requests.post(
-            f"https://api.telegram.org/bot{NOTIFY_TOKEN}/sendMessage",
-            json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
-            timeout=10,
-        )
+        for chunk in _split_for_telegram(text):
+            requests.post(
+                f"https://api.telegram.org/bot{NOTIFY_TOKEN}/sendMessage",
+                json={"chat_id": chat_id, "text": chunk, "parse_mode": "HTML"},
+                timeout=10,
+            )
     except Exception as e:
         log(f"TG reply error: {e}")
 
@@ -2151,9 +2181,14 @@ def _command_loop():
                 if chat_id != NOTIFY_CHAT:
                     continue
 
-                reply = _handle_command(text)
-                if reply:
-                    _tg_reply(chat_id, reply)
+                try:
+                    reply = _handle_command(text)
+                    if reply:
+                        _tg_reply(chat_id, reply)
+                except Exception as e:
+                    import traceback
+                    log(f"CMD handler error for '{text[:30]}': {e}\n{traceback.format_exc()}")
+                    _tg_reply(chat_id, f"❌ خطأ في تنفيذ الأمر: {e}")
         except Exception as e:
             log(f"CMD loop error: {e}")
             time.sleep(10)
