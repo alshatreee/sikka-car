@@ -1140,13 +1140,12 @@ def open_position(st: DayState, signal: Signal):
 
     st.positions[signal.symbol] = pos.to_dict()
     st.daily_trades += 1
+    save_state(st)
 
     notify(f"🔵 OPEN {signal.symbol}\n"
            f"Price: {price:.6f} | Size: ${size:.2f}\n"
            f"TP: {tp_price:.6f} (+{TAKE_PROFIT_PCT}%) | SL: {sl_price:.6f} (-{STOP_LOSS_PCT}%)\n"
            f"Score: {signal.score:.0f} | {signal.reason}")
-
-    save_state(st)
 
 
 # ══════════════════════════════════════════════════════════════

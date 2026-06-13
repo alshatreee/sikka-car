@@ -798,6 +798,9 @@ def check_held_vs_ai() -> list[str]:
         day_bots = [b for b in bots if b in _DAY_BOTS]
         monthly_only = not day_bots
 
+        conf = str(info.get("confidence", "")).lower()
+        high_conf = conf in ("high", "عالي", "عالية", "very high")
+
         if monthly_only:
             alerts.append(
                 f"🔴 <b>توصية بيع: {sym}USDT ({pct_label})</b>\n"
@@ -806,12 +809,22 @@ def check_held_vs_ai() -> list[str]:
                 f"السبب: {info['reason']}"
             )
             log(f"⚠️ AI يوصي ببيع {sym} — monthly فقط — تنبيه بدون تنفيذ")
+        elif not high_conf:
+            alerts.append(
+                f"🟡 <b>توصية بيع (ثقة منخفضة): {sym}USDT</b>\n"
+                f"البوتات: {bots_str}\n"
+                f"الثقة: {info['confidence']}\n"
+                f"السبب: {info['reason']}\n"
+                f"💡 لم يُنفَّذ تلقائياً — أرسل <code>بيع {sym}</code> إذا أردت"
+            )
+            log(f"⚠️ AI يوصي ببيع {sym} — ثقة {conf} — تنبيه بدون تنفيذ")
         else:
-            log(f"🤖 AI auto-sell: {sym} {pct}% — بوتات: {bots_str}")
+            sell_pct = min(pct, 50)
+            log(f"🤖 AI auto-sell: {sym} {sell_pct}% (capped) — بوتات: {bots_str}")
             if BYBIT_KEY and BYBIT_SECRET:
-                result = _execute_sell(sym, pct)
+                result = _execute_sell(sym, sell_pct)
                 alerts.append(
-                    f"🤖 <b>بيع تلقائي AI: {sym}USDT ({pct_label})</b>\n"
+                    f"🤖 <b>بيع تلقائي AI: {sym}USDT ({sell_pct}%)</b>\n"
                     f"البوتات: {bots_str}\n"
                     f"السبب: {info['reason']}\n"
                     f"النتيجة: {result}"
@@ -2159,12 +2172,17 @@ def main():
                 all_raw.extend(alerts)
             if all_raw:
                 new_alerts = []
-                new_hashes = []
+                current_hashes = set(state.last_alert_hashes[-200:]) if state.last_alert_hashes else set()
+                new_hashes = list(state.last_alert_hashes[-200:]) if state.last_alert_hashes else []
                 for a in all_raw:
                     h = hashlib.md5(a[:80].encode()).hexdigest()[:12]
-                    new_hashes.append(h)
-                    if h not in state.last_alert_hashes:
+                    if h not in current_hashes:
                         new_alerts.append(a)
+                    current_hashes.add(h)
+                    if h not in new_hashes:
+                        new_hashes.append(h)
+                if len(new_hashes) > 300:
+                    new_hashes = new_hashes[-200:]
                 state.last_alert_hashes = new_hashes
                 save_state(state)
                 if new_alerts:

@@ -878,13 +878,12 @@ def open_from_signal(st: CDTState, sig: ChannelSignal):
         "reason": f"signal from {sig.channel}",
     }
     st.daily_trades += 1
+    save_state(st)
 
     notify(f"🔵 CH-OPEN {sig.symbol}USDT\n"
            f"Channel: {sig.channel}\n"
            f"Price: {price:.6f} | Size: ${size:.2f}\n"
            f"TP: +{tp_pct:.1f}% | SL: -{sl_pct:.1f}%")
-
-    save_state(st)
 
 
 # ══════════════════════════════════════════════════════════════
