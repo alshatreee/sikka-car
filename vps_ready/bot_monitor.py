@@ -1544,7 +1544,19 @@ def _scan_profitable_coins() -> str:
     profitable.sort(key=lambda x: x["pnl_pct"], reverse=True)
     losing.sort(key=lambda x: x["pnl_pct"])
 
-    lines = ["<b>💰 فرص البيع — مرتبة بالربح</b>\n"]
+    lines = ["<b>💰 فرص — مرتبة بالربح</b>\n"]
+
+    # ── توصية رئيسية ──
+    if profitable and losing:
+        top = profitable[0]
+        worst = losing[0]
+        total_profit = sum(p["pnl_usd"] for p in profitable)
+        lines.append("<b>💡 التوصية:</b>")
+        lines.append(
+            f"  بيع ربح <b>{top['symbol']}</b> [{top['exchange']}] ({top['pnl_pct']:+.1f}% = ${top['pnl_usd']:+,.2f})"
+            f"\n  ← تعزيز <b>{worst['symbol']}</b> [{worst['exchange']}] ({worst['pnl_pct']:+.1f}%)"
+            f"\n  إجمالي أرباح قابلة للجني: <b>${total_profit:,.2f}</b>\n"
+        )
 
     if profitable:
         lines.append("<b>🟢 عملات مرتفعة:</b>")
@@ -1554,24 +1566,25 @@ def _scan_profitable_coins() -> str:
                 sell_pct = 1
             ex_label = f" [{p['exchange']}]"
             entry_line = (
-                f"\n  <b>{p['symbol']}</b>{ex_label} — <b>{p['pnl_pct']:+.1f}%</b>\n"
-                f"  دخول: ${p['entry']:,.4f} → حالي: ${p['price']:,.4f}\n"
-                f"  الربح: ${p['pnl_usd']:+,.2f}"
+                f"\n  <b>{p['symbol']}</b>{ex_label} — <b>{p['pnl_pct']:+.1f}%</b>"
+                f" (${p['pnl_usd']:+,.2f})"
             )
             if p["can_sell"]:
                 entry_line += (
-                    f"\n  ✂️ بيع الربح فقط: <code>بيع ربح {p['symbol']}</code> ({sell_pct}%)"
-                    f"\n  🔄 بيع نسبة: <code>بيع {p['symbol']} 50%</code>"
+                    f"\n  ✂️ <code>بيع ربح {p['symbol']}</code> ({sell_pct}%)"
+                    f" | 🔄 <code>بيع {p['symbol']} 50%</code>"
                 )
             lines.append(entry_line)
     else:
         lines.append("⚪ لا توجد عملات مرتفعة حالياً")
 
     if losing:
-        lines.append(f"\n<b>🔴 عملات منخفضة ({len(losing)}):</b>")
+        lines.append(f"\n<b>🔴 عملات منخفضة ({len(losing)}) — فرص تعزيز:</b>")
         for p in losing[:5]:
+            dip_pct = abs(p["pnl_pct"])
             lines.append(
                 f"  {p['symbol']} [{p['exchange']}]: {p['pnl_pct']:+.1f}% (${p['pnl_usd']:+,.2f})"
+                f" — تعزيز يخفض المتوسط ~{dip_pct/2:.0f}%"
             )
 
     return "\n".join(lines)
@@ -2066,18 +2079,15 @@ def _handle_command(text: str) -> str | None:
         return (
             "<b>📋 الأوامر المتاحة:</b>\n\n"
             "<b>تداول:</b>\n"
-            "<code>فرص</code> — عملات مرتفعة + اقتراح بيع الربح\n"
-            "<code>بيع ربح NEAR</code> — بيع الربح فقط (حفظ رأس المال)\n"
-            "<code>بيع ENJ 50%</code> — بيع 50% من ENJ\n"
-            "<code>بيع ENJ</code> — بيع 100%\n\n"
+            "<code>فرص</code> — توصيات بيع/تعزيز + كل المنصات\n"
+            "<code>بيع ربح NIL</code> — بيع الربح فقط (حفظ رأس المال)\n"
+            "<code>بيع UB 50%</code> — بيع 50% من عملة\n"
+            "<code>بيع UB</code> — بيع 100%\n\n"
             "<b>محفظة:</b>\n"
             "<code>أرباح</code> — ربح/خسارة كل عملة + إجمالي\n"
             "<code>تقرير</code> — أداء كل بوت منذ التفعيل\n"
             "<code>رصيد</code> — رصيد + إيداعات/سحوبات كل المنصات\n"
             "<code>عملات</code> — العملات المحتفظ بها\n\n"
-            "<b>رأس المال:</b>\n"
-            "<code>رأس مال 35000</code> — ضبط إجمالي الإيداع\n"
-            "<code>رأس مال 35000 2000</code> — إيداع + سحب\n\n"
             "<b>أخرى:</b>\n"
             "<code>مراجعة</code> — مراجعة AI للعملات\n"
             "<code>حالة</code> — تقرير صحة البوتات\n"
