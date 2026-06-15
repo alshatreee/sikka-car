@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────
-#  Watchdog: keeps the three live trading bots alive.
+#  Watchdog: keeps the live trading bots alive.
 #  - Checks each bot every run; restarts any that died (they run
 #    under nohup, so a server reboot or crash kills them silently).
 #  - Logs to watchdog.log and sends a Telegram alert on restart.
@@ -13,7 +13,7 @@ ENV_FILE="$BOTS_DIR/.env_monthly"
 WLOG="$BOTS_DIR/watchdog.log"
 
 # bot script name  ->  log file
-BOTS=(monthly_channel_bot daytrading_bot channel_daytrader)
+BOTS=(monthly_channel_bot)
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
