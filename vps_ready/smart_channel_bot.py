@@ -30,6 +30,9 @@ LOG_FILE = BASE_DIR / "smart_channel.log"
 LEARNING_FILE = BASE_DIR / "smart_learning.json"
 AI_ANALYSIS_FILE = BASE_DIR / "ai_channel_analysis.json"
 CHANNEL_MEMORY_FILE = BASE_DIR / "channel_memory.json"
+# raw channel messages → consumed by bot_monitor to produce ai_channel_analysis.json.
+# smart_channel_bot now feeds this (channel_daytrader used to, but it's stopped).
+RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
 load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
 
 # ---------- config ----------
@@ -154,6 +157,28 @@ def _atomic_write(path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + '.tmp')
     tmp.write_text(text)
     tmp.replace(path)
+
+# ---------- raw message feed (keeps bot_monitor's AI alive) ----------
+def _save_raw_message(channel: str, text: str, msg_id: int) -> None:
+    """Append one channel message for bot_monitor's AI analysis pipeline.
+    Same format/24h-rolling-window as the (now stopped) channel_daytrader."""
+    existing = []
+    if RAW_MSGS_FILE.exists():
+        try:
+            existing = json.loads(RAW_MSGS_FILE.read_text())
+        except Exception:
+            existing = []
+    existing.append({
+        "channel": channel, "text": text, "msg_id": msg_id,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    })
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    existing = [m for m in existing if m.get("ts", "") > cutoff]
+    existing = existing[-500:]
+    try:
+        _atomic_write(RAW_MSGS_FILE, json.dumps(existing, ensure_ascii=False, indent=1))
+    except Exception as e:
+        log(f"خطأ حفظ الرسالة الخام: {e}")
 
 # ---------- state ----------
 @dataclass
@@ -1436,6 +1461,14 @@ async def main():
                 channel_name = getattr(chat, 'title', str(chat.id))
 
         log(f"[{channel_name}] رسالة: {text[:80]}...")
+
+        # feed bot_monitor's AI pipeline with the raw message (every message,
+        # not just parsed signals) so ai_channel_analysis.json stays fresh
+        try:
+            _save_raw_message(channel_name, text, event.id)
+        except Exception:
+            pass
+
         sig = parse_channel_signal(text, channel_name, msg_id=event.id)
         if not sig:
             return
