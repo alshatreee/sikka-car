@@ -13,7 +13,7 @@ ENV_FILE="$BOTS_DIR/.env_monthly"
 WLOG="$BOTS_DIR/watchdog.log"
 
 # bot script name  ->  log file
-BOTS=(monthly_channel_bot)
+BOTS=(monthly_channel_bot smart_channel_bot)
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
