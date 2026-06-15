@@ -659,6 +659,10 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
                     limit_avg = _safe_float(fetched.get("average"), default=limit_price) or limit_price
             remainder = _prec_qty(exchange, pair, qty - filled)
             if remainder <= 0 or filled >= qty * 0.999:
+                # nothing actually filled → real failure, don't fake a position
+                if filled <= 0:
+                    log(f"الأمر المحدود لم يُنفَّذ ولا كمية متبقية: {pair}")
+                    return None
                 return {"filled": filled, "amount": filled, "average": limit_avg, "price": limit_avg}
             log(f"لم يُنفَّذ الأمر المحدود — أمر سوق للمتبقي {remainder:.6f}: {pair}")
             try:
@@ -848,9 +852,14 @@ def open_trade(state: State, sig: ChannelSignal, exchange, reason: str = "إشا
             return False
         try:
             entry_price = float(order.get("average") or order.get("price") or entry_price)
-            qty = float(order.get("filled") or order.get("amount") or qty)
+            filled_qty = float(order.get("filled") or order.get("amount") or 0)
         except (TypeError, ValueError):
-            pass
+            filled_qty = 0
+        # never record a position we don't actually hold
+        if filled_qty <= 0 or entry_price <= 0:
+            log(f"شراء {pair} لم يُنفَّذ فعلياً (كمية={filled_qty}) — تجاهل")
+            return False
+        qty = filled_qty
 
     # stop loss calculation — ENABLED
     atr = calc_atr(exchange, pair)
@@ -918,8 +927,6 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
     if not pos:
         return
     sell_qty = pos["qty"]
-    pnl = (price - pos["entry"]) * sell_qty
-    pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
 
     if not PAPER_MODE and not skip_sell:
         try:
@@ -937,6 +944,10 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
             if order is None:
                 log(f"فشل بيع {pair} — تبقى مفتوحة لإعادة المحاولة")
                 return
+
+    # PnL on the quantity we actually sold (clamped to real balance above)
+    pnl = (price - pos["entry"]) * sell_qty
+    pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
 
     channel = pos.get("channel", "unknown")
     symbol = pos.get("symbol", pair.split("/")[0]).upper()
@@ -1017,6 +1028,16 @@ async def check_positions(state: State, exchange):
         if not pos:
             continue
         if pos.get("symbol") in PROTECTED_SYMBOLS:
+            continue
+        # guard against corrupted state: entry<=0 would crash every PnL calc
+        # (close_trade also divides by entry) so drop the position safely here
+        if _safe_float(pos.get("entry")) <= 0:
+            log(f"⚠️ مركز تالف (entry<=0): {pair} — إزالة من الحالة")
+            state.open_positions.pop(pair, None)
+            sym = pos.get("symbol", pair.split("/")[0]).upper()
+            if sym in state.entered_symbols:
+                state.entered_symbols.remove(sym)
+            save_state(state)
             continue
         try:
             price = _safe_float(exchange.fetch_ticker(pair).get("last"))
@@ -1199,12 +1220,13 @@ async def check_pending_signals(state: State, exchange):
         if buy_price <= 0:
             buy_price = price
 
-        # wait for price to be near or below target
-        margin = buy_price * 1.02  # within 2%
-        if price > margin:
-            continue
-
+        # before we start watching, wait for price to dip near/below target.
+        # once watching has begun, the bounce/timeout logic below governs entry
+        # (the margin gate must not keep skipping or timeout never fires).
         if "watch_start" not in sig_data:
+            margin = buy_price * 1.02  # within 2% of target
+            if price > margin:
+                continue
             sig_data["watch_start"] = time.time()
             sig_data["lowest_seen"] = price
             save_state(state)
@@ -1224,6 +1246,10 @@ async def check_pending_signals(state: State, exchange):
             continue
 
         entry_reason = "ارتداد" if bounced else "انتهاء الانتظار"
+
+        # respect BTC trend for pending entries too
+        if not btc_trend_ok(exchange):
+            continue
 
         sig = ChannelSignal(
             channel=sig_data.get("channel", "unknown"),
@@ -1426,22 +1452,26 @@ async def main():
         if sig_key in state.executed_signals:
             log(f"إشارة سبق تنفيذها: {sig_key}")
             return
-
-        # check BTC trend
-        if not btc_trend_ok(_exchange):
-            log("BTC trend سلبي — تأجيل")
+        # don't double-track a symbol already held or already queued
+        if sig.symbol in state.entered_symbols or \
+           any(p.get("symbol") == sig.symbol for p in state.open_positions.values()):
+            log(f"العملة مفتوحة بالفعل — تجاهل: {sig.symbol}")
             return
 
         notify(f"إشارة جديدة [{sig.channel}]\n{sig.symbol} | نقاط: {sig.score:.0f}\n"
                f"شراء: {sig.buy_price} | هدف: {sig.sell_price} ({sig.tp_pct:.1f}%)")
 
-        if open_trade(state, sig, _exchange, reason=f"إشارة [{sig.channel}]"):
+        # BTC trend negative → queue as pending instead of discarding the signal
+        btc_ok = btc_trend_ok(_exchange)
+        if btc_ok and open_trade(state, sig, _exchange, reason=f"إشارة [{sig.channel}]"):
             state.executed_signals.append(sig_key)
             if len(state.executed_signals) > 500:
                 state.executed_signals = state.executed_signals[-500:]
             save_state(state)
         else:
-            if not any(p.get("key") == sig_key for p in state.pending_signals):
+            if not btc_ok:
+                log("BTC trend سلبي — حفظ كإشارة معلّقة")
+            if not any(p.get("symbol") == sig.symbol for p in state.pending_signals):
                 state.pending_signals.append({
                     "key": sig_key, "symbol": sig.symbol,
                     "channel": sig.channel,
