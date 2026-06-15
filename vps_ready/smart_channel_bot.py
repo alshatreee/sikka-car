@@ -265,22 +265,24 @@ def learning_record_trade(channel: str, symbol: str, pnl: float, pnl_pct: float)
 def _channel_score(channel: str) -> float:
     data = _load_learning()
     ch = data.get("channels", {}).get(channel)
-    if not ch or ch.get("trades", 0) < 3:
+    if not isinstance(ch, dict) or ch.get("trades", 0) < 3:
         return 0.0
-    total = ch["wins"] + ch["losses"]
+    wins, losses = ch.get("wins", 0), ch.get("losses", 0)
+    total = wins + losses
     if total == 0:
         return 0.0
-    return ch["wins"] / total * 100
+    return wins / total * 100
 
 def _symbol_score(symbol: str) -> float:
     data = _load_learning()
     sym = data.get("symbols", {}).get(symbol)
-    if not sym or sym.get("trades", 0) < 3:
+    if not isinstance(sym, dict) or sym.get("trades", 0) < 3:
         return 0.0
-    total = sym["wins"] + sym["losses"]
+    wins, losses = sym.get("wins", 0), sym.get("losses", 0)
+    total = wins + losses
     if total == 0:
         return 0.0
-    return sym["wins"] / total * 100
+    return wins / total * 100
 
 # ---------- AI analysis ----------
 _ai_cache: dict = {"ts": 0.0, "data": None}
@@ -302,12 +304,12 @@ def _ai_signal_boost(symbol: str) -> float:
     if not ai:
         return 0.0
     sym = symbol.upper().replace("USDT", "")
-    for s in ai.get("buy", []):
-        if s.get("symbol", "").upper().replace("USDT", "") == sym:
+    for s in (ai.get("buy") or []):
+        if isinstance(s, dict) and s.get("symbol", "").upper().replace("USDT", "") == sym:
             conf = s.get("confidence", "low")
             return {"high": 15.0, "medium": 10.0, "low": 5.0}.get(conf, 5.0)
-    for s in ai.get("sell", []):
-        if s.get("symbol", "").upper().replace("USDT", "") == sym:
+    for s in (ai.get("sell") or []):
+        if isinstance(s, dict) and s.get("symbol", "").upper().replace("USDT", "") == sym:
             return -20.0
     return 0.0
 
@@ -1384,7 +1386,7 @@ def run_check():
         log("تعلم القنوات:")
         for ch, data in channels.items():
             total = data.get("trades", 0)
-            wr = data["wins"] / total * 100 if total > 0 else 0
+            wr = data.get("wins", 0) / total * 100 if total > 0 else 0
             log(f"  {ch}: {wr:.0f}% ({total} صفقة) ${data.get('pnl', 0):.2f}")
 
     state = load_state()
@@ -1414,8 +1416,9 @@ def run_status():
         print("\nتعلم القنوات:")
         for ch, data in sorted(channels.items(), key=lambda x: x[1].get("pnl", 0), reverse=True):
             total = data.get("trades", 0)
-            wr = data["wins"] / total * 100 if total > 0 else 0
-            print(f"  {ch}: {wr:.0f}% W/R ({data['wins']}W/{data['losses']}L) PnL: ${data.get('pnl', 0):.2f}")
+            w, l = data.get("wins", 0), data.get("losses", 0)
+            wr = w / total * 100 if total > 0 else 0
+            print(f"  {ch}: {wr:.0f}% W/R ({w}W/{l}L) PnL: ${data.get('pnl', 0):.2f}")
 
 
 # ---------- main ----------
@@ -1454,92 +1457,102 @@ async def main():
     me = await client.get_me()
     log(f"Telegram connected as {me.first_name}")
 
+    # map resolved chat-id -> the exact configured channel name. This makes
+    # channel identity reliable regardless of whether a message exposes a
+    # username or only a title (a news channel without a username must NOT be
+    # mistaken for a trading channel), and keeps learning-stats keys stable.
+    chat_id_to_name: dict[int, str] = {}
     for ch_name in ALL_CHANNELS:
         kind = "أخبار" if ch_name.lower() in _NEWS_SET else "تداول"
         try:
             entity = await client.get_entity(ch_name)
+            chat_id_to_name[entity.id] = ch_name
             log(f"Listening [{kind}]: {getattr(entity, 'title', ch_name)} (id={entity.id})")
         except Exception as e:
             log(f"خطأ في قناة {ch_name}: {e}")
 
     @client.on(events.NewMessage(chats=ALL_CHANNELS))
     async def on_signal(event):
-        text = event.raw_text
-        if not text:
-            return
-
-        # determine which channel
-        chat = event.chat
-        channel_name = "unknown"
-        if chat:
-            username = getattr(chat, 'username', None)
-            if username:
-                channel_name = username
-            else:
-                channel_name = getattr(chat, 'title', str(chat.id))
-
-        log(f"[{channel_name}] رسالة: {text[:80]}...")
-
-        # feed bot_monitor's AI pipeline with the raw message (every message,
-        # not just parsed signals) so ai_channel_analysis.json stays fresh
         try:
-            _save_raw_message(channel_name, text, event.id)
-        except Exception:
-            pass
+            text = event.raw_text
+            if not text:
+                return
 
-        # news channels are feed-only — never open a trade from a news headline
-        if channel_name.lower() in _NEWS_SET:
-            return
+            # resolve the channel to its CONFIGURED name via chat-id (reliable).
+            # fall back to username/title only if the id isn't in the map.
+            channel_name = chat_id_to_name.get(getattr(event, "chat_id", None))
+            if not channel_name:
+                chat = event.chat
+                channel_name = "unknown"
+                if chat:
+                    channel_name = getattr(chat, 'username', None) or \
+                                   getattr(chat, 'title', None) or str(chat.id)
 
-        sig = parse_channel_signal(text, channel_name, msg_id=event.id)
-        if not sig:
-            return
+            log(f"[{channel_name}] رسالة: {text[:80]}...")
 
-        sig.score = score_signal(sig)
-        log(f"إشارة: {sig.symbol} من {sig.channel} | نقاط: {sig.score:.0f} | "
-            f"شراء={sig.buy_price} هدف={sig.sell_price}")
+            # feed bot_monitor's AI pipeline with the raw message (every message,
+            # not just parsed signals) so ai_channel_analysis.json stays fresh
+            try:
+                _save_raw_message(channel_name, text, event.id)
+            except Exception:
+                pass
 
-        if sig.score < MIN_SIGNAL_SCORE:
-            log(f"تجاهل: نقاط {sig.score:.0f} < {MIN_SIGNAL_SCORE}")
-            return
+            # news channels are feed-only — never open a trade from a news headline
+            if channel_name.lower() in _NEWS_SET:
+                return
 
-        sig_key = f"{sig.symbol}_{sig.channel}_{event.id}"
-        if sig_key in state.executed_signals:
-            log(f"إشارة سبق تنفيذها: {sig_key}")
-            return
-        # don't double-track a symbol already held or already queued
-        if sig.symbol in state.entered_symbols or \
-           any(p.get("symbol") == sig.symbol for p in state.open_positions.values()):
-            log(f"العملة مفتوحة بالفعل — تجاهل: {sig.symbol}")
-            return
+            sig = parse_channel_signal(text, channel_name, msg_id=event.id)
+            if not sig:
+                return
 
-        notify(f"إشارة جديدة [{sig.channel}]\n{sig.symbol} | نقاط: {sig.score:.0f}\n"
-               f"شراء: {sig.buy_price} | هدف: {sig.sell_price} ({sig.tp_pct:.1f}%)")
+            sig.score = score_signal(sig)
+            log(f"إشارة: {sig.symbol} من {sig.channel} | نقاط: {sig.score:.0f} | "
+                f"شراء={sig.buy_price} هدف={sig.sell_price}")
 
-        # BTC trend negative → queue as pending instead of discarding the signal
-        btc_ok = btc_trend_ok(_exchange)
-        if btc_ok and open_trade(state, sig, _exchange, reason=f"إشارة [{sig.channel}]"):
-            state.executed_signals.append(sig_key)
-            if len(state.executed_signals) > 500:
-                state.executed_signals = state.executed_signals[-500:]
-            save_state(state)
-        else:
-            if not btc_ok:
-                log("BTC trend سلبي — حفظ كإشارة معلّقة")
-            if not any(p.get("symbol") == sig.symbol for p in state.pending_signals):
-                state.pending_signals.append({
-                    "key": sig_key, "symbol": sig.symbol,
-                    "channel": sig.channel,
-                    "buy_price": sig.buy_price, "sell_price": sig.sell_price,
-                    "stop_price": sig.stop_price,
-                    "tp_pct": sig.tp_pct, "trade_num": sig.trade_num,
-                    "targets": [{"price": t["price"], "pct": t["pct"]}
-                                for t in sig.targets] if sig.targets else [],
-                    "score": sig.score,
-                    "added": time.strftime("%Y-%m-%d %H:%M:%S"),
-                })
+            if sig.score < MIN_SIGNAL_SCORE:
+                log(f"تجاهل: نقاط {sig.score:.0f} < {MIN_SIGNAL_SCORE}")
+                return
+
+            sig_key = f"{sig.symbol}_{sig.channel}_{event.id}"
+            if sig_key in state.executed_signals:
+                log(f"إشارة سبق تنفيذها: {sig_key}")
+                return
+            # don't double-track a symbol already held or already queued
+            if sig.symbol in state.entered_symbols or \
+               any(p.get("symbol") == sig.symbol for p in state.open_positions.values()):
+                log(f"العملة مفتوحة بالفعل — تجاهل: {sig.symbol}")
+                return
+
+            notify(f"إشارة جديدة [{sig.channel}]\n{sig.symbol} | نقاط: {sig.score:.0f}\n"
+                   f"شراء: {sig.buy_price} | هدف: {sig.sell_price} ({sig.tp_pct:.1f}%)")
+
+            # BTC trend negative → queue as pending instead of discarding the signal
+            btc_ok = btc_trend_ok(_exchange)
+            if btc_ok and open_trade(state, sig, _exchange, reason=f"إشارة [{sig.channel}]"):
+                state.executed_signals.append(sig_key)
+                if len(state.executed_signals) > 500:
+                    state.executed_signals = state.executed_signals[-500:]
                 save_state(state)
-                log(f"إشارة معلّقة: {sig_key}")
+            else:
+                if not btc_ok:
+                    log("BTC trend سلبي — حفظ كإشارة معلّقة")
+                if not any(p.get("symbol") == sig.symbol for p in state.pending_signals):
+                    state.pending_signals.append({
+                        "key": sig_key, "symbol": sig.symbol,
+                        "channel": sig.channel,
+                        "buy_price": sig.buy_price, "sell_price": sig.sell_price,
+                        "stop_price": sig.stop_price,
+                        "tp_pct": sig.tp_pct, "trade_num": sig.trade_num,
+                        "targets": [{"price": t["price"], "pct": t["pct"]}
+                                    for t in sig.targets] if sig.targets else [],
+                        "score": sig.score,
+                        "added": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    })
+                    save_state(state)
+                    log(f"إشارة معلّقة: {sig_key}")
+        except Exception as e:
+            # an event callback must never raise — keep the listener alive
+            log(f"خطأ في معالجة الإشارة: {e}")
 
     async def position_checker():
         while True:
@@ -1624,13 +1637,16 @@ if __name__ == "__main__":
                     pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
                     pnl = (price - pos["entry"]) * pos["qty"]
                     channel = pos.get("channel", "unknown")
+                    # re-read state right before mutating so a concurrently
+                    # running live bot's changes aren't clobbered by this CLI sell
+                    state = load_state()
                     state.trade_history.append({
                         "pair": pair, "entry": pos["entry"], "exit": price,
                         "pnl": round(pnl, 4), "pnl_pct": round(pnl_pct, 2),
                         "reason": "بيع يدوي (CLI)", "channel": channel,
                         "closed": time.strftime("%Y-%m-%d %H:%M:%S"),
                     })
-                    del state.open_positions[pair]
+                    state.open_positions.pop(pair, None)
                     if symbol in state.entered_symbols:
                         state.entered_symbols.remove(symbol)
                     save_state(state)
