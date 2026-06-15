@@ -91,12 +91,23 @@ MIN_SIGNAL_SCORE = float(os.getenv("SMART_MIN_SCORE", "55.0"))
 CHECK_INTERVAL = int(os.getenv("SMART_CHECK_INTERVAL", "300"))
 PAPER_MODE = "--live" not in sys.argv
 
-# ---------- قنوات المراقبة (تلجرام فقط) ----------
+# ---------- قنوات التداول (توصيات → تفتح صفقات) ----------
 WATCH_CHANNELS = [
     "cryptomena1", "arabcharts", "crypto_q88",
     "ahmadchats", "Naif_Alert", "vipdrprofit",
-    "CoingraphNews",
+    "tracer",  # DeFiTracer على تلجرام
 ]
+
+# ---------- قنوات الأخبار (تغذّي الـAI فقط، لا تتداول منها) ----------
+# قنوات أخبار/إعلانات عامة — لا تحتوي توصيات بسعر دخول، فلا نفتح منها صفقات،
+# لكن نمرّر رسائلها لتحليل الـAI (سياق/معنويات السوق).
+NEWS_CHANNELS = [
+    "CoingraphNews", "Coin_Post", "CoinMarketCapAnnouncements",
+]
+
+# كل القنوات التي نستمع لها (تداول + أخبار)
+ALL_CHANNELS = WATCH_CHANNELS + NEWS_CHANNELS
+_NEWS_SET = {c.lower() for c in NEWS_CHANNELS}
 
 PROTECTED_SYMBOLS = [s.strip().upper() for s in os.getenv("SMART_PROTECTED_SYMBOLS", "").split(",") if s.strip()]
 
@@ -1344,7 +1355,8 @@ def compute_stats(history: list[dict]) -> str:
 def run_check():
     log("=== وضع الفحص ===")
     log(f"TG_API_ID: {'OK' if TG_API_ID else 'مفقود'}")
-    log(f"القنوات: {WATCH_CHANNELS}")
+    log(f"قنوات التداول: {WATCH_CHANNELS}")
+    log(f"قنوات الأخبار (AI فقط): {NEWS_CHANNELS}")
     log(f"رأس المال: ${CAPITAL} | حجم: ${BYBIT_TRADE_SIZE}")
     log(f"وقف خسارة: {SL_PCT}% ثابت | كارثي: {CATASTROPHIC_SL_PCT}%")
     log(f"وقف متحرك: +{TRAILING_STOP_ACTIVATE_PCT}% → -{TRAILING_STOP_DISTANCE_PCT}%")
@@ -1420,7 +1432,8 @@ async def main():
     from telethon import TelegramClient, events
     mode = "ورقي" if PAPER_MODE else "حقيقي"
     log(f"=== بدء البوت الذكي [{mode}] ===")
-    log(f"القنوات: {WATCH_CHANNELS}")
+    log(f"قنوات التداول: {WATCH_CHANNELS}")
+    log(f"قنوات الأخبار (AI فقط): {NEWS_CHANNELS}")
     log(f"رأس المال: ${CAPITAL} | حجم: ${BYBIT_TRADE_SIZE} | وقف: {SL_PCT}%")
     log(f"حد النقاط: {MIN_SIGNAL_SCORE} | AI: {'مفعّل' if AI_ANALYSIS_FILE.exists() else 'غير متاح'}")
 
@@ -1441,14 +1454,15 @@ async def main():
     me = await client.get_me()
     log(f"Telegram connected as {me.first_name}")
 
-    for ch_name in WATCH_CHANNELS:
+    for ch_name in ALL_CHANNELS:
+        kind = "أخبار" if ch_name.lower() in _NEWS_SET else "تداول"
         try:
             entity = await client.get_entity(ch_name)
-            log(f"Listening: {getattr(entity, 'title', ch_name)} (id={entity.id})")
+            log(f"Listening [{kind}]: {getattr(entity, 'title', ch_name)} (id={entity.id})")
         except Exception as e:
             log(f"خطأ في قناة {ch_name}: {e}")
 
-    @client.on(events.NewMessage(chats=WATCH_CHANNELS))
+    @client.on(events.NewMessage(chats=ALL_CHANNELS))
     async def on_signal(event):
         text = event.raw_text
         if not text:
@@ -1472,6 +1486,10 @@ async def main():
             _save_raw_message(channel_name, text, event.id)
         except Exception:
             pass
+
+        # news channels are feed-only — never open a trade from a news headline
+        if channel_name.lower() in _NEWS_SET:
+            return
 
         sig = parse_channel_signal(text, channel_name, msg_id=event.id)
         if not sig:
