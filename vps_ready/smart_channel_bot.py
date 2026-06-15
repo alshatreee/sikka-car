@@ -38,7 +38,10 @@ load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
 # ---------- config ----------
 TG_API_ID    = int(os.getenv("TG_API_ID", "0"))
 TG_API_HASH  = os.getenv("TG_API_HASH", "")
-TG_SESSION   = str(BASE_DIR / "smart_session")
+# Reuse the (now retired) channel_daytrader session, which is ALREADY
+# authorized. Creating a brand-new session needs a phone login, which Telegram
+# flood-blocks. Override with SMART_SESSION if you have a dedicated session.
+TG_SESSION   = str(BASE_DIR / os.getenv("SMART_SESSION", "channel_dt_session"))
 BYBIT_KEY    = os.getenv("BYBIT_API_KEY", "")
 BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
 BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
