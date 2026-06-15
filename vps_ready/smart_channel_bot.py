@@ -1701,6 +1701,15 @@ async def main():
         f"max_hold={MAX_HOLD_DAYS}d)")
     if PROTECTED_SYMBOLS:
         log(f"عملات محمية: {PROTECTED_SYMBOLS}")
+
+    # startup ping — confirms the bot is live AND that Telegram notify works
+    notify(
+        f"🟢 البوت الذكي بدأ [{mode}]\n"
+        f"قنوات التداول: {len(WATCH_CHANNELS)} | أخبار: {len(NEWS_CHANNELS)}\n"
+        f"حجم: ${BYBIT_TRADE_SIZE} | وقف: {SL_PCT}% | حد النقاط: {MIN_SIGNAL_SCORE}\n"
+        f"AI: {'مفعّل' if AI_ANALYSIS_FILE.exists() else 'غير متاح'} | "
+        f"max_open: {MAX_OPEN}"
+    )
     await client.run_until_disconnected()
 
 
