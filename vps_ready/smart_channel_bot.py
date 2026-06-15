@@ -91,10 +91,11 @@ MIN_SIGNAL_SCORE = float(os.getenv("SMART_MIN_SCORE", "55.0"))
 CHECK_INTERVAL = int(os.getenv("SMART_CHECK_INTERVAL", "300"))
 PAPER_MODE = "--live" not in sys.argv
 
-# ---------- القنوات الست ----------
+# ---------- قنوات المراقبة (تلجرام فقط) ----------
 WATCH_CHANNELS = [
     "cryptomena1", "arabcharts", "crypto_q88",
     "ahmadchats", "Naif_Alert", "vipdrprofit",
+    "CoingraphNews",
 ]
 
 PROTECTED_SYMBOLS = [s.strip().upper() for s in os.getenv("SMART_PROTECTED_SYMBOLS", "").split(",") if s.strip()]

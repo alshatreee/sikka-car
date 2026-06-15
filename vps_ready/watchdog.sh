@@ -13,7 +13,12 @@ ENV_FILE="$BOTS_DIR/.env_monthly"
 WLOG="$BOTS_DIR/watchdog.log"
 
 # bot script name  ->  log file
-BOTS=(monthly_channel_bot smart_channel_bot)
+# NOTE: daytrading_bot and channel_daytrader are RETIRED — intentionally not
+# listed so the watchdog never revives them.
+# smart_channel_bot is added here ONLY after it is switched to --live; while it
+# is paper-testing keep it out (the watchdog starts bots with --live and would
+# spawn a duplicate live instance).
+BOTS=(monthly_channel_bot)
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
