@@ -1050,6 +1050,10 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
             order = spot_sell(exchange, pair, sell_qty)
             if order is None:
                 log(f"فشل بيع {pair} — تبقى مفتوحة لإعادة المحاولة")
+                sl_price = pos["entry"] * (1 - SL_PCT / 100)
+                new_sl_id = place_exchange_stop(exchange, pair, sell_qty, sl_price)
+                if new_sl_id:
+                    pos["sl_order_id"] = new_sl_id
                 return
 
     # PnL on the quantity we actually sold (clamped to real balance above)
@@ -1328,7 +1332,13 @@ async def check_pending_signals(state: State, exchange):
         except Exception:
             pass
 
+    now = time.time()
     for sig_data in list(state.pending_signals):
+        # expire signals older than 24 hours
+        if now - sig_data.get("queued_at", now) > 86400:
+            state.pending_signals.remove(sig_data)
+            log(f"إشارة معلّقة {sig_data.get('symbol','')} انتهت (24 ساعة)")
+            continue
         symbol = sig_data["symbol"]
         buy_price = sig_data.get("buy_price", 0)
         if symbol in state.entered_symbols:
@@ -1641,6 +1651,7 @@ async def main():
                         "targets": [{"price": t["price"], "pct": t["pct"]}
                                     for t in sig.targets] if sig.targets else [],
                         "score": sig.score,
+                        "queued_at": time.time(),
                         "added": time.strftime("%Y-%m-%d %H:%M:%S"),
                     })
                     save_state(state)
@@ -1741,6 +1752,7 @@ if __name__ == "__main__":
                     print(f"❌ تعذر جلب سعر {pair}")
                     sys.exit(1)
                 print(f"بيع {pair} @ {price}...")
+                cancel_exchange_stop(ex, pair, pos.get("sl_order_id"))
                 order = spot_sell(ex, pair, pos["qty"])
                 if order:
                     pnl_pct = (price - pos["entry"]) / pos["entry"] * 100

@@ -28,6 +28,7 @@ BASE_DIR = Path(r"C:\Users\xman9\Desktop") if os.name == "nt" else Path("/root/b
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 ENV_FILE = BASE_DIR / ".env_monthly"
 TARGET_LOG = BASE_DIR / "monthly.log"
+SMART_LOG = BASE_DIR / "smart_channel_bot.log"
 STATE_FILE = BASE_DIR / "monitor_state.json"
 LOG_FILE = BASE_DIR / "monitor.log"
 load_dotenv(ENV_FILE if ENV_FILE.exists() else None)
@@ -48,10 +49,9 @@ KUCOIN_PASS = os.getenv("KUCOIN_PASSPHRASE", "")
 RAW_MSGS_FILE = BASE_DIR / "channel_raw_messages.json"
 AI_ANALYSIS_FILE = BASE_DIR / "ai_channel_analysis.json"
 
-# State files for all trading bots — used to cross-check held coins vs AI
+# State files for active trading bots — used to cross-check held coins vs AI
 MONTHLY_STATE = BASE_DIR / "monthly_state.json"
-DAYTRADING_STATE = BASE_DIR / "daytrading_state.json"
-CHANNEL_DT_STATE = BASE_DIR / "channel_daytrader_state.json"
+SMART_STATE = BASE_DIR / "smart_state.json"
 PORTFOLIO_STATE = BASE_DIR / "portfolio_state.json"
 CAPITAL_CONFIG = BASE_DIR / "capital_config.json"
 
@@ -174,6 +174,7 @@ def notify(msg: str) -> None:
 @dataclass
 class MonitorState:
     log_offset: int = 0
+    smart_log_offset: int = 0
     last_summary_day: str = ""
     last_alert_hashes: list[str] = field(default_factory=list)
     error_counts: dict[str, int] = field(default_factory=dict)
@@ -195,17 +196,20 @@ def save_state(state: MonitorState):
 
 
 def read_new_lines(state: MonitorState) -> list[str]:
-    """قراءة الأسطر الجديدة من اللوق منذ آخر فحص"""
-    if not TARGET_LOG.exists():
-        return []
-    size = TARGET_LOG.stat().st_size
-    if state.log_offset > size:
-        state.log_offset = 0  # اللوق دُوّر/أُفرغ
-    with TARGET_LOG.open("r", errors="replace") as f:
-        f.seek(state.log_offset)
-        lines = f.readlines()
-        state.log_offset = f.tell()
-    return lines
+    """قراءة الأسطر الجديدة من لوقات البوتات منذ آخر فحص"""
+    all_lines = []
+    for log_path, attr in ((TARGET_LOG, "log_offset"), (SMART_LOG, "smart_log_offset")):
+        if not log_path.exists():
+            continue
+        size = log_path.stat().st_size
+        offset = getattr(state, attr)
+        if offset > size:
+            offset = 0
+        with log_path.open("r", errors="replace") as f:
+            f.seek(offset)
+            all_lines.extend(f.readlines())
+            setattr(state, attr, f.tell())
+    return all_lines
 
 
 def service_status() -> dict:
@@ -297,45 +301,13 @@ def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
     """تشغيل كل الفحوصات وإرجاع قائمة التنبيهات"""
     alerts = []
 
-    # 1) حالة الخدمة
-    svc = service_status()
-    # الخدمة masked/not-found ⇒ موقوفة عمداً (نديرها عبر nohup + watchdog)،
-    # فلا ننبّه ولا نحاول إعادة تشغيلها — لكن تحليل الـ AI يستمر كالمعتاد.
-    if svc.get("masked"):
-        return alerts
-    if not svc["active"]:
-        if AUTO_RESTART:
-            restarted = auto_restart("البوت متوقف")
-            status_msg = "✅ تمت إعادة التشغيل تلقائياً" if restarted else "❌ فشلت إعادة التشغيل — تدخل يدوي مطلوب"
-        else:
-            status_msg = f"الحل: شغّل <code>systemctl restart {SERVICE_NAME}</code>"
-        alerts.append(
-            f"🔴 <b>البوت متوقف!</b>\n"
-            f"الحالة: {svc['sub']}\n"
-            f"السبب: الخدمة توقفت — قد يكون خطأ برمجي أو نفاد الذاكرة\n"
-            f"{status_msg}"
-        )
-    if svc["restarts"] > MAX_RESTARTS_HR:
-        alerts.append(
-            f"🟠 <b>إعادة تشغيل متكررة</b>\n"
-            f"عدد المرات: {svc['restarts']}\n"
-            f"السبب: البوت يتوقف ويعاد تشغيله باستمرار — غالباً خطأ متكرر\n"
-            f"الحل: راجع <code>journalctl -u {SERVICE_NAME} --no-pager -n 50</code>"
-        )
-
-    # 2) تجمّد اللوق — إعادة تشغيل تلقائية
-    age = log_age_minutes()
-    if svc["active"] and age > LOG_STALE_MIN:
-        if AUTO_RESTART:
-            restarted = auto_restart(f"اللوق متوقف منذ {age:.0f} دقيقة")
-            status_msg = "✅ تمت إعادة التشغيل تلقائياً" if restarted else "❌ فشلت إعادة التشغيل"
-        else:
-            status_msg = f"الحل: <code>systemctl restart {SERVICE_NAME}</code>"
-        alerts.append(
-            f"🟠 <b>البوت متجمّد — تمت إعادة تشغيله</b>\n"
-            f"آخر تحديث: قبل {age:.0f} دقيقة\n"
-            f"{status_msg}"
-        )
+    # 1) حالة البوتات (nohup + watchdog)
+    for bot_name in ("monthly_channel_bot", "smart_channel_bot"):
+        if not _process_alive(bot_name):
+            alerts.append(
+                f"🔴 <b>{bot_name} متوقف!</b>\n"
+                f"الحل: الـ watchdog سيعيد تشغيله خلال 5 دقائق"
+            )
 
     # 3) تحليل الأسطر الجديدة
     lines = read_new_lines(state)
@@ -378,16 +350,34 @@ def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
     return alerts
 
 
+def _process_alive(name: str) -> bool:
+    try:
+        r = subprocess.run(["pgrep", "-fc", f"python3 {name}.py --live"],
+                           capture_output=True, text=True, timeout=5)
+        return r.returncode == 0 and int(r.stdout.strip() or "0") > 0
+    except Exception:
+        return False
+
+
+def _log_age(path: Path) -> float:
+    if not path.exists():
+        return 1e9
+    return (time.time() - path.stat().st_mtime) / 60
+
+
 def build_health_report(state: MonitorState) -> str:
-    svc = service_status()
-    age = log_age_minutes()
-    status = "🟢 شغّال" if svc["active"] else "🔴 متوقف"
-    lines = [
-        f"<b>🩺 تقرير صحة البوت</b>\n",
-        f"الخدمة: {status} ({svc['sub']})",
-        f"إعادة التشغيل: {svc['restarts']}×",
-        f"آخر تحديث لوق: قبل {age:.0f} دقيقة",
+    bots_info = [
+        ("monthly_channel_bot", BASE_DIR / "monthly.log"),
+        ("smart_channel_bot", BASE_DIR / "smart_channel_bot.log"),
     ]
+    lines = ["<b>🩺 تقرير صحة البوتات</b>\n"]
+    for bot_name, log_path in bots_info:
+        alive = _process_alive(bot_name)
+        status = "🟢 شغّال" if alive else "🔴 متوقف"
+        age = _log_age(log_path)
+        lines.append(f"<b>{bot_name}</b>: {status}")
+        lines.append(f"  آخر تحديث لوق: قبل {age:.0f} دقيقة")
+    lines.append("")
     if state.error_counts:
         lines.append("\n<b>إجمالي الأخطاء المرصودة:</b>")
         for key, count in state.error_counts.items():
@@ -680,23 +670,13 @@ def get_all_held_coins() -> dict[str, list[str]]:
         except Exception:
             pass
 
-    # daytrading_bot — positions keyed by "SYMUSDT"
-    if DAYTRADING_STATE.exists():
+    # smart_channel_bot — open_positions keyed by "SYM/USDT"
+    if SMART_STATE.exists():
         try:
-            data = json.loads(DAYTRADING_STATE.read_text())
-            for sym_key in data.get("positions", {}):
-                sym = _normalize_sym(sym_key)
-                held.setdefault(sym, []).append("daytrading")
-        except Exception:
-            pass
-
-    # channel_daytrader — positions keyed by "SYM"
-    if CHANNEL_DT_STATE.exists():
-        try:
-            data = json.loads(CHANNEL_DT_STATE.read_text())
-            for sym_key in data.get("positions", {}):
-                sym = _normalize_sym(sym_key)
-                held.setdefault(sym, []).append("channel_dt")
+            data = json.loads(SMART_STATE.read_text())
+            for pair in data.get("open_positions", {}):
+                sym = _normalize_sym(pair)
+                held.setdefault(sym, []).append("smart")
         except Exception:
             pass
 
@@ -722,33 +702,17 @@ def get_all_positions() -> list[dict]:
         except Exception:
             pass
 
-    if DAYTRADING_STATE.exists():
+    if SMART_STATE.exists():
         try:
-            data = json.loads(DAYTRADING_STATE.read_text())
-            for sym_key, pos in data.get("positions", {}).items():
+            data = json.loads(SMART_STATE.read_text())
+            for pair, pos in data.get("open_positions", {}).items():
                 positions.append({
-                    "symbol": _normalize_sym(sym_key),
-                    "pair": sym_key if "USDT" in sym_key else sym_key + "USDT",
-                    "entry": pos.get("entry_price", 0),
+                    "symbol": _normalize_sym(pair),
+                    "pair": pair.replace("/", ""),
+                    "entry": pos.get("entry", 0),
                     "qty": pos.get("qty", 0),
-                    "bot": "daytrading",
-                    "opened": pos.get("opened_at", ""),
-                })
-        except Exception:
-            pass
-
-    if CHANNEL_DT_STATE.exists():
-        try:
-            data = json.loads(CHANNEL_DT_STATE.read_text())
-            for sym_key, pos in data.get("positions", {}).items():
-                positions.append({
-                    "symbol": _normalize_sym(sym_key),
-                    "pair": sym_key + "USDT" if "USDT" not in sym_key else sym_key,
-                    # channel_daytrader writes the entry under "entry" (not "entry_price").
-                    "entry": pos.get("entry", pos.get("entry_price", 0)),
-                    "qty": pos.get("qty", 0),
-                    "bot": "channel_dt",
-                    "opened": pos.get("opened_at", ""),
+                    "bot": "smart",
+                    "opened": pos.get("opened_str", ""),
                 })
         except Exception:
             pass
@@ -756,7 +720,7 @@ def get_all_positions() -> list[dict]:
     return positions
 
 
-_DAY_BOTS = {"daytrading", "channel_dt"}
+_DAY_BOTS = {"smart"}
 
 
 def check_held_vs_ai() -> list[str]:
@@ -1716,47 +1680,36 @@ def _handle_command(text: str) -> str | None:
     if text in ("تقرير", "report", "/report"):
         lines = ["<b>📊 تقرير أداء البوتات الإجمالي</b>\n"]
 
-        # daytrading_bot
-        if DAYTRADING_STATE.exists():
+        # smart_channel_bot
+        if SMART_STATE.exists():
             try:
-                ds = json.loads(DAYTRADING_STATE.read_text())
-                tp = ds.get("total_pnl", 0)
-                tt = ds.get("total_trades", 0)
-                w = ds.get("wins", 0)
-                l = ds.get("losses", 0)
-                wr = (w / max(w + l, 1)) * 100
-                dp = ds.get("daily_pnl", 0)
-                icon = "🟢" if tp >= 0 else "🔴"
+                ss = json.loads(SMART_STATE.read_text())
+                history = ss.get("trade_history", [])
+                positions = ss.get("open_positions", {})
+                total_closed = len(history)
+                total_pnl = sum(t.get("pnl", 0) for t in history)
+                wins = sum(1 for t in history if t.get("pnl", 0) >= 0)
+                losses = total_closed - wins
+                wr = (wins / max(total_closed, 1)) * 100
+                dp = ss.get("daily_pnl", 0)
+                open_count = len(positions)
+                icon = "🟢" if total_pnl >= 0 else "🔴"
                 lines.append(
-                    f"{icon} <b>━━ Day Trading Bot ━━</b>\n"
-                    f"  إجمالي الصفقات: {tt}\n"
-                    f"  ربح: {w} | خسارة: {l} | نسبة الفوز: {wr:.0f}%\n"
-                    f"  الربح الإجمالي: <b>${tp:+,.2f}</b>\n"
+                    f"{icon} <b>━━ Smart Channel Bot ━━</b>\n"
+                    f"  صفقات مغلقة: {total_closed} | مفتوحة: {open_count}\n"
+                    f"  ربح: {wins} | خسارة: {losses} | نسبة الفوز: {wr:.0f}%\n"
+                    f"  الربح الإجمالي (مغلقة): <b>${total_pnl:+,.2f}</b>\n"
                     f"  ربح اليوم: ${dp:+,.2f}"
                 )
+                if history:
+                    best = max(history, key=lambda t: t.get("pnl", 0))
+                    worst = min(history, key=lambda t: t.get("pnl", 0))
+                    lines.append(
+                        f"  أفضل صفقة: {best.get('pair','')} ${best.get('pnl',0):+,.2f}\n"
+                        f"  أسوأ صفقة: {worst.get('pair','')} ${worst.get('pnl',0):+,.2f}"
+                    )
             except Exception:
-                lines.append("⚪ Day Trading Bot — بيانات غير متوفرة")
-
-        # channel_daytrader
-        if CHANNEL_DT_STATE.exists():
-            try:
-                cs = json.loads(CHANNEL_DT_STATE.read_text())
-                tp = cs.get("total_pnl", 0)
-                tt = cs.get("total_trades", 0)
-                w = cs.get("wins", 0)
-                l = cs.get("losses", 0)
-                wr = (w / max(w + l, 1)) * 100
-                dp = cs.get("daily_pnl", 0)
-                icon = "🟢" if tp >= 0 else "🔴"
-                lines.append(
-                    f"\n{icon} <b>━━ Channel Day Trader ━━</b>\n"
-                    f"  إجمالي الصفقات: {tt}\n"
-                    f"  ربح: {w} | خسارة: {l} | نسبة الفوز: {wr:.0f}%\n"
-                    f"  الربح الإجمالي: <b>${tp:+,.2f}</b>\n"
-                    f"  ربح اليوم: ${dp:+,.2f}"
-                )
-            except Exception:
-                lines.append("⚪ Channel Day Trader — بيانات غير متوفرة")
+                lines.append("⚪ Smart Channel Bot — بيانات غير متوفرة")
 
         # monthly_channel_bot
         if MONTHLY_STATE.exists():
