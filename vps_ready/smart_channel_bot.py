@@ -52,10 +52,13 @@ CAPITAL      = float(os.getenv("SMART_CAPITAL", "500"))
 TRADE_PCT    = float(os.getenv("SMART_TRADE_PCT", "10"))
 TRADE_SIZE   = CAPITAL * TRADE_PCT / 100
 SL_PCT       = float(os.getenv("SMART_SL_PCT", "5.0"))
+MIN_SL_PCT   = float(os.getenv("SMART_MIN_SL_PCT", "3.0"))  # أضيق وقف مسموح — يمنع الخروج على الضجيج
 CATASTROPHIC_SL_PCT = float(os.getenv("SMART_CATASTROPHIC_SL", "15.0"))
 MAX_HOLD_DAYS = int(os.getenv("SMART_MAX_HOLD_DAYS", "30"))
 MAX_DAILY_TRADES = int(os.getenv("SMART_MAX_DAILY_TRADES", "8"))
-MAX_OPEN = int(os.getenv("SMART_MAX_OPEN", "15"))
+# keep MAX_OPEN * BYBIT_TRADE_SIZE within CAPITAL (8*50=400<500); the live
+# free-balance check is the real guard, this is just a sane upper bound.
+MAX_OPEN = int(os.getenv("SMART_MAX_OPEN", "8"))
 MAX_DAILY_LOSS_PCT = float(os.getenv("SMART_MAX_LOSS_PCT", "5.0"))
 MAX_DAILY_LOSS = CAPITAL * MAX_DAILY_LOSS_PCT / 100
 MIN_TRADE_USDT = float(os.getenv("SMART_MIN_TRADE_USDT", "20.0"))
@@ -88,7 +91,9 @@ SMART_ENTRY_BOUNCE_PCT = float(os.getenv("SMART_BOUNCE", "1.0"))
 # signal scoring thresholds
 MIN_SIGNAL_SCORE = float(os.getenv("SMART_MIN_SCORE", "55.0"))
 
-CHECK_INTERVAL = int(os.getenv("SMART_CHECK_INTERVAL", "300"))
+# faster loop so a sharp drop is caught sooner (software SL is a backup to the
+# exchange-native stop placed on entry).
+CHECK_INTERVAL = int(os.getenv("SMART_CHECK_INTERVAL", "60"))
 PAPER_MODE = "--live" not in sys.argv
 
 # ---------- قنوات التداول (توصيات → تفتح صفقات) ----------
@@ -760,6 +765,48 @@ def spot_sell(exchange, pair: str, qty: float) -> dict | None:
         return None
 
 
+# ---------- exchange-native stop loss (#3) ----------
+# Software SL in check_positions is a BACKUP. The real protection is a stop
+# order resting on Bybit, so positions survive a bot crash / server reboot.
+def place_exchange_stop(exchange, pair: str, qty: float, trigger_price: float) -> str | None:
+    """Place a resting stop-market sell on Bybit. Returns order id or None."""
+    if PAPER_MODE:
+        return None
+    try:
+        qty = _prec_qty(exchange, pair, qty)
+        if qty <= 0:
+            return None
+        params = {
+            "triggerPrice": float(exchange.price_to_precision(pair, trigger_price)),
+            "triggerDirection": 2,   # trigger when price falls to/through trigger
+            "orderLinkId": f"scsl{int(time.time()*1000)}{os.urandom(3).hex()}",
+        }
+        order = exchange.create_order(pair, "market", "sell", qty, None, params)
+        oid = order.get("id", "")
+        log(f"وقف على المنصّة: {pair} @ {trigger_price:.6g} | أمر={oid}")
+        return oid
+    except Exception as e:
+        log(f"تعذّر وضع وقف على المنصّة {pair}: {e}")
+        return None
+
+
+def cancel_exchange_stop(exchange, pair: str, order_id: str | None) -> None:
+    if PAPER_MODE or not order_id:
+        return
+    try:
+        params = {"orderFilter": "StopOrder"} if getattr(exchange, "id", "") == "bybit" else {}
+        exchange.cancel_order(order_id, pair, params=params)
+        log(f"إلغاء وقف المنصّة: {pair} | أمر={order_id}")
+    except Exception as e:
+        log(f"تعذّر إلغاء وقف المنصّة {pair}: {e}")
+
+
+def replace_exchange_stop(exchange, pos: dict, pair: str, qty: float, trigger_price: float) -> None:
+    """Cancel any existing stop and place a fresh one for the new qty/trigger."""
+    cancel_exchange_stop(exchange, pair, pos.get("sl_order_id"))
+    pos["sl_order_id"] = place_exchange_stop(exchange, pair, qty, trigger_price)
+
+
 # ---------- ATR ----------
 _atr_cache: dict[str, tuple[float, float]] = {}
 
@@ -921,6 +968,11 @@ def open_trade(state: State, sig: ChannelSignal, exchange, reason: str = "إشا
         if sig_sl_pct <= 20:
             effective_sl = max(effective_sl, sig.stop_price)
 
+    # (#5) never let the stop be tighter than MIN_SL_PCT — avoids noise stop-outs
+    widest_allowed = entry_price * (1 - MIN_SL_PCT / 100)
+    if effective_sl > widest_allowed:
+        effective_sl = widest_allowed
+
     targets_list = []
     if sig.targets:
         for t in sig.targets:
@@ -945,10 +997,17 @@ def open_trade(state: State, sig: ChannelSignal, exchange, reason: str = "إشا
         "targets_hit": 0,
         "highest_price": entry_price,
         "score": sig.score,
+        "sl_order_id": None,
     }
     state.daily_trades += 1
     if sig.symbol not in state.entered_symbols:
         state.entered_symbols.append(sig.symbol)
+
+    # (#3) place a resting stop on the exchange so the position is protected
+    # even if the bot dies. Software SL in check_positions remains a backup.
+    if not PAPER_MODE:
+        state.open_positions[pair]["sl_order_id"] = place_exchange_stop(
+            exchange, pair, qty, effective_sl)
     save_state(state)
 
     mode = "ورقي" if PAPER_MODE else "حقيقي"
@@ -971,6 +1030,10 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
     sell_qty = pos["qty"]
 
     if not PAPER_MODE and not skip_sell:
+        # cancel the resting exchange stop first so it can't fire on the coins
+        # we're about to sell (or sell after we've already closed)
+        cancel_exchange_stop(exchange, pair, pos.get("sl_order_id"))
+        pos["sl_order_id"] = None
         try:
             balance = exchange.fetch_balance()
             sym_b = pair.split("/")[0]
@@ -1043,12 +1106,21 @@ def target_sell(state, pair: str, price: float, exchange, target: dict, sell_pct
         return
 
     if not PAPER_MODE:
+        # the resting stop reserves the base coins, so cancel it before selling
+        cancel_exchange_stop(exchange, pair, pos.get("sl_order_id"))
+        pos["sl_order_id"] = None
         order = spot_sell(exchange, pair, sell_qty)
         if not order:
+            # sell failed — restore a stop for the full (unchanged) qty
+            pos["sl_order_id"] = place_exchange_stop(exchange, pair, pos["qty"], pos.get("sl") or price)
+            save_state(state)
             return
     pos["qty"] = remaining_qty
     target["hit"] = True
     pos["targets_hit"] = pos.get("targets_hit", 0) + 1
+    # re-place the stop for the remaining quantity
+    if not PAPER_MODE and pos.get("sl"):
+        pos["sl_order_id"] = place_exchange_stop(exchange, pair, remaining_qty, pos["sl"])
     save_state(state)
 
     pnl_pct = (price - pos["entry"]) / pos["entry"] * 100
@@ -1096,11 +1168,16 @@ async def check_positions(state: State, exchange):
             highest = price
             save_state(state)
 
-        # 1) STOP LOSS — ENABLED
-        sl = pos.get("sl", 0)
+        # 1) STOP LOSS (software backup to the exchange-native stop) — ENABLED.
+        # (#6) catastrophic level is an INDEPENDENT floor, checked first, so it
+        # still protects even if pos["sl"] was somehow set wider than it.
         cat_sl = pos["entry"] * (1 - CATASTROPHIC_SL_PCT / 100)
-        effective_sl = sl if sl > 0 else cat_sl
-        if price <= effective_sl:
+        if price <= cat_sl:
+            sl_pct = (pos["entry"] - price) / pos["entry"] * 100
+            close_trade(state, pair, f"وقف كارثي (-{sl_pct:.1f}%)", price, exchange)
+            continue
+        sl = pos.get("sl", 0)
+        if sl > 0 and price <= sl:
             sl_pct = (pos["entry"] - price) / pos["entry"] * 100
             close_trade(state, pair, f"وقف خسارة (-{sl_pct:.1f}%)", price, exchange)
             continue
@@ -1204,16 +1281,25 @@ async def check_phase2(state: State, exchange):
             pos["entry"] = round(new_entry, 8)
             phase["done"] = True
 
-            # update stop loss for new entry
+            # update stop loss for new (lower) average entry
             atr = calc_atr(exchange, pair)
             if atr:
                 pos["atr_sl"] = round(new_entry - atr * ATR_SL_MULTIPLIER, 8)
             fixed_sl = new_entry * (1 - SL_PCT / 100)
             atr_sl = pos.get("atr_sl")
             if atr_sl and atr_sl > new_entry * (1 - CATASTROPHIC_SL_PCT / 100):
-                pos["sl"] = round(max(atr_sl, fixed_sl), 8)
+                new_sl = max(atr_sl, fixed_sl)
             else:
-                pos["sl"] = round(fixed_sl, 8)
+                new_sl = fixed_sl
+            # (#5) enforce minimum stop width
+            widest_allowed = new_entry * (1 - MIN_SL_PCT / 100)
+            if new_sl > widest_allowed:
+                new_sl = widest_allowed
+            pos["sl"] = round(new_sl, 8)
+
+            # (#3) replace the resting exchange stop for the new qty/trigger
+            if not PAPER_MODE:
+                replace_exchange_stop(exchange, pos, pair, new_qty, pos["sl"])
 
             save_state(state)
             total_phases = 1 + len(phases)
@@ -1513,6 +1599,13 @@ async def main():
                 log(f"تجاهل: نقاط {sig.score:.0f} < {MIN_SIGNAL_SCORE}")
                 return
 
+            # (#12) while halted (daily loss / loss streak), ignore signals
+            # outright — do NOT queue them, or they'd all fire at once after
+            # the day rolls over.
+            if state.halted or state.consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+                log("متوقف (إيقاف يومي/خسائر متتالية) — تجاهل الإشارة بدل تعليقها")
+                return
+
             sig_key = f"{sig.symbol}_{sig.channel}_{event.id}"
             if sig_key in state.executed_signals:
                 log(f"إشارة سبق تنفيذها: {sig_key}")
@@ -1555,8 +1648,13 @@ async def main():
             log(f"خطأ في معالجة الإشارة: {e}")
 
     async def position_checker():
+        first = True
         while True:
-            await asyncio.sleep(CHECK_INTERVAL)
+            # check existing positions immediately on startup (don't wait a
+            # full interval before the first stop-loss evaluation), then loop
+            if not first:
+                await asyncio.sleep(CHECK_INTERVAL)
+            first = False
             try:
                 log(f"نبض — مراكز: {len(state.open_positions)} | معلقة: {len(state.pending_signals)}")
                 if state.open_positions:
@@ -1577,7 +1675,7 @@ async def main():
     async def daily_stats():
         while True:
             now = datetime.now()
-            target = now.replace(hour=21, minute=0, second=0)
+            target = now.replace(hour=21, minute=0, second=0, microsecond=0)
             if now >= target:
                 target += timedelta(days=1)
             wait_sec = (target - now).total_seconds()
