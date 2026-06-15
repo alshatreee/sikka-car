@@ -776,9 +776,11 @@ def place_exchange_stop(exchange, pair: str, qty: float, trigger_price: float) -
         qty = _prec_qty(exchange, pair, qty)
         if qty <= 0:
             return None
+        # Bybit SPOT rejects triggerDirection ("not supported for spot yet"),
+        # confirmed via verify_exchange_stop.py. triggerPrice alone works — for a
+        # sell stop below market Bybit infers the fall direction.
         params = {
             "triggerPrice": float(exchange.price_to_precision(pair, trigger_price)),
-            "triggerDirection": 2,   # trigger when price falls to/through trigger
             "orderLinkId": f"scsl{int(time.time()*1000)}{os.urandom(3).hex()}",
         }
         order = exchange.create_order(pair, "market", "sell", qty, None, params)
