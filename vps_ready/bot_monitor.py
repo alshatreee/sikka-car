@@ -1504,40 +1504,42 @@ def _tg_get_updates() -> list[dict]:
 
 
 def _scan_profitable_coins() -> str:
-    """Scan all held Bybit coins, rank by profit from entry, suggest profit-only sells."""
-    positions = get_all_positions()
-    if not positions:
+    """Scan ALL exchange holdings, rank by profit, suggest sells."""
+    all_holdings: list[dict] = []
+    if BYBIT_KEY:
+        for h in _get_bybit_holdings_with_entry():
+            h["exchange"] = "Bybit"
+            h["can_sell"] = True
+            all_holdings.append(h)
+    if GATE_KEY:
+        for h in _get_gate_holdings_with_entry():
+            h["exchange"] = "Gate"
+            h["can_sell"] = False
+            all_holdings.append(h)
+    if KUCOIN_KEY:
+        for h in _get_kucoin_holdings_with_entry():
+            h["exchange"] = "KuCoin"
+            h["can_sell"] = False
+            all_holdings.append(h)
+
+    if not all_holdings:
         return "📭 لا توجد مراكز مفتوحة"
 
     profitable = []
     losing = []
-    for p in positions:
-        entry = p["entry"]
-        qty = p["qty"]
-        if not entry or not qty:
-            continue
-        bal = _fetch_coin_balance(p["symbol"])
-        if not bal or bal * (entry or 1) < 1.0:
-            continue
-        price = _fetch_price(p["pair"])
-        if not price:
-            continue
-        value = price * bal
-        if value < 1.0:
+    for h in all_holdings:
+        entry = h.get("entry", 0)
+        price = h.get("price", 0)
+        if not entry or not price or entry <= 0:
             continue
         pnl_pct = ((price - entry) / entry) * 100
-        cost = entry * bal
-        pnl_usd = value - cost
+        pnl_usd = (price - entry) * h["amount"]
         profit_sell_pct = max(0, ((price - entry) / price) * 100)
-        p.update({
-            "price": price, "pnl_pct": pnl_pct, "pnl_usd": pnl_usd,
-            "value": value, "cost": cost, "profit_sell_pct": profit_sell_pct,
-            "qty": bal,
-        })
+        h.update({"pnl_pct": pnl_pct, "pnl_usd": pnl_usd, "profit_sell_pct": profit_sell_pct})
         if pnl_pct > 0:
-            profitable.append(p)
+            profitable.append(h)
         else:
-            losing.append(p)
+            losing.append(h)
 
     profitable.sort(key=lambda x: x["pnl_pct"], reverse=True)
     losing.sort(key=lambda x: x["pnl_pct"])
@@ -1550,13 +1552,18 @@ def _scan_profitable_coins() -> str:
             sell_pct = round(p["profit_sell_pct"])
             if sell_pct < 1:
                 sell_pct = 1
-            lines.append(
-                f"\n  <b>{p['symbol']}</b> ({p['bot']}) — <b>{p['pnl_pct']:+.1f}%</b>\n"
+            ex_label = f" [{p['exchange']}]"
+            entry_line = (
+                f"\n  <b>{p['symbol']}</b>{ex_label} — <b>{p['pnl_pct']:+.1f}%</b>\n"
                 f"  دخول: ${p['entry']:,.4f} → حالي: ${p['price']:,.4f}\n"
-                f"  الربح: ${p['pnl_usd']:+,.2f}\n"
-                f"  ✂️ بيع الربح فقط: <code>بيع ربح {p['symbol']}</code> ({sell_pct}%)\n"
-                f"  🔄 بيع نسبة: <code>بيع {p['symbol']} 50%</code>"
+                f"  الربح: ${p['pnl_usd']:+,.2f}"
             )
+            if p["can_sell"]:
+                entry_line += (
+                    f"\n  ✂️ بيع الربح فقط: <code>بيع ربح {p['symbol']}</code> ({sell_pct}%)"
+                    f"\n  🔄 بيع نسبة: <code>بيع {p['symbol']} 50%</code>"
+                )
+            lines.append(entry_line)
     else:
         lines.append("⚪ لا توجد عملات مرتفعة حالياً")
 
@@ -1564,7 +1571,7 @@ def _scan_profitable_coins() -> str:
         lines.append(f"\n<b>🔴 عملات منخفضة ({len(losing)}):</b>")
         for p in losing[:5]:
             lines.append(
-                f"  {p['symbol']} ({p['bot']}): {p['pnl_pct']:+.1f}% (${p['pnl_usd']:+,.2f})"
+                f"  {p['symbol']} [{p['exchange']}]: {p['pnl_pct']:+.1f}% (${p['pnl_usd']:+,.2f})"
             )
 
     return "\n".join(lines)
@@ -1859,31 +1866,25 @@ def _handle_command(text: str) -> str | None:
 
         lines.append(f"\n<b>القيمة الحالية: ${grand_total:,.2f}</b>")
 
-        # إيداعات وسحوبات
+        # إيداعات وسحوبات (per-exchange from API)
         dw = _fetch_all_deposits_withdrawals()
-        total_dep = dw["total_deposited"]
-        total_wd = dw["total_withdrawn"]
+        total_dep = sum(v.get("deposited", 0) for v in dw["exchanges"].values())
+        total_wd = sum(v.get("withdrawn", 0) for v in dw["exchanges"].values())
         if total_dep > 0 or total_wd > 0:
             net = total_dep - total_wd
-            pnl = grand_total + total_wd - total_dep
-            pnl_pct = (pnl / total_dep * 100) if total_dep > 0 else 0
+            pnl = grand_total - net
+            pnl_pct = (pnl / net * 100) if net > 0 else 0
             icon = "🟢" if pnl >= 0 else "🔴"
-            source = "يدوي" if dw["manual"] else "من API"
+            lines.append(f"\n<b>━━ ملخص رأس المال ━━</b>")
+            for ex, info in dw["exchanges"].items():
+                if info.get("deposited", 0) > 0 or info.get("withdrawn", 0) > 0:
+                    lines.append(f"  {ex}: إيداع ${info['deposited']:,.2f} | سحب ${info['withdrawn']:,.2f}")
             lines.append(
-                f"\n<b>━━ ملخص رأس المال ({source}) ━━</b>\n"
-                f"إجمالي الإيداع: ${total_dep:,.2f}"
-            )
-            if not dw["manual"]:
-                for ex, info in dw["exchanges"].items():
-                    if info["deposited"] > 0 or info["withdrawn"] > 0:
-                        lines.append(f"  {ex}: إيداع ${info['deposited']:,.2f} | سحب ${info['withdrawn']:,.2f}")
-            lines.append(
+                f"\nإجمالي الإيداع: ${total_dep:,.2f}\n"
                 f"إجمالي السحب: ${total_wd:,.2f}\n"
                 f"صافي الاستثمار: ${net:,.2f}\n"
                 f"{icon} <b>الربح/الخسارة: {pnl_pct:+.2f}% (${pnl:+,.2f})</b>"
             )
-            if not dw["manual"]:
-                lines.append("\n💡 لضبط يدوي: <code>رأس مال 35000 2000</code>\n(إيداع سحب)")
 
         return "\n".join(lines)
 
@@ -2016,36 +2017,46 @@ def _handle_command(text: str) -> str | None:
                     k_pnl_usd = kc_value - kc_cost
                     lines.append(f"  <b>KuCoin: {k_pnl_pct:+.2f}% (${k_pnl_usd:+,.2f})</b>")
 
-        # ── الربح الإجمالي من رأس المال ──
+        # ── الربح الإجمالي (per-exchange) ──
         dw = _fetch_all_deposits_withdrawals()
-        deposited = dw["total_deposited"]
-        withdrawn = dw["total_withdrawn"]
-        if deposited > 0:
-            portfolio_value = 0.0
-            if BYBIT_KEY:
-                portfolio_value += bybit_usdt
-                for h in bybit_holdings:
-                    portfolio_value += h["value"]
-            if GATE_KEY:
-                portfolio_value += _fetch_gate_usdt()
-                for h in gate_holdings:
-                    portfolio_value += h["value"]
-            if KUCOIN_KEY:
-                portfolio_value += _fetch_kucoin_usdt()
-                for h in kc_holdings:
-                    portfolio_value += h["value"]
+        exchange_values: list[tuple[str, float, float, float]] = []
+        if BYBIT_KEY:
+            bv = bybit_usdt + sum(h["value"] for h in bybit_holdings)
+            bi = dw["exchanges"].get("Bybit", {})
+            exchange_values.append(("Bybit", bv, bi.get("deposited", 0), bi.get("withdrawn", 0)))
+        if GATE_KEY:
+            gv = _fetch_gate_usdt() + sum(h["value"] for h in gate_holdings)
+            gi = dw["exchanges"].get("Gate.io", {})
+            exchange_values.append(("Gate.io", gv, gi.get("deposited", 0), gi.get("withdrawn", 0)))
+        if KUCOIN_KEY:
+            kv = _fetch_kucoin_usdt() + sum(h["value"] for h in kc_holdings)
+            ki = dw["exchanges"].get("KuCoin", {})
+            exchange_values.append(("KuCoin", kv, ki.get("deposited", 0), ki.get("withdrawn", 0)))
 
-            net = deposited - withdrawn
-            overall_pnl = portfolio_value + withdrawn - deposited
-            overall_pct = (overall_pnl / deposited) * 100
+        total_val = sum(v for _, v, _, _ in exchange_values)
+        total_dep = sum(d for _, _, d, _ in exchange_values)
+        total_wd = sum(w for _, _, _, w in exchange_values)
+        if total_dep > 0:
+            lines.append(f"\n<b>━━ الربح الإجمالي ━━</b>")
+            for ex_name, val, dep, wd in exchange_values:
+                net_dep = dep - wd
+                if net_dep > 0:
+                    pnl = val - net_dep
+                    pnl_pct = (pnl / net_dep) * 100
+                    ic = "🟢" if pnl >= 0 else "🔴"
+                    lines.append(f"  {ic} {ex_name}: ${val:,.0f} / ${net_dep:,.0f} ({pnl_pct:+.1f}%)")
+                elif val > 1:
+                    lines.append(f"  ⚪ {ex_name}: ${val:,.0f}")
+            net = total_dep - total_wd
+            overall_pnl = total_val - net
+            overall_pct = (overall_pnl / net) * 100 if net > 0 else 0
             icon = "🟢" if overall_pnl >= 0 else "🔴"
             lines.append(
-                f"\n{icon} <b>━━ الربح الإجمالي (6 أشهر) ━━</b>\n"
-                f"إجمالي الإيداع: ${deposited:,.2f}\n"
-                f"إجمالي السحب: ${withdrawn:,.2f}\n"
+                f"\nإجمالي الإيداع: ${total_dep:,.2f}\n"
+                f"إجمالي السحب: ${total_wd:,.2f}\n"
                 f"صافي الاستثمار: ${net:,.2f}\n"
-                f"القيمة الحالية: ${portfolio_value:,.2f}\n"
-                f"<b>الربح/الخسارة: {overall_pct:+.2f}% (${overall_pnl:+,.2f})</b>"
+                f"القيمة الحالية: ${total_val:,.2f}\n"
+                f"{icon} <b>الربح/الخسارة: {overall_pct:+.2f}% (${overall_pnl:+,.2f})</b>"
             )
 
         return "\n".join(lines)
