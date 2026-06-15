@@ -43,10 +43,14 @@ TESTNET = (ENV.get("BYBIT_TESTNET", "false").lower() == "true"
            or os.getenv("BYBIT_TESTNET", "").lower() == "true")
 
 
-def _market_buy(ex, pair: str, usdt: float):
-    """شراء سوق بمبلغ USDT (طريقة الـ cost — تتجنب غموض كمية أمر السوق)."""
-    ex.options["createMarketBuyOrderRequiresPrice"] = False
-    return ex.create_market_buy_order(pair, usdt)
+def _market_buy(ex, pair: str, usdt: float, price: float):
+    """شراء سوق بنفس طريقة البوت: كمية أساسية + سعر.
+    ccxt الافتراضي (createMarketBuyOrderRequiresPrice=True) يحسب التكلفة =
+    الكمية × السعر ويرسلها — يتجنب تفسير الرقم كـ BTC بدل USDT."""
+    qty = float(ex.amount_to_precision(pair, usdt / price))
+    if qty <= 0:
+        raise ValueError(f"الكمية المحسوبة صفر (usdt={usdt}, price={price})")
+    return ex.create_order(pair, "market", "buy", qty, price)
 
 
 def _place_stop(ex, pair: str, qty: float, trigger: float):
@@ -133,7 +137,12 @@ def main():
     try:
         # 2) شراء سوق
         print(f"→ شراء سوق بـ ${args.usdt}...")
-        _market_buy(ex, pair, args.usdt)
+        try:
+            _market_buy(ex, pair, args.usdt, price)
+        except Exception as e:
+            print(f"❌ فشل الشراء: {e}")
+            print("   جرّب مبلغاً أكبر (--usdt 12) لو السبب الحد الأدنى للأمر.")
+            return
         time.sleep(2)
         base_free = float(ex.fetch_balance().get(base, {}).get("free", 0))
         print(f"✓ تم الشراء | كمية مملوكة: {base_free}")
