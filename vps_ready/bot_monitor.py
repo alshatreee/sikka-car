@@ -683,6 +683,31 @@ def get_all_held_coins() -> dict[str, list[str]]:
     return held
 
 
+def real_held_symbols() -> set[str]:
+    """Symbols actually present in any exchange wallet (value > $1).
+    Used to filter out phantom positions left in bot state files."""
+    syms: set[str] = set()
+    try:
+        if BYBIT_KEY:
+            for h in _get_bybit_holdings_with_entry():
+                syms.add(h["symbol"].upper())
+    except Exception:
+        pass
+    try:
+        if GATE_KEY:
+            for h in _fetch_gate_balances():
+                syms.add(h["symbol"].upper())
+    except Exception:
+        pass
+    try:
+        if KUCOIN_KEY:
+            for h in _fetch_kucoin_balances():
+                syms.add(h["symbol"].upper())
+    except Exception:
+        pass
+    return syms
+
+
 def get_all_positions() -> list[dict]:
     """Return [{symbol, pair, entry, qty, bot, opened_str}, ...] from all bots."""
     positions = []
@@ -756,9 +781,16 @@ def check_held_vs_ai() -> list[str]:
     if not held:
         return []
 
+    # only alert for coins actually in a wallet — skip phantom positions that
+    # linger in a bot's state file after the coin was already sold
+    real = real_held_symbols()
+
     alerts = []
     for sym, bots in held.items():
         if sym not in sell_syms:
+            continue
+        if real and sym not in real:
+            log(f"AI يوصي ببيع {sym} — لكنها غير موجودة بالمحفظة (تجاهل)")
             continue
         info = sell_syms[sym]
         bots_str = " + ".join(bots)
@@ -2101,12 +2133,33 @@ def _handle_command(text: str) -> str | None:
 
     # ── عملات / coins / holdings ──
     if text in ("عملات", "coins", "holdings", "/coins"):
-        held = get_all_held_coins()
-        if not held:
+        # Real wallet holdings per exchange (avoids phantom coins from stale
+        # state files — only shows coins actually present in the wallet).
+        held = get_all_held_coins()  # {SYM: [bot_names]} for bot attribution
+        real: dict[str, list[str]] = {}  # SYM -> [exchange labels]
+        if BYBIT_KEY:
+            for h in _get_bybit_holdings_with_entry():
+                real.setdefault(h["symbol"].upper(), []).append("Bybit")
+        if GATE_KEY:
+            for h in _fetch_gate_balances():
+                real.setdefault(h["symbol"].upper(), []).append("Gate")
+        if KUCOIN_KEY:
+            for h in _fetch_kucoin_balances():
+                real.setdefault(h["symbol"].upper(), []).append("KuCoin")
+
+        if not real:
             return "📭 لا توجد عملات محتفظ بها حالياً"
-        lines = ["<b>📊 العملات المحتفظ بها</b>\n"]
-        for sym, bots in sorted(held.items()):
-            lines.append(f"  {sym}USDT — {', '.join(bots)}")
+        lines = ["<b>📊 العملات المحتفظ بها (الرصيد الفعلي)</b>\n"]
+        for sym in sorted(real):
+            exchanges = ", ".join(real[sym])
+            bots = held.get(sym, [])
+            bot_label = f" — بوت: {', '.join(bots)}" if bots else ""
+            lines.append(f"  {sym}: {exchanges}{bot_label}")
+
+        # Flag any stale state-file positions no longer in the wallet
+        stale = [s for s in held if s not in real]
+        if stale:
+            lines.append(f"\n⚠️ في ملف البوت لكن غير موجودة بالمحفظة: {', '.join(stale)}")
         return "\n".join(lines)
 
     # ── أرباح / pnl ──
