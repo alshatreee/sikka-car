@@ -1416,6 +1416,23 @@ def _fetch_all_deposits_withdrawals() -> dict:
     return result
 
 
+def _locate_coin(symbol: str) -> list[str]:
+    """Return the list of non-Bybit exchanges that hold this coin (for clearer errors)."""
+    sym = symbol.upper()
+    found = []
+    try:
+        if GATE_KEY and any(b["symbol"].upper() == sym for b in _fetch_gate_balances()):
+            found.append("Gate")
+    except Exception:
+        pass
+    try:
+        if KUCOIN_KEY and any(b["symbol"].upper() == sym for b in _fetch_kucoin_balances()):
+            found.append("KuCoin")
+    except Exception:
+        pass
+    return found
+
+
 def _execute_sell(symbol: str, sell_pct: float) -> str:
     """Execute a sell order. symbol is base coin (e.g. 'ENJ'). sell_pct is 1-100."""
     if not BYBIT_KEY or not BYBIT_SECRET:
@@ -1424,10 +1441,18 @@ def _execute_sell(symbol: str, sell_pct: float) -> str:
     pair = f"{symbol.upper()}USDT"
     free = _fetch_coin_balance(symbol)
     if free <= 0:
+        other = _locate_coin(symbol)
+        if other:
+            return (f"❌ {symbol} غير موجودة على Bybit — هي على {', '.join(other)}.\n"
+                    f"⚠️ البيع عبر البوت يدعم Bybit فقط (Gate/KuCoin للعرض فقط).")
         return f"❌ لا يوجد رصيد من {symbol} في المحفظة"
 
     price = _fetch_price(pair)
     if not price:
+        other = _locate_coin(symbol)
+        if other:
+            return (f"❌ {symbol} على {', '.join(other)} وليست على Bybit.\n"
+                    f"⚠️ البيع عبر البوت يدعم Bybit فقط.")
         return f"❌ لم أستطع جلب سعر {pair}"
 
     sell_qty = free * (sell_pct / 100.0)
@@ -1560,11 +1585,11 @@ def _scan_profitable_coins() -> str:
         top = profitable[0]
         # pick the worst net-loser symbol
         worst_sym = min(net_losers, key=lambda s: sym_net[s])
-        worst_entry = next((h for h in buy_more if h["symbol"] == worst_sym), buy_more[0])
         total_profit = sum(p["pnl_usd"] for p in profitable)
+        how = "بيع بأمر البوت" if top["can_sell"] else f"بيع يدوي على {top['exchange']}"
         lines.append("<b>💡 التوصية:</b>")
         lines.append(
-            f"  بيع ربح <b>{top['symbol']}</b> [{top['exchange']}] ({top['pnl_pct']:+.1f}% = ${top['pnl_usd']:+,.2f})"
+            f"  بيع ربح <b>{top['symbol']}</b> [{top['exchange']}] ({top['pnl_pct']:+.1f}% = ${top['pnl_usd']:+,.2f}) — {how}"
             f"\n  ← شراء/تعزيز <b>{worst_sym}</b> (صافي: ${sym_net[worst_sym]:+,.2f})"
             f"\n  إجمالي أرباح قابلة للجني: <b>${total_profit:,.2f}</b>\n"
         )
@@ -1619,11 +1644,19 @@ def _execute_profit_sell(symbol: str) -> str:
             break
 
     if not entry:
+        other = _locate_coin(symbol)
+        if other:
+            return (f"❌ {symbol} على {', '.join(other)} وليست على Bybit.\n"
+                    f"⚠️ البيع عبر البوت يدعم Bybit فقط.")
         return f"❌ لم أجد سعر دخول لـ {symbol}"
 
     pair = f"{symbol.upper()}USDT"
     price = _fetch_price(pair)
     if not price:
+        other = _locate_coin(symbol)
+        if other:
+            return (f"❌ {symbol} على {', '.join(other)} وليست على Bybit.\n"
+                    f"⚠️ البيع عبر البوت يدعم Bybit فقط.")
         return f"❌ لم أستطع جلب سعر {pair}"
 
     if price <= entry:
@@ -2092,11 +2125,12 @@ def _handle_command(text: str) -> str | None:
     if text in ("أوامر", "help", "/help", "مساعدة"):
         return (
             "<b>📋 الأوامر المتاحة:</b>\n\n"
-            "<b>تداول:</b>\n"
+            "<b>تداول (Bybit فقط):</b>\n"
             "<code>فرص</code> — توصيات بيع/تعزيز + كل المنصات\n"
-            "<code>بيع ربح NIL</code> — بيع الربح فقط (حفظ رأس المال)\n"
-            "<code>بيع UB 50%</code> — بيع 50% من عملة\n"
-            "<code>بيع UB</code> — بيع 100%\n\n"
+            "<code>بيع ربح SYM</code> — بيع الربح فقط (حفظ رأس المال)\n"
+            "<code>بيع SYM 50%</code> — بيع 50% من عملة\n"
+            "<code>بيع SYM</code> — بيع 100%\n"
+            "<i>(Gate/KuCoin للعرض فقط — البيع يدوي)</i>\n\n"
             "<b>محفظة:</b>\n"
             "<code>أرباح</code> — ربح/خسارة كل عملة + إجمالي\n"
             "<code>تقرير</code> — أداء كل بوت منذ التفعيل\n"
