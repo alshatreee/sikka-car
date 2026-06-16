@@ -2118,7 +2118,7 @@ def _handle_command(text: str) -> str | None:
         return (f"✅ تفعّلت الدورة التلقائية على KuCoin\n"
                 f"بيع الربح عند +{CYCLE_RISE_PCT:.0f}% | إعادة الشراء عند -{CYCLE_DROP_PCT:.0f}%\n"
                 f"تشمل كل عملات KuCoin تلقائياً. فحص كل {CYCLE_INTERVAL//60} دقيقة.\n"
-                f"💡 لضبط هدف ربح: <code>دورة هدف SYM 50</code>")
+                f"💡 لضبط هدف ربح: <code>دورة هدف الرمز 50</code>")
     if text in ("دورة ايقاف", "دورة إيقاف", "دوره ايقاف", "cycle off"):
         cyc = _load_cycle()
         cyc["enabled"] = False
@@ -2152,7 +2152,7 @@ def _handle_command(text: str) -> str | None:
                 tgt = f" | هدف ${c['target']:.0f}" if c.get("target") else ""
                 lines.append(f"  {sym}: {ph} | دورات {c.get('cycles',0)} | "
                              f"ربح ${c.get('harvested',0):+.2f}{tgt}{done}")
-        lines.append("\n<code>دورة تشغيل</code> / <code>دورة ايقاف</code> / <code>دورة هدف SYM 50</code>")
+        lines.append("\n<code>دورة تشغيل</code> / <code>دورة ايقاف</code> / <code>دورة هدف الرمز 50</code>")
         return "\n".join(lines)
 
     # ── تقرير / report ──
@@ -2560,15 +2560,15 @@ def _handle_command(text: str) -> str | None:
             "<b>📋 الأوامر المتاحة:</b>\n\n"
             "<b>تداول (Bybit + KuCoin):</b>\n"
             "<code>فرص</code> — توصيات بيع/تعزيز + كل المنصات\n"
-            "<code>بيع ربح SYM</code> — بيع الربح فقط (حفظ رأس المال)\n"
-            "<code>بيع SYM 50%</code> — بيع 50% من عملة\n"
-            "<code>بيع SYM</code> — بيع 100%\n"
+            "<code>بيع ربح الرمز</code> — بيع الربح فقط (حفظ رأس المال)\n"
+            "<code>بيع الرمز 50%</code> — بيع 50% من عملة\n"
+            "<code>بيع الرمز</code> — بيع 100%\n"
             "<i>(Gate للعرض فقط — البيع يدوي)</i>\n\n"
             "<b>الدورة التلقائية (KuCoin):</b>\n"
             "<code>دورة تشغيل</code> — تفعيل بيع الربح +10% / شراء -15%\n"
             "<code>دورة ايقاف</code> — إيقاف الدورة\n"
             "<code>دورة</code> — حالة الدورة لكل عملة\n"
-            "<code>دورة هدف SYM 50</code> — هدف ربح ثم توقف\n\n"
+            "<code>دورة هدف الرمز 50</code> — هدف ربح ثم توقف\n\n"
             "<b>محفظة:</b>\n"
             "<code>أرباح</code> — ربح/خسارة كل عملة + إجمالي\n"
             "<code>تقرير</code> — أداء كل بوت منذ التفعيل\n"
