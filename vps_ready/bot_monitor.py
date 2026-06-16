@@ -1319,6 +1319,9 @@ CYCLE_DROP_PCT = float(os.getenv("KUCOIN_CYCLE_DROP", "15"))
 CYCLE_INTERVAL = int(os.getenv("KUCOIN_CYCLE_SEC", "180"))
 CYCLE_MIN_ORDER = 1.0
 
+PROFIT_SELL_COOLDOWN = 24 * 3600
+_profit_sell_ts: dict[str, float] = {}
+
 
 def _load_cycle() -> dict:
     if KUCOIN_CYCLE_STATE.exists():
@@ -1794,20 +1797,19 @@ def _locate_coin(symbol: str) -> list[str]:
 
 def _execute_sell(symbol: str, sell_pct: float) -> str:
     """Execute a sell order. symbol is base coin (e.g. 'ENJ'). sell_pct is 1-100.
-    Routes to Bybit if held there, otherwise KuCoin. Gate stays view-only."""
-    if not BYBIT_KEY or not BYBIT_SECRET:
-        return "❌ مفاتيح Bybit غير متوفرة"
+    Routes to KuCoin first, then Bybit. Gate stays view-only."""
+    # try KuCoin first
+    if KUCOIN_KEY and any(b["symbol"].upper() == symbol.upper()
+                          for b in _fetch_kucoin_balances()):
+        return _execute_kucoin_sell(symbol, sell_pct)
 
+    # fallback to Bybit
     pair = f"{symbol.upper()}USDT"
-    free = _fetch_coin_balance(symbol)
+    free = _fetch_coin_balance(symbol) if BYBIT_KEY else 0
     if free <= 0:
-        # not on Bybit — try KuCoin (Gate is view-only)
-        if KUCOIN_KEY and any(b["symbol"].upper() == symbol.upper()
-                              for b in _fetch_kucoin_balances()):
-            return _execute_kucoin_sell(symbol, sell_pct)
         other = _locate_coin(symbol)
         if other:
-            return (f"❌ {symbol} غير موجودة على Bybit — هي على {', '.join(other)}.\n"
+            return (f"❌ {symbol} على {', '.join(other)}.\n"
                     f"⚠️ Gate للعرض فقط (بِع يدوياً على المنصّة).")
         return f"❌ لا يوجد رصيد من {symbol} في المحفظة"
 
@@ -1932,8 +1934,13 @@ def _scan_profitable_coins() -> str:
     # net-losers = symbols that are overall losing across all exchanges → buy more
     net_losers = {s for s, pnl in sym_net.items() if pnl < 0}
 
-    # split: pure winners (not net-losers) vs losers
-    profitable = [h for h in all_holdings if not h.get("skip") and h["pnl_pct"] > 0 and h["symbol"] not in net_losers]
+    # skip coins whose profit was sold recently
+    now = time.time()
+    cooled = {s for s, ts in _profit_sell_ts.items() if now - ts < PROFIT_SELL_COOLDOWN}
+
+    # split: pure winners (not net-losers, not recently sold) vs losers
+    profitable = [h for h in all_holdings if not h.get("skip") and h["pnl_pct"] > 0
+                  and h["symbol"] not in net_losers and h["symbol"] not in cooled]
     buy_more = [h for h in all_holdings if not h.get("skip") and h["symbol"] in net_losers]
     profitable.sort(key=lambda x: x["pnl_pct"], reverse=True)
     buy_more.sort(key=lambda x: sym_net.get(x["symbol"], 0))
@@ -1991,15 +1998,23 @@ def _scan_profitable_coins() -> str:
 
 def _execute_profit_sell(symbol: str) -> str:
     """Sell only the profit portion of a coin, keeping the original investment.
-    Routes to Bybit if held there, otherwise KuCoin. Gate stays view-only."""
-    if not BYBIT_KEY or not BYBIT_SECRET:
-        return "❌ مفاتيح Bybit غير متوفرة"
+    Routes to KuCoin first, then Bybit. Gate stays view-only."""
+    # try KuCoin first
+    if KUCOIN_KEY and any(b["symbol"].upper() == symbol.upper()
+                          for b in _fetch_kucoin_balances()):
+        result = _execute_kucoin_sell(symbol, 100.0, profit_only=True)
+        if result.startswith("✅"):
+            _profit_sell_ts[symbol.upper()] = time.time()
+        return result
 
-    # not on Bybit — try KuCoin (Gate is view-only)
+    # fallback to Bybit
+    if not BYBIT_KEY or not BYBIT_SECRET:
+        return f"❌ لم أجد {symbol} على KuCoin"
     if _fetch_coin_balance(symbol) <= 0:
-        if KUCOIN_KEY and any(b["symbol"].upper() == symbol.upper()
-                              for b in _fetch_kucoin_balances()):
-            return _execute_kucoin_sell(symbol, 100.0, profit_only=True)
+        other = _locate_coin(symbol)
+        if other:
+            return f"❌ {symbol} على {', '.join(other)} (Gate للعرض فقط — بِع يدوياً)"
+        return f"❌ لا يوجد رصيد من {symbol}"
 
     # Find entry price from bot state files
     entry = 0.0
@@ -2067,6 +2082,7 @@ def _execute_profit_sell(symbol: str) -> str:
 
     if result and result.get("retCode") == 0:
         remaining = free - profit_qty
+        _profit_sell_ts[symbol.upper()] = time.time()
         msg = (f"✅ تم بيع ربح {symbol} فقط\n"
                f"الكمية المباعة: {_qty_str(profit_qty)} ({profit_pct:.1f}%)\n"
                f"القيمة: ${profit_value:,.2f}\n"
@@ -2558,7 +2574,7 @@ def _handle_command(text: str) -> str | None:
     if text in ("أوامر", "help", "/help", "مساعدة"):
         return (
             "<b>📋 الأوامر المتاحة:</b>\n\n"
-            "<b>تداول (Bybit + KuCoin):</b>\n"
+            "<b>تداول (KuCoin):</b>\n"
             "<code>فرص</code> — توصيات بيع/تعزيز + كل المنصات\n"
             "<code>بيع ربح الرمز</code> — بيع الربح فقط (حفظ رأس المال)\n"
             "<code>بيع الرمز 50%</code> — بيع 50% من عملة\n"
