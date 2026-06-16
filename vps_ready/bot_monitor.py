@@ -1152,15 +1152,56 @@ def _kucoin_signed_post(path: str, body: dict) -> dict | None:
 
 
 def _kucoin_symbol_info(symbol: str) -> dict:
-    """Return baseIncrement / baseMinSize for a KuCoin SYMBOL-USDT pair."""
+    """Return baseIncrement / baseMinSize / quoteMinSize for a SYMBOL-USDT pair."""
     pair = f"{symbol.upper()}-USDT"
     data = _http_get(f"https://api.kucoin.com/api/v2/symbols/{pair}")
     if data and data.get("code") == "200000":
         d = data.get("data", {})
         if d:
             return {"baseIncrement": _safe_float(d.get("baseIncrement")) or 0.0001,
-                    "baseMinSize": _safe_float(d.get("baseMinSize")) or 0.0}
-    return {"baseIncrement": 0.0001, "baseMinSize": 0.0}
+                    "baseMinSize": _safe_float(d.get("baseMinSize")) or 0.0,
+                    "quoteMinSize": _safe_float(d.get("quoteMinSize")) or 0.1}
+    return {"baseIncrement": 0.0001, "baseMinSize": 0.0, "quoteMinSize": 0.1}
+
+
+def _execute_kucoin_buy(symbol: str, usd: float) -> str:
+    """Market-buy a coin on KuCoin using USDT (funds). Tops up trade USDT from main."""
+    coin = symbol.upper()
+    pair = f"{coin}-USDT"
+    info = _kucoin_symbol_info(coin)
+    if usd < info["quoteMinSize"] or usd < 1.0:
+        return f"❌ مبلغ الشراء (${usd:.2f}) أقل من الحد الأدنى ({info['quoteMinSize']})"
+
+    trade_usdt = _fetch_kucoin_coin_balance("USDT", "trade")
+    main_usdt = _fetch_kucoin_coin_balance("USDT", "main")
+    if trade_usdt + main_usdt < usd:
+        return f"❌ رصيد USDT غير كافٍ على KuCoin (${trade_usdt+main_usdt:.2f} < ${usd:.2f})"
+
+    # KuCoin buys from the trade account — top it up from main if short
+    if trade_usdt < usd:
+        need = usd - trade_usdt
+        if main_usdt >= need:
+            if not _kucoin_inner_transfer("USDT", need, "main", "trade"):
+                return "❌ تعذّر نقل USDT من main إلى trade على KuCoin"
+            time.sleep(1)
+
+    body = {
+        "clientOid": _secrets.token_hex(12),
+        "side": "buy",
+        "symbol": pair,
+        "type": "market",
+        "funds": f"{usd:.4f}",
+    }
+    res = _kucoin_signed_post("/api/v1/orders", body)
+    if res and res.get("code") == "200000":
+        price = _fetch_kucoin_price(coin) or 0
+        log(f"KuCoin BUY: {coin} بـ ${usd:.2f} @ ~${price}")
+        return (f"✅ تم شراء {coin} على KuCoin\n"
+                f"المبلغ: ${usd:.2f}\nالسعر: ~${price:,.6f}")
+    msg = res.get("msg", "unknown") if res else "no response"
+    code = res.get("code", "?") if res else "?"
+    log(f"KuCoin BUY FAILED: {coin} — {code}: {msg}")
+    return f"❌ فشل الشراء على KuCoin: {code} — {msg}"
 
 
 def _fetch_kucoin_coin_balance(coin: str, acct_type: str) -> float:
@@ -1190,8 +1231,11 @@ def _kucoin_inner_transfer(coin: str, amount: float, frm: str, to: str) -> bool:
     return ok
 
 
-def _execute_kucoin_sell(symbol: str, sell_pct: float, profit_only: bool = False) -> str:
-    """Market-sell a coin on KuCoin. Moves it main→trade first if needed."""
+def _execute_kucoin_sell(symbol: str, sell_pct: float, profit_only: bool = False,
+                         out: dict | None = None) -> str:
+    """Market-sell a coin on KuCoin. Moves it main→trade first if needed.
+    If `out` is given, it's filled with {ok, price, qty, value} for callers
+    (e.g. the auto-cycle) that need the realized amount."""
     coin = symbol.upper()
     pair = f"{coin}-USDT"
     price = _fetch_kucoin_price(coin)
@@ -1247,16 +1291,156 @@ def _execute_kucoin_sell(symbol: str, sell_pct: float, profit_only: bool = False
     res = _kucoin_signed_post("/api/v1/orders", body)
     if res and res.get("code") == "200000":
         value = sell_qty * price
+        if out is not None:
+            out.update({"ok": True, "price": price, "qty": sell_qty, "value": value})
         label = "بيع ربح" if profit_only else f"بيع {sell_pct:.0f}%"
         log(f"KuCoin SELL: {coin} {label} qty={sell_qty} @ ${price}")
         return (f"✅ تم {label} من {coin} على KuCoin\n"
                 f"الكمية: {_qty_str(sell_qty)}\n"
                 f"السعر: ${price:,.6f}\n"
                 f"القيمة: ${value:,.2f}")
+    if out is not None:
+        out.update({"ok": False})
     msg = res.get("msg", "unknown") if res else "no response"
     code = res.get("code", "?") if res else "?"
     log(f"KuCoin SELL FAILED: {coin} — {code}: {msg}")
     return f"❌ فشل البيع على KuCoin: {code} — {msg}"
+
+
+# ══════════════════════════════════════════════════════════════
+# KUCOIN AUTO-CYCLE (profit-harvest + re-buy grid)
+#   عند ارتفاع +10% فوق سعر المرجع → بيع الربح، وتسجيل سعر البيع.
+#   عند هبوط -15% تحت سعر البيع → إعادة الشراء بنفس قيمة البيع.
+#   تتكرر الدورة حتى بلوغ هدف الربح لكل عملة (إن وُجد).
+# ══════════════════════════════════════════════════════════════
+KUCOIN_CYCLE_STATE = BASE_DIR / "kucoin_cycle_state.json"
+CYCLE_RISE_PCT = float(os.getenv("KUCOIN_CYCLE_RISE", "10"))
+CYCLE_DROP_PCT = float(os.getenv("KUCOIN_CYCLE_DROP", "15"))
+CYCLE_INTERVAL = int(os.getenv("KUCOIN_CYCLE_SEC", "180"))
+CYCLE_MIN_ORDER = 1.0
+
+
+def _load_cycle() -> dict:
+    if KUCOIN_CYCLE_STATE.exists():
+        try:
+            return json.loads(KUCOIN_CYCLE_STATE.read_text())
+        except Exception:
+            pass
+    return {"enabled": False, "default_target": 0.0, "coins": {}}
+
+
+def _save_cycle(cyc: dict) -> None:
+    tmp = KUCOIN_CYCLE_STATE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cyc, ensure_ascii=False, indent=2))
+    os.replace(tmp, KUCOIN_CYCLE_STATE)
+
+
+def run_kucoin_cycle() -> None:
+    """One tick of the KuCoin auto-cycle. Safe to call repeatedly."""
+    if not KUCOIN_KEY:
+        return
+    cyc = _load_cycle()
+    if not cyc.get("enabled"):
+        return
+
+    try:
+        holdings = {h["symbol"].upper(): h for h in _get_kucoin_holdings_with_entry()}
+    except Exception as e:
+        log(f"CYCLE: فشل جلب أرصدة KuCoin: {e}")
+        return
+
+    coins = cyc.setdefault("coins", {})
+    default_target = cyc.get("default_target", 0.0)
+
+    # auto-enroll every KuCoin holding (scope = all)
+    for sym, h in holdings.items():
+        if sym not in coins:
+            ref = h.get("entry") or h.get("price") or 0
+            coins[sym] = {
+                "ref_price": ref, "last_sell_price": 0.0,
+                "pending_rebuy_usd": 0.0, "phase": "holding",
+                "harvested": 0.0, "target": default_target,
+                "cycles": 0, "done": False,
+            }
+
+    changed = False
+    for sym, c in coins.items():
+        if c.get("done"):
+            continue
+        price = _fetch_kucoin_price(sym)
+        if not price or price <= 0:
+            continue
+
+        phase = c.get("phase", "holding")
+
+        # ── HOLDING: wait for +RISE% over the reference, then harvest profit ──
+        if phase == "holding":
+            ref = c.get("ref_price") or 0
+            if ref <= 0:
+                c["ref_price"] = price
+                changed = True
+                continue
+            if price >= ref * (1 + CYCLE_RISE_PCT / 100):
+                # sell the gain portion relative to the cycle reference
+                profit_pct = ((price - ref) / price) * 100
+                out: dict = {}
+                _execute_kucoin_sell(sym, profit_pct, out=out)
+                if out.get("ok"):
+                    sold_usd = out["value"]
+                    profit_usd = (price - ref) * out["qty"]
+                    c["last_sell_price"] = price
+                    c["pending_rebuy_usd"] = sold_usd
+                    c["phase"] = "waiting_rebuy"
+                    c["harvested"] = c.get("harvested", 0.0) + profit_usd
+                    c["cycles"] = c.get("cycles", 0) + 1
+                    changed = True
+                    notify(f"🔄 دورة KuCoin: بيع ربح <b>{sym}</b>\n"
+                           f"ارتفع +{CYCLE_RISE_PCT:.0f}% → بِعت ${sold_usd:.2f} @ ${price:,.6f}\n"
+                           f"ربح هذه الدورة: ${profit_usd:+.2f} | إجمالي: ${c['harvested']:+.2f}\n"
+                           f"⏳ سأعيد الشراء عند -{CYCLE_DROP_PCT:.0f}%")
+                    tgt = c.get("target", 0.0)
+                    if tgt and c["harvested"] >= tgt:
+                        c["done"] = True
+                        notify(f"🎯 دورة KuCoin: <b>{sym}</b> بلغت هدف الربح "
+                               f"${tgt:.2f} (محقق ${c['harvested']:.2f}) — توقفت.")
+
+        # ── WAITING_REBUY: wait for -DROP% under the sell price, then re-buy ──
+        elif phase == "waiting_rebuy":
+            sp = c.get("last_sell_price") or 0
+            if sp <= 0:
+                c["phase"] = "holding"
+                changed = True
+                continue
+            if price <= sp * (1 - CYCLE_DROP_PCT / 100):
+                usd = c.get("pending_rebuy_usd", 0.0)
+                if usd < CYCLE_MIN_ORDER:
+                    c["phase"] = "holding"
+                    c["ref_price"] = price
+                    changed = True
+                    continue
+                res = _execute_kucoin_buy(sym, usd)
+                if res.startswith("✅"):
+                    c["ref_price"] = price
+                    c["pending_rebuy_usd"] = 0.0
+                    c["phase"] = "holding"
+                    changed = True
+                    notify(f"🔄 دورة KuCoin: إعادة شراء <b>{sym}</b>\n"
+                           f"هبط -{CYCLE_DROP_PCT:.0f}% → اشتريت ${usd:.2f} @ ${price:,.6f}\n"
+                           f"🔁 الدورة #{c.get('cycles',0)+1} بدأت")
+
+    if changed:
+        _save_cycle(cyc)
+
+
+def _cycle_loop() -> None:
+    """Background thread: run the KuCoin auto-cycle every CYCLE_INTERVAL seconds."""
+    log(f"CYCLE: حلقة دورة KuCoin بدأت (كل {CYCLE_INTERVAL}s)")
+    while True:
+        try:
+            run_kucoin_cycle()
+        except Exception as e:
+            log(f"CYCLE error: {e}")
+        time.sleep(CYCLE_INTERVAL)
 
 
 def _fetch_kucoin_balances() -> list[dict]:
@@ -1926,6 +2110,51 @@ def _handle_command(text: str) -> str | None:
     if text in ("فرص", "opportunities", "/opportunities", "ارباح اليوم"):
         return _scan_profitable_coins()
 
+    # ── دورة KuCoin التلقائية ──
+    if text in ("دورة تشغيل", "دوره تشغيل", "cycle on"):
+        cyc = _load_cycle()
+        cyc["enabled"] = True
+        _save_cycle(cyc)
+        return (f"✅ تفعّلت الدورة التلقائية على KuCoin\n"
+                f"بيع الربح عند +{CYCLE_RISE_PCT:.0f}% | إعادة الشراء عند -{CYCLE_DROP_PCT:.0f}%\n"
+                f"تشمل كل عملات KuCoin تلقائياً. فحص كل {CYCLE_INTERVAL//60} دقيقة.\n"
+                f"💡 لضبط هدف ربح: <code>دورة هدف SYM 50</code>")
+    if text in ("دورة ايقاف", "دورة إيقاف", "دوره ايقاف", "cycle off"):
+        cyc = _load_cycle()
+        cyc["enabled"] = False
+        _save_cycle(cyc)
+        return "🛑 أُوقفت الدورة التلقائية (لن تُفتح صفقات جديدة)."
+    cyc_target = re.match(r"(?:دورة|دوره)\s+هدف\s+([A-Za-z]+)\s+([\d.]+)", text, re.IGNORECASE)
+    if cyc_target:
+        sym = cyc_target.group(1).upper()
+        tgt = float(cyc_target.group(2))
+        cyc = _load_cycle()
+        c = cyc.setdefault("coins", {}).setdefault(sym, {
+            "ref_price": 0.0, "last_sell_price": 0.0, "pending_rebuy_usd": 0.0,
+            "phase": "holding", "harvested": 0.0, "target": 0.0, "cycles": 0, "done": False})
+        c["target"] = tgt
+        c["done"] = False
+        _save_cycle(cyc)
+        return f"🎯 هدف ربح {sym} = ${tgt:.2f}. تتوقف الدورة عند بلوغه."
+    if text in ("دورة", "دوره", "cycle", "/cycle"):
+        cyc = _load_cycle()
+        status = "🟢 مفعّلة" if cyc.get("enabled") else "🔴 متوقفة"
+        lines = [f"<b>🔄 الدورة التلقائية (KuCoin)</b>\n",
+                 f"الحالة: {status}",
+                 f"بيع: +{CYCLE_RISE_PCT:.0f}% | شراء: -{CYCLE_DROP_PCT:.0f}% | فحص كل {CYCLE_INTERVAL//60}د\n"]
+        coins = cyc.get("coins", {})
+        if not coins:
+            lines.append("لا عملات مسجّلة بعد (تُضاف تلقائياً عند التفعيل).")
+        else:
+            for sym, c in sorted(coins.items()):
+                ph = "بانتظار شراء" if c.get("phase") == "waiting_rebuy" else "محتفظ"
+                done = " ✅تم الهدف" if c.get("done") else ""
+                tgt = f" | هدف ${c['target']:.0f}" if c.get("target") else ""
+                lines.append(f"  {sym}: {ph} | دورات {c.get('cycles',0)} | "
+                             f"ربح ${c.get('harvested',0):+.2f}{tgt}{done}")
+        lines.append("\n<code>دورة تشغيل</code> / <code>دورة ايقاف</code> / <code>دورة هدف SYM 50</code>")
+        return "\n".join(lines)
+
     # ── تقرير / report ──
     if text in ("تقرير", "report", "/report"):
         lines = ["<b>📊 تقرير أداء البوتات الإجمالي</b>\n"]
@@ -2335,6 +2564,11 @@ def _handle_command(text: str) -> str | None:
             "<code>بيع SYM 50%</code> — بيع 50% من عملة\n"
             "<code>بيع SYM</code> — بيع 100%\n"
             "<i>(Gate للعرض فقط — البيع يدوي)</i>\n\n"
+            "<b>الدورة التلقائية (KuCoin):</b>\n"
+            "<code>دورة تشغيل</code> — تفعيل بيع الربح +10% / شراء -15%\n"
+            "<code>دورة ايقاف</code> — إيقاف الدورة\n"
+            "<code>دورة</code> — حالة الدورة لكل عملة\n"
+            "<code>دورة هدف SYM 50</code> — هدف ربح ثم توقف\n\n"
             "<b>محفظة:</b>\n"
             "<code>أرباح</code> — ربح/خسارة كل عملة + إجمالي\n"
             "<code>تقرير</code> — أداء كل بوت منذ التفعيل\n"
@@ -2488,6 +2722,12 @@ def main():
 
     cmd_thread = threading.Thread(target=_command_loop, daemon=True)
     cmd_thread.start()
+
+    # KuCoin auto-cycle (profit-harvest + re-buy). Only acts when enabled
+    # via the «دورة تشغيل» command — starts idle so nothing trades by surprise.
+    if KUCOIN_KEY:
+        cycle_thread = threading.Thread(target=_cycle_loop, daemon=True)
+        cycle_thread.start()
 
     while True:
         time.sleep(CHECK_INTERVAL)
