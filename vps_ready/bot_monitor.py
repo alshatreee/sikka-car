@@ -1320,7 +1320,33 @@ CYCLE_INTERVAL = int(os.getenv("KUCOIN_CYCLE_SEC", "180"))
 CYCLE_MIN_ORDER = 1.0
 
 PROFIT_SELL_COOLDOWN = 24 * 3600
-_profit_sell_ts: dict[str, float] = {}
+_PROFIT_SELL_FILE = BASE_DIR / "profit_sell_cooldown.json"
+
+
+def _load_profit_sell_ts() -> dict[str, float]:
+    if _PROFIT_SELL_FILE.exists():
+        try:
+            data = json.loads(_PROFIT_SELL_FILE.read_text())
+            now = time.time()
+            return {k: v for k, v in data.items() if now - v < PROFIT_SELL_COOLDOWN}
+        except Exception:
+            pass
+    return {}
+
+
+def _save_profit_sell_ts(ts: dict[str, float]):
+    try:
+        _PROFIT_SELL_FILE.write_text(json.dumps(ts))
+    except Exception:
+        pass
+
+
+_profit_sell_ts: dict[str, float] = _load_profit_sell_ts()
+
+
+def _record_profit_sell(symbol: str):
+    _profit_sell_ts[symbol.upper()] = time.time()
+    _save_profit_sell_ts(_profit_sell_ts)
 
 
 def _load_cycle() -> dict:
@@ -2004,7 +2030,7 @@ def _execute_profit_sell(symbol: str) -> str:
                           for b in _fetch_kucoin_balances()):
         result = _execute_kucoin_sell(symbol, 100.0, profit_only=True)
         if result.startswith("✅"):
-            _profit_sell_ts[symbol.upper()] = time.time()
+            _record_profit_sell(symbol)
         return result
 
     # fallback to Bybit
@@ -2082,7 +2108,7 @@ def _execute_profit_sell(symbol: str) -> str:
 
     if result and result.get("retCode") == 0:
         remaining = free - profit_qty
-        _profit_sell_ts[symbol.upper()] = time.time()
+        _record_profit_sell(symbol)
         msg = (f"✅ تم بيع ربح {symbol} فقط\n"
                f"الكمية المباعة: {_qty_str(profit_qty)} ({profit_pct:.1f}%)\n"
                f"القيمة: ${profit_value:,.2f}\n"
