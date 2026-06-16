@@ -42,9 +42,9 @@ TG_API_HASH  = os.getenv("TG_API_HASH", "")
 # authorized. Creating a brand-new session needs a phone login, which Telegram
 # flood-blocks. Override with SMART_SESSION if you have a dedicated session.
 TG_SESSION   = str(BASE_DIR / os.getenv("SMART_SESSION", "channel_dt_session"))
-BYBIT_KEY    = os.getenv("BYBIT_API_KEY", "")
-BYBIT_SECRET = os.getenv("BYBIT_API_SECRET", "")
-BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
+KUCOIN_KEY    = os.getenv("KUCOIN_API_KEY", "")
+KUCOIN_SECRET = os.getenv("KUCOIN_API_SECRET", "")
+KUCOIN_PASS   = os.getenv("KUCOIN_PASSPHRASE", "")
 NOTIFY_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 NOTIFY_CHAT  = os.getenv("TELEGRAM_CHAT_ID", "")
 
@@ -56,13 +56,13 @@ MIN_SL_PCT   = float(os.getenv("SMART_MIN_SL_PCT", "3.0"))  # أضيق وقف م
 CATASTROPHIC_SL_PCT = float(os.getenv("SMART_CATASTROPHIC_SL", "15.0"))
 MAX_HOLD_DAYS = int(os.getenv("SMART_MAX_HOLD_DAYS", "30"))
 MAX_DAILY_TRADES = int(os.getenv("SMART_MAX_DAILY_TRADES", "8"))
-# keep MAX_OPEN * BYBIT_TRADE_SIZE within CAPITAL (8*50=400<500); the live
+# keep MAX_OPEN * TRADE_SIZE within CAPITAL (8*50=400<500); the live
 # free-balance check is the real guard, this is just a sane upper bound.
 MAX_OPEN = int(os.getenv("SMART_MAX_OPEN", "8"))
 MAX_DAILY_LOSS_PCT = float(os.getenv("SMART_MAX_LOSS_PCT", "5.0"))
 MAX_DAILY_LOSS = CAPITAL * MAX_DAILY_LOSS_PCT / 100
 MIN_TRADE_USDT = float(os.getenv("SMART_MIN_TRADE_USDT", "20.0"))
-BYBIT_TRADE_SIZE = float(os.getenv("SMART_BYBIT_TRADE_SIZE", "50"))
+TRADE_SIZE = float(os.getenv("SMART_TRADE_SIZE", os.getenv("SMART_BYBIT_TRADE_SIZE", "50")))
 MAX_CONSECUTIVE_LOSSES = int(os.getenv("SMART_MAX_CONSEC_LOSSES", "4"))
 LIMIT_ORDER_SLIP = float(os.getenv("SMART_LIMIT_SLIP", "0.5"))
 
@@ -602,10 +602,9 @@ def _parse_all_targets(text: str, buy_price: float) -> list[dict]:
 # ---------- exchange ----------
 def get_exchange():
     import ccxt
-    ex = ccxt.bybit({"apiKey": BYBIT_KEY, "secret": BYBIT_SECRET,
-                      "options": {"defaultType": "spot"}})
-    if BYBIT_TESTNET:
-        ex.set_sandbox_mode(True)
+    ex = ccxt.kucoin({"apiKey": KUCOIN_KEY, "secret": KUCOIN_SECRET,
+                       "password": KUCOIN_PASS,
+                       "options": {"defaultType": "spot"}})
     return ex
 
 _exchange = None
@@ -630,6 +629,30 @@ def _prec_qty(exchange, pair: str, qty: float) -> float:
         return float(f"{qty:.6f}")
 
 
+def _ensure_trade_balance(exchange, coin: str, needed: float) -> float:
+    """Move `coin` from main→trade if the trade account is short. Returns available trade balance."""
+    try:
+        trade_bal = float(exchange.fetch_balance({"type": "trade"}).get(coin, {}).get("free", 0))
+    except Exception:
+        trade_bal = 0.0
+    if trade_bal >= needed:
+        return trade_bal
+    try:
+        main_bal = float(exchange.fetch_balance({"type": "main"}).get(coin, {}).get("free", 0))
+    except Exception:
+        main_bal = 0.0
+    shortfall = needed - trade_bal
+    if main_bal > 0:
+        transfer_amt = min(main_bal, shortfall) if shortfall > 0 else main_bal
+        try:
+            exchange.transfer(coin, transfer_amt, "main", "trade")
+            time.sleep(1)
+            trade_bal += transfer_amt
+        except Exception as e:
+            log(f"تعذّر نقل {coin} من main إلى trade: {e}")
+    return trade_bal
+
+
 def verify_symbol(exchange, symbol: str) -> str | None:
     pair = f"{symbol}/USDT"
     exchange.load_markets()
@@ -649,10 +672,7 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
             return None
 
         if not PAPER_MODE:
-            try:
-                free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
-            except Exception:
-                free = usdt_amount
+            free = _ensure_trade_balance(exchange, "USDT", usdt_amount)
             if usdt_amount > free:
                 usdt_amount = free * 0.99
             if usdt_amount < 5:
@@ -672,8 +692,8 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
             log(f"أمر شراء [ورقي]: {pair} | سعر={price} | كمية={qty:.6f} | ${usdt_amount}")
             return {"filled": qty, "amount": qty, "average": price, "price": price}
 
-        params = {"orderLinkId": f"sc{int(time.time()*1000)}{os.urandom(4).hex()}"}
-        order = exchange.create_limit_buy_order(pair, qty, limit_price, params)
+        cid = {"clientOid": f"sc{int(time.time()*1000)}{os.urandom(4).hex()}"}
+        order = exchange.create_limit_buy_order(pair, qty, limit_price, cid)
         log(f"أمر شراء محدود: {pair} | سعر={limit_price:.6g} | كمية={qty:.6f} | ${usdt_amount}")
 
         oid = order.get("id")
@@ -706,7 +726,6 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
                     limit_avg = _safe_float(fetched.get("average"), default=limit_price) or limit_price
             remainder = _prec_qty(exchange, pair, qty - filled)
             if remainder <= 0 or filled >= qty * 0.999:
-                # nothing actually filled → real failure, don't fake a position
                 if filled <= 0:
                     log(f"الأمر المحدود لم يُنفَّذ ولا كمية متبقية: {pair}")
                     return None
@@ -718,8 +737,8 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
                     price = fresh
             except Exception:
                 pass
-            params2 = {"orderLinkId": f"sc{int(time.time()*1000)}{os.urandom(4).hex()}"}
-            order = exchange.create_order(pair, 'market', 'buy', remainder, price, params2)
+            cid2 = {"clientOid": f"sc{int(time.time()*1000)}{os.urandom(4).hex()}"}
+            order = exchange.create_order(pair, 'market', 'buy', remainder, price, cid2)
             if order and filled > 0:
                 mkt_filled = _safe_float(order.get("filled"), default=remainder)
                 mkt_avg = _safe_float(order.get("average"), default=price) or price
@@ -732,7 +751,7 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
         return order
     except Exception as e:
         err = str(e)
-        if "insufficient" in err.lower() or "170131" in err or "200004" in err:
+        if "insufficient" in err.lower() or "200004" in err or "400100" in err:
             log(f"تخطي شراء {pair} — رصيد غير كافٍ")
         else:
             log(f"خطأ في الشراء: {pair} — {e}")
@@ -742,13 +761,10 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
 def spot_sell(exchange, pair: str, qty: float) -> dict | None:
     try:
         if not PAPER_MODE:
-            try:
-                base = pair.split("/")[0]
-                free = float(exchange.fetch_balance().get(base, {}).get("free", 0))
-                if free > 0 and free < qty:
-                    qty = free
-            except Exception:
-                pass
+            base = pair.split("/")[0]
+            free = _ensure_trade_balance(exchange, base, qty)
+            if free > 0 and free < qty:
+                qty = free
         qty = _prec_qty(exchange, pair, qty)
         if qty <= 0:
             return None
@@ -756,8 +772,8 @@ def spot_sell(exchange, pair: str, qty: float) -> dict | None:
             price = _safe_float(exchange.fetch_ticker(pair).get("last"))
             log(f"أمر بيع [ورقي]: {pair} | كمية={qty:.6f}")
             return {"filled": qty, "amount": qty, "average": price, "price": price}
-        params = {"orderLinkId": f"sc{int(time.time()*1000)}{os.urandom(4).hex()}"}
-        order = exchange.create_market_sell_order(pair, qty, params)
+        cid = {"clientOid": f"sc{int(time.time()*1000)}{os.urandom(4).hex()}"}
+        order = exchange.create_market_sell_order(pair, qty, cid)
         log(f"أمر بيع: {pair} | كمية={qty:.6f}")
         return order
     except Exception as e:
@@ -767,21 +783,19 @@ def spot_sell(exchange, pair: str, qty: float) -> dict | None:
 
 # ---------- exchange-native stop loss (#3) ----------
 # Software SL in check_positions is a BACKUP. The real protection is a stop
-# order resting on Bybit, so positions survive a bot crash / server reboot.
+# order resting on KuCoin, so positions survive a bot crash / server reboot.
 def place_exchange_stop(exchange, pair: str, qty: float, trigger_price: float) -> str | None:
-    """Place a resting stop-market sell on Bybit. Returns order id or None."""
+    """Place a resting stop-market sell on KuCoin. Returns order id or None."""
     if PAPER_MODE:
         return None
     try:
         qty = _prec_qty(exchange, pair, qty)
         if qty <= 0:
             return None
-        # Bybit SPOT rejects triggerDirection ("not supported for spot yet"),
-        # confirmed via verify_exchange_stop.py. triggerPrice alone works — for a
-        # sell stop below market Bybit infers the fall direction.
         params = {
-            "triggerPrice": float(exchange.price_to_precision(pair, trigger_price)),
-            "orderLinkId": f"scsl{int(time.time()*1000)}{os.urandom(3).hex()}",
+            "stopPrice": float(exchange.price_to_precision(pair, trigger_price)),
+            "clientOid": f"scsl{int(time.time()*1000)}{os.urandom(3).hex()}",
+            "stop": "loss",
         }
         order = exchange.create_order(pair, "market", "sell", qty, None, params)
         oid = order.get("id", "")
@@ -796,8 +810,7 @@ def cancel_exchange_stop(exchange, pair: str, order_id: str | None) -> None:
     if PAPER_MODE or not order_id:
         return
     try:
-        params = {"orderFilter": "StopOrder"} if getattr(exchange, "id", "") == "bybit" else {}
-        exchange.cancel_order(order_id, pair, params=params)
+        exchange.cancel_order(order_id, pair, params={"stop": True})
         log(f"إلغاء وقف المنصّة: {pair} | أمر={order_id}")
     except Exception as e:
         log(f"تعذّر إلغاء وقف المنصّة {pair}: {e}")
@@ -899,13 +912,15 @@ def open_trade(state: State, sig: ChannelSignal, exchange, reason: str = "إشا
 
     if not PAPER_MODE:
         try:
-            free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
-            if free < 1:
+            trade_free = float(exchange.fetch_balance({"type": "trade"}).get("USDT", {}).get("free", 0))
+            main_free = float(exchange.fetch_balance({"type": "main"}).get("USDT", {}).get("free", 0))
+            if trade_free + main_free < 1:
+                log(f"رصيد USDT غير كافٍ (trade=${trade_free:.2f} main=${main_free:.2f})")
                 return False
         except Exception:
             pass
 
-    base_size = BYBIT_TRADE_SIZE
+    base_size = TRADE_SIZE
     trade_size = base_size
     if sig.tp_pct >= 20:
         trade_size = round(base_size * 1.3, 2)
@@ -1037,9 +1052,8 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
         cancel_exchange_stop(exchange, pair, pos.get("sl_order_id"))
         pos["sl_order_id"] = None
         try:
-            balance = exchange.fetch_balance()
             sym_b = pair.split("/")[0]
-            available = float(balance.get(sym_b, {}).get("free", 0))
+            available = _ensure_trade_balance(exchange, sym_b, sell_qty)
             if available < sell_qty:
                 sell_qty = available
         except Exception:
@@ -1238,8 +1252,9 @@ async def check_phase2(state: State, exchange):
 
         if not PAPER_MODE:
             try:
-                free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
-                if free < 1:
+                tf = float(exchange.fetch_balance({"type": "trade"}).get("USDT", {}).get("free", 0))
+                mf = float(exchange.fetch_balance({"type": "main"}).get("USDT", {}).get("free", 0))
+                if tf + mf < 1:
                     continue
             except Exception:
                 pass
@@ -1326,8 +1341,9 @@ async def check_pending_signals(state: State, exchange):
 
     if not PAPER_MODE:
         try:
-            free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
-            if free < 1:
+            tf = float(exchange.fetch_balance({"type": "trade"}).get("USDT", {}).get("free", 0))
+            mf = float(exchange.fetch_balance({"type": "main"}).get("USDT", {}).get("free", 0))
+            if tf + mf < 1:
                 return
         except Exception:
             pass
@@ -1457,20 +1473,21 @@ def run_check():
     log(f"TG_API_ID: {'OK' if TG_API_ID else 'مفقود'}")
     log(f"قنوات التداول: {WATCH_CHANNELS}")
     log(f"قنوات الأخبار (AI فقط): {NEWS_CHANNELS}")
-    log(f"رأس المال: ${CAPITAL} | حجم: ${BYBIT_TRADE_SIZE}")
+    log(f"رأس المال: ${CAPITAL} | حجم: ${TRADE_SIZE}")
     log(f"وقف خسارة: {SL_PCT}% ثابت | كارثي: {CATASTROPHIC_SL_PCT}%")
     log(f"وقف متحرك: +{TRAILING_STOP_ACTIVATE_PCT}% → -{TRAILING_STOP_DISTANCE_PCT}%")
     log(f"الوضع: {'ورقي' if PAPER_MODE else 'حقيقي'}")
     log(f"الحد الأدنى للنقاط: {MIN_SIGNAL_SCORE}")
 
-    if BYBIT_KEY:
+    if KUCOIN_KEY:
         try:
             ex = get_exchange()
             ex.load_markets()
-            usdt = ex.fetch_balance().get("USDT", {}).get("free", 0)
-            log(f"Bybit: متصل | USDT={usdt}")
+            trade_usdt = float(ex.fetch_balance({"type": "trade"}).get("USDT", {}).get("free", 0))
+            main_usdt = float(ex.fetch_balance({"type": "main"}).get("USDT", {}).get("free", 0))
+            log(f"KuCoin: متصل | USDT trade=${trade_usdt:.2f} main=${main_usdt:.2f}")
         except Exception as e:
-            log(f"Bybit: خطأ — {e}")
+            log(f"KuCoin: خطأ — {e}")
 
     ai = _load_ai_analysis()
     if ai:
@@ -1535,7 +1552,7 @@ async def main():
     log(f"=== بدء البوت الذكي [{mode}] ===")
     log(f"قنوات التداول: {WATCH_CHANNELS}")
     log(f"قنوات الأخبار (AI فقط): {NEWS_CHANNELS}")
-    log(f"رأس المال: ${CAPITAL} | حجم: ${BYBIT_TRADE_SIZE} | وقف: {SL_PCT}%")
+    log(f"رأس المال: ${CAPITAL} | حجم: ${TRADE_SIZE} | وقف: {SL_PCT}%")
     log(f"حد النقاط: {MIN_SIGNAL_SCORE} | AI: {'مفعّل' if AI_ANALYSIS_FILE.exists() else 'غير متاح'}")
 
     state = load_state()
@@ -1545,9 +1562,11 @@ async def main():
     try:
         _exchange = get_exchange()
         _exchange.load_markets()
-        log(f"Bybit متصل | testnet={BYBIT_TESTNET}")
+        trade_usdt = float(_exchange.fetch_balance({"type": "trade"}).get("USDT", {}).get("free", 0))
+        main_usdt = float(_exchange.fetch_balance({"type": "main"}).get("USDT", {}).get("free", 0))
+        log(f"KuCoin متصل | USDT trade=${trade_usdt:.2f} main=${main_usdt:.2f}")
     except Exception as e:
-        log(f"خطأ Bybit: {e}")
+        log(f"خطأ KuCoin: {e}")
         return
 
     client = TelegramClient(TG_SESSION, TG_API_ID, TG_API_HASH)
@@ -1717,7 +1736,7 @@ async def main():
     notify(
         f"🟢 البوت الذكي بدأ [{mode}]\n"
         f"قنوات التداول: {len(WATCH_CHANNELS)} | أخبار: {len(NEWS_CHANNELS)}\n"
-        f"حجم: ${BYBIT_TRADE_SIZE} | وقف: {SL_PCT}% | حد النقاط: {MIN_SIGNAL_SCORE}\n"
+        f"حجم: ${TRADE_SIZE} | وقف: {SL_PCT}% | حد النقاط: {MIN_SIGNAL_SCORE}\n"
         f"AI: {'مفعّل' if AI_ANALYSIS_FILE.exists() else 'غير متاح'} | "
         f"max_open: {MAX_OPEN}"
     )
