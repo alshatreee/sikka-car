@@ -53,27 +53,60 @@ def main():
                      "options": {"defaultType": "spot"}})
     ex.load_markets()
 
-    # actual Bybit wallet coins with value > $1
-    bal = ex.fetch_balance()
+    # actual Bybit wallet coins with value > $1.
+    # NOTE: ccxt fetch_balance() on a UNIFIED account returns only free USDT —
+    # it does NOT list coin holdings. Use the raw v5 wallet-balance endpoint
+    # (same as bot_monitor) which returns walletBalance per coin.
+    raw_coins: dict[str, float] = {}
+    try:
+        resp = ex.private_get_v5_account_wallet_balance({"accountType": "UNIFIED"})
+        for acct in resp.get("result", {}).get("list", []):
+            for c in acct.get("coin", []):
+                sym = (c.get("coin") or "").upper()
+                if not sym or sym in ("USDT", "USDC", "USD"):
+                    continue
+                try:
+                    wb = float(c.get("walletBalance") or 0)
+                except (TypeError, ValueError):
+                    wb = 0.0
+                if wb > 0:
+                    raw_coins[sym] = raw_coins.get(sym, 0.0) + wb
+    except Exception as e:
+        print(f"❌ فشل جلب رصيد UNIFIED: {e}")
+        sys.exit(1)
+
+    # also include funding account (deposits/earn) so we never delete a real coin
+    try:
+        fund = ex.private_get_v5_asset_transfer_query_account_coins_balance(
+            {"accountType": "FUND"})
+        for c in fund.get("result", {}).get("balance", []):
+            sym = (c.get("coin") or "").upper()
+            if not sym or sym in ("USDT", "USDC", "USD"):
+                continue
+            try:
+                wb = float(c.get("walletBalance") or c.get("transferBalance") or 0)
+            except (TypeError, ValueError):
+                wb = 0.0
+            if wb > 0:
+                raw_coins[sym] = raw_coins.get(sym, 0.0) + wb
+    except Exception:
+        pass  # funding is best-effort; unified covers spot positions
+
     real = set()
-    for coin, info in bal.items():
-        if coin in ("info", "timestamp", "datetime", "free", "used", "total"):
-            continue
-        if coin in ("USDT", "USDC", "USD"):
-            continue
-        total = 0.0
-        try:
-            total = float(info.get("total") or 0)
-        except (TypeError, ValueError):
-            total = 0.0
-        if total <= 0:
-            continue
+    for coin, amt in raw_coins.items():
         try:
             px = float(ex.fetch_ticker(f"{coin}/USDT")["last"])
         except Exception:
+            # can't price it but it exists — keep it to be safe
+            real.add(coin)
             continue
-        if total * px >= MIN_VALUE_USD:
-            real.add(coin.upper())
+        if amt * px >= MIN_VALUE_USD:
+            real.add(coin)
+
+    if not real:
+        print("⚠️ لم يُرجع Bybit أي عملات — توقف بدون حذف (حماية).")
+        print("   تحقق من صلاحيات مفتاح API (قراءة المحفظة) أو جرّب لاحقاً.")
+        sys.exit(1)
 
     print(f"عملات موجودة فعلاً في Bybit (>${MIN_VALUE_USD:g}): {sorted(real)}\n")
 
