@@ -1084,6 +1084,149 @@ def _kucoin_signed_get(path: str) -> dict | None:
         return None
 
 
+def _kucoin_signed_post(path: str, body: dict) -> dict | None:
+    """KuCoin v2 API signed POST request (for placing orders / transfers)."""
+    if not KUCOIN_KEY or not KUCOIN_SECRET:
+        return None
+    import base64
+    ts = str(int(time.time() * 1000))
+    body_str = json.dumps(body)
+    sign_str = f"{ts}POST{path}{body_str}"
+    sig = base64.b64encode(
+        hmac.new(KUCOIN_SECRET.encode(), sign_str.encode(), hashlib.sha256).digest()
+    ).decode()
+    passphrase = base64.b64encode(
+        hmac.new(KUCOIN_SECRET.encode(), KUCOIN_PASS.encode(), hashlib.sha256).digest()
+    ).decode()
+    url = f"https://api.kucoin.com{path}"
+    try:
+        req = _urllib_req.Request(url, data=body_str.encode(), headers={
+            "KC-API-KEY": KUCOIN_KEY,
+            "KC-API-SIGN": sig,
+            "KC-API-TIMESTAMP": ts,
+            "KC-API-PASSPHRASE": passphrase,
+            "KC-API-KEY-VERSION": "2",
+            "Content-Type": "application/json",
+        }, method="POST")
+        with _urllib_req.urlopen(req, timeout=15) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        log(f"KuCoin POST {path}: {e}")
+        # surface the HTTP error body so the caller can show a real reason
+        try:
+            return json.loads(e.read())  # type: ignore[attr-defined]
+        except Exception:
+            return {"code": "ERROR", "msg": str(e)}
+
+
+def _kucoin_symbol_info(symbol: str) -> dict:
+    """Return baseIncrement / baseMinSize for a KuCoin SYMBOL-USDT pair."""
+    pair = f"{symbol.upper()}-USDT"
+    data = _http_get(f"https://api.kucoin.com/api/v2/symbols/{pair}")
+    if data and data.get("code") == "200000":
+        d = data.get("data", {})
+        if d:
+            return {"baseIncrement": _safe_float(d.get("baseIncrement")) or 0.0001,
+                    "baseMinSize": _safe_float(d.get("baseMinSize")) or 0.0}
+    return {"baseIncrement": 0.0001, "baseMinSize": 0.0}
+
+
+def _fetch_kucoin_coin_balance(coin: str, acct_type: str) -> float:
+    """Available balance of a coin in a specific KuCoin account (trade/main)."""
+    coin = coin.upper().replace("USDT", "")
+    data = _kucoin_signed_get(f"/api/v1/accounts?type={acct_type}")
+    if data and data.get("code") == "200000":
+        for acc in data.get("data", []):
+            if acc.get("currency") == coin:
+                return _safe_float(acc.get("available"))
+    return 0.0
+
+
+def _kucoin_inner_transfer(coin: str, amount: float, frm: str, to: str) -> bool:
+    """Move a coin between KuCoin accounts (e.g. main → trade so it's sellable)."""
+    body = {
+        "clientOid": _secrets.token_hex(12),
+        "currency": coin.upper(),
+        "from": frm,
+        "to": to,
+        "amount": _qty_str(amount),
+    }
+    res = _kucoin_signed_post("/api/v2/accounts/inner-transfer", body)
+    ok = bool(res and res.get("code") == "200000")
+    if not ok:
+        log(f"KuCoin transfer {coin} {frm}->{to} فشل: {res}")
+    return ok
+
+
+def _execute_kucoin_sell(symbol: str, sell_pct: float, profit_only: bool = False) -> str:
+    """Market-sell a coin on KuCoin. Moves it main→trade first if needed."""
+    coin = symbol.upper()
+    pair = f"{coin}-USDT"
+    price = _fetch_kucoin_price(coin)
+    if not price:
+        return f"❌ لم أستطع جلب سعر {pair} على KuCoin"
+
+    trade_bal = _fetch_kucoin_coin_balance(coin, "trade")
+    main_bal = _fetch_kucoin_coin_balance(coin, "main")
+    total = trade_bal + main_bal
+    if total <= 0:
+        return f"❌ لا يوجد رصيد من {coin} على KuCoin"
+
+    # profit-only: sell just the gain portion, keep original investment
+    if profit_only:
+        entry = 0.0
+        for h in _get_kucoin_holdings_with_entry():
+            if h["symbol"].upper() == coin:
+                entry = h.get("entry", 0)
+                break
+        if not entry or entry <= 0:
+            return f"❌ لا أعرف سعر دخول {coin} — استخدم: بيع {coin} 50%"
+        if price <= entry:
+            pnl_pct = ((price - entry) / entry) * 100
+            return f"❌ {coin} في خسارة ({pnl_pct:+.1f}%) — لا ربح لجنيه"
+        sell_pct = ((price - entry) / price) * 100
+
+    sell_qty = total * (sell_pct / 100.0)
+
+    info = _kucoin_symbol_info(coin)
+    sell_qty = _round_qty(sell_qty, info["baseIncrement"])
+    if sell_qty <= 0 or (info["baseMinSize"] and sell_qty < info["baseMinSize"]):
+        return f"❌ الكمية ({_qty_str(sell_qty)}) أقل من الحد الأدنى ({info['baseMinSize']})"
+    if sell_qty * price < 1.0:
+        return f"❌ قيمة البيع أقل من $1 ({_qty_str(sell_qty)} ≈ ${sell_qty*price:.2f})"
+
+    # KuCoin can only sell from the trade account — top it up from main if short
+    if trade_bal < sell_qty:
+        need = sell_qty - trade_bal
+        if main_bal >= need:
+            if not _kucoin_inner_transfer(coin, need, "main", "trade"):
+                return f"❌ تعذّر نقل {coin} من main إلى trade على KuCoin"
+            time.sleep(1)
+        else:
+            return f"❌ رصيد trade غير كافٍ ({_qty_str(trade_bal)}) ولا يمكن إكماله من main"
+
+    body = {
+        "clientOid": _secrets.token_hex(12),
+        "side": "sell",
+        "symbol": pair,
+        "type": "market",
+        "size": _qty_str(sell_qty),
+    }
+    res = _kucoin_signed_post("/api/v1/orders", body)
+    if res and res.get("code") == "200000":
+        value = sell_qty * price
+        label = "بيع ربح" if profit_only else f"بيع {sell_pct:.0f}%"
+        log(f"KuCoin SELL: {coin} {label} qty={sell_qty} @ ${price}")
+        return (f"✅ تم {label} من {coin} على KuCoin\n"
+                f"الكمية: {_qty_str(sell_qty)}\n"
+                f"السعر: ${price:,.6f}\n"
+                f"القيمة: ${value:,.2f}")
+    msg = res.get("msg", "unknown") if res else "no response"
+    code = res.get("code", "?") if res else "?"
+    log(f"KuCoin SELL FAILED: {coin} — {code}: {msg}")
+    return f"❌ فشل البيع على KuCoin: {code} — {msg}"
+
+
 def _fetch_kucoin_balances() -> list[dict]:
     """Fetch KuCoin balances across trade + main accounts with value > $1."""
     merged: dict[str, float] = {}
@@ -1434,25 +1577,26 @@ def _locate_coin(symbol: str) -> list[str]:
 
 
 def _execute_sell(symbol: str, sell_pct: float) -> str:
-    """Execute a sell order. symbol is base coin (e.g. 'ENJ'). sell_pct is 1-100."""
+    """Execute a sell order. symbol is base coin (e.g. 'ENJ'). sell_pct is 1-100.
+    Routes to Bybit if held there, otherwise KuCoin. Gate stays view-only."""
     if not BYBIT_KEY or not BYBIT_SECRET:
         return "❌ مفاتيح Bybit غير متوفرة"
 
     pair = f"{symbol.upper()}USDT"
     free = _fetch_coin_balance(symbol)
     if free <= 0:
+        # not on Bybit — try KuCoin (Gate is view-only)
+        if KUCOIN_KEY and any(b["symbol"].upper() == symbol.upper()
+                              for b in _fetch_kucoin_balances()):
+            return _execute_kucoin_sell(symbol, sell_pct)
         other = _locate_coin(symbol)
         if other:
             return (f"❌ {symbol} غير موجودة على Bybit — هي على {', '.join(other)}.\n"
-                    f"⚠️ البيع عبر البوت يدعم Bybit فقط (Gate/KuCoin للعرض فقط).")
+                    f"⚠️ Gate للعرض فقط (بِع يدوياً على المنصّة).")
         return f"❌ لا يوجد رصيد من {symbol} في المحفظة"
 
     price = _fetch_price(pair)
     if not price:
-        other = _locate_coin(symbol)
-        if other:
-            return (f"❌ {symbol} على {', '.join(other)} وليست على Bybit.\n"
-                    f"⚠️ البيع عبر البوت يدعم Bybit فقط.")
         return f"❌ لم أستطع جلب سعر {pair}"
 
     sell_qty = free * (sell_pct / 100.0)
@@ -1544,7 +1688,7 @@ def _scan_profitable_coins() -> str:
     if KUCOIN_KEY:
         for h in _get_kucoin_holdings_with_entry():
             h["exchange"] = "KuCoin"
-            h["can_sell"] = False
+            h["can_sell"] = True
             all_holdings.append(h)
 
     if not all_holdings:
@@ -1630,9 +1774,16 @@ def _scan_profitable_coins() -> str:
 
 
 def _execute_profit_sell(symbol: str) -> str:
-    """Sell only the profit portion of a coin, keeping the original investment."""
+    """Sell only the profit portion of a coin, keeping the original investment.
+    Routes to Bybit if held there, otherwise KuCoin. Gate stays view-only."""
     if not BYBIT_KEY or not BYBIT_SECRET:
         return "❌ مفاتيح Bybit غير متوفرة"
+
+    # not on Bybit — try KuCoin (Gate is view-only)
+    if _fetch_coin_balance(symbol) <= 0:
+        if KUCOIN_KEY and any(b["symbol"].upper() == symbol.upper()
+                              for b in _fetch_kucoin_balances()):
+            return _execute_kucoin_sell(symbol, 100.0, profit_only=True)
 
     # Find entry price from bot state files
     entry = 0.0
@@ -1647,7 +1798,7 @@ def _execute_profit_sell(symbol: str) -> str:
         other = _locate_coin(symbol)
         if other:
             return (f"❌ {symbol} على {', '.join(other)} وليست على Bybit.\n"
-                    f"⚠️ البيع عبر البوت يدعم Bybit فقط.")
+                    f"⚠️ Gate للعرض فقط (بِع يدوياً على المنصّة).")
         return f"❌ لم أجد سعر دخول لـ {symbol}"
 
     pair = f"{symbol.upper()}USDT"
@@ -2125,12 +2276,12 @@ def _handle_command(text: str) -> str | None:
     if text in ("أوامر", "help", "/help", "مساعدة"):
         return (
             "<b>📋 الأوامر المتاحة:</b>\n\n"
-            "<b>تداول (Bybit فقط):</b>\n"
+            "<b>تداول (Bybit + KuCoin):</b>\n"
             "<code>فرص</code> — توصيات بيع/تعزيز + كل المنصات\n"
             "<code>بيع ربح SYM</code> — بيع الربح فقط (حفظ رأس المال)\n"
             "<code>بيع SYM 50%</code> — بيع 50% من عملة\n"
             "<code>بيع SYM</code> — بيع 100%\n"
-            "<i>(Gate/KuCoin للعرض فقط — البيع يدوي)</i>\n\n"
+            "<i>(Gate للعرض فقط — البيع يدوي)</i>\n\n"
             "<b>محفظة:</b>\n"
             "<code>أرباح</code> — ربح/خسارة كل عملة + إجمالي\n"
             "<code>تقرير</code> — أداء كل بوت منذ التفعيل\n"
