@@ -500,8 +500,8 @@ def get_gate_exchange():
                          "options": {"defaultType": "spot"}})
 
 _exchanges: dict = {}
-_EXCHANGE_PRIORITY = ["bybit", "kucoin"]
-_disabled_exchanges: set = {"gateio"}
+_EXCHANGE_PRIORITY = ["kucoin"]
+_disabled_exchanges: set = {"gateio", "bybit"}
 
 def find_pair_exchange(symbol: str):
     for name in _EXCHANGE_PRIORITY:
@@ -537,6 +537,34 @@ def _safe_float(*values, default=0.0) -> float:
             continue
     return default
 
+def _ensure_trade_balance(exchange, coin: str, needed: float) -> float:
+    """Move `coin` from main→trade on KuCoin if short. Returns available trade balance."""
+    if getattr(exchange, 'id', '') != 'kucoin':
+        try:
+            return float(exchange.fetch_balance().get(coin, {}).get("free", 0))
+        except Exception:
+            return 0.0
+    try:
+        trade_bal = float(exchange.fetch_balance({"type": "trade"}).get(coin, {}).get("free", 0))
+    except Exception:
+        trade_bal = 0.0
+    if trade_bal >= needed:
+        return trade_bal
+    try:
+        main_bal = float(exchange.fetch_balance({"type": "main"}).get(coin, {}).get("free", 0))
+    except Exception:
+        main_bal = 0.0
+    if main_bal > 0:
+        transfer_amt = min(main_bal, needed - trade_bal) if needed > trade_bal else main_bal
+        try:
+            exchange.transfer(coin, transfer_amt, "main", "trade")
+            time.sleep(1)
+            trade_bal += transfer_amt
+        except Exception as e:
+            log(f"تعذّر نقل {coin} من main إلى trade: {e}")
+    return trade_bal
+
+
 def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
     """شراء بأمر محدود (0.5% فوق السوق) مع احتياط سوق إذا لم يُنفَّذ خلال 30 ثانية"""
     ex_id = getattr(exchange, 'id', '')
@@ -547,14 +575,10 @@ def spot_buy(exchange, pair: str, usdt_amount: float) -> dict | None:
         if not price:
             return None
 
-        # حد المبلغ بالرصيد المتاح فعلياً — تجنب أخطاء "رصيد غير كافٍ"
         if not PAPER_MODE:
-            try:
-                free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
-            except Exception:
-                free = usdt_amount
+            free = _ensure_trade_balance(exchange, "USDT", usdt_amount)
             if usdt_amount > free:
-                usdt_amount = free * 0.99  # هامش بسيط للرسوم
+                usdt_amount = free * 0.99
             if usdt_amount < 5:
                 log(f"تخطي شراء {pair} — رصيد متاح ${free:.2f} غير كافٍ")
                 return None
@@ -654,15 +678,11 @@ def spot_sell(exchange, pair: str, qty: float) -> dict | None:
         log(f"رفض بيع {pair} على gate — مفتاح قراءة فقط")
         return None
     try:
-        # حد الكمية بالرصيد الفعلي — الرسوم تقتطع من العملة المشتراة فلا نملك كامل qty
         if not PAPER_MODE:
-            try:
-                base = pair.split("/")[0]
-                free = float(exchange.fetch_balance().get(base, {}).get("free", 0))
-                if free > 0 and free < qty:
-                    qty = free
-            except Exception:
-                pass
+            base = pair.split("/")[0]
+            free = _ensure_trade_balance(exchange, base, qty)
+            if free > 0 and free < qty:
+                qty = free
         qty = _prec_qty(exchange, pair, qty)
         if qty <= 0:
             return None
@@ -733,8 +753,7 @@ def get_trade_size(exchange) -> float:
     if PAPER_MODE:
         return TRADE_SIZE
     try:
-        balance = exchange.fetch_balance()
-        free_usdt = float(balance.get("USDT", {}).get("free", 0))
+        free_usdt = _ensure_trade_balance(exchange, "USDT", 0)
         size = round(free_usdt * TRADE_PCT / 100, 2)
         if size < MIN_TRADE_USDT:
             log(f"رصيد: ${free_usdt:.2f} | حجم ${size:.2f} أقل من الحد الأدنى ${MIN_TRADE_USDT} — تخطي")
@@ -925,8 +944,9 @@ def open_trade(state: State, signal: Signal, reason: str = "توصية جديد�
     exchange = _exchanges[ex_name]
     if not PAPER_MODE:
         try:
-            free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
+            free = _ensure_trade_balance(exchange, "USDT", 1)
             if free < 1:
+                log(f"رصيد USDT غير كافٍ على {ex_name} (${free:.2f})")
                 return False
         except Exception:
             pass
@@ -1006,9 +1026,8 @@ def close_trade(state: State, pair: str, reason: str, price: float, exchange, sk
 
     if not PAPER_MODE and not skip_sell:
         try:
-            balance = exchange.fetch_balance()
             sym_b = pair.split("/")[0]
-            available = float(balance.get(sym_b, {}).get("free", 0))
+            available = _ensure_trade_balance(exchange, sym_b, sell_qty)
             if available < sell_qty:
                 sell_qty = available
         except Exception:
@@ -1068,7 +1087,7 @@ def reinvest_profit(state: State, profit: float, closed_pair: str):
     for p, pos in state.open_positions.items():
         if p == closed_pair:
             continue
-        ex = _exchanges.get(pos.get("exchange", "bybit"))
+        ex = _exchanges.get(pos.get("exchange", "kucoin"))
         if not ex:
             continue
         try:
@@ -1087,7 +1106,7 @@ def reinvest_profit(state: State, profit: float, closed_pair: str):
         log("لا توجد عملة نازلة للتعزيز من الأرباح")
         return
 
-    ex_name = worst_pos.get("exchange", "bybit")
+    ex_name = worst_pos.get("exchange", "kucoin")
     exchange = _exchanges.get(ex_name)
     reinvest_amt = round(min(profit, BYBIT_TRADE_SIZE if ex_name == "bybit" else KUCOIN_TRADE_SIZE), 2)
     if reinvest_amt < MIN_TRADE_USDT:
@@ -1162,7 +1181,7 @@ async def check_positions(state: State):
             continue
         if pos.get("symbol") in PROTECTED_SYMBOLS:
             continue  # لا نبيع عملة محمية أبداً
-        ex_name = pos.get("exchange", "bybit")
+        ex_name = pos.get("exchange", "kucoin")
         exchange = _exchanges.get(ex_name)
         if not exchange:
             continue
@@ -1270,14 +1289,14 @@ async def check_phase2(state: State):
             continue
 
         elapsed_min = (time.time() - pos["opened"]) / 60
-        ex_name = pos.get("exchange", "bybit")
+        ex_name = pos.get("exchange", "kucoin")
         exchange = _exchanges.get(ex_name)
         if not exchange:
             continue
 
         if not PAPER_MODE:
             try:
-                free = float(exchange.fetch_balance().get("USDT", {}).get("free", 0))
+                free = _ensure_trade_balance(exchange, "USDT", 1)
                 if free < 1:
                     continue
             except Exception:
@@ -1431,7 +1450,7 @@ async def check_pending_signals(state: State):
     if not PAPER_MODE:
         try:
             ex = next(iter(_exchanges.values()))
-            free = float(ex.fetch_balance().get("USDT", {}).get("free", 0))
+            free = _ensure_trade_balance(ex, "USDT", 1)
             if free < 1:
                 return
         except Exception:
@@ -1512,7 +1531,7 @@ async def check_reinforcements(state: State):
     if not PAPER_MODE:
         try:
             ex = next(iter(_exchanges.values()))
-            free = float(ex.fetch_balance().get("USDT", {}).get("free", 0))
+            free = _ensure_trade_balance(ex, "USDT", 1)
             if free < 1:
                 return
         except Exception:
@@ -1579,15 +1598,15 @@ def run_check():
     log("=== وضع الفحص ===")
     log(f"TG_API_ID: {'OK' if TG_API_ID else 'مفقود'} | TG_API_HASH: {'OK' if TG_API_HASH else 'مفقود'}")
     log(f"القنوات: {TG_CHANNELS}")
-    if BYBIT_KEY:
+    if KUCOIN_KEY:
         try:
-            ex = get_exchange(); ex.load_markets()
-            usdt = ex.fetch_balance().get("USDT", {}).get("free", 0)
-            log(f"Bybit: متصل | USDT={usdt} | testnet={BYBIT_TESTNET}")
+            ex = get_kucoin_exchange(); ex.load_markets()
+            free = _ensure_trade_balance(ex, "USDT", 0)
+            log(f"KuCoin: متصل | USDT=${free:.2f}")
         except Exception as e:
-            log(f"Bybit: خطأ — {e}")
+            log(f"KuCoin: خطأ — {e}")
     else:
-        log("Bybit: مفاتيح غير محددة")
+        log("KuCoin: مفاتيح غير محددة")
 
     state = load_state()
     log(f"مراكز: {len(state.open_positions)} | صفقات اليوم: {state.daily_trades} | PnL: ${state.daily_pnl:.2f}")
@@ -1806,13 +1825,6 @@ async def main():
     log(f"القنوات: {TG_CHANNELS} | رأس المال: ${CAPITAL} | حجم: ${TRADE_SIZE}")
 
     state = load_state(); rollover_day(state)
-
-    try:
-        bybit_ex = get_exchange(); bybit_ex.load_markets()
-        _exchanges["bybit"] = bybit_ex
-        log(f"Bybit متصل | testnet={BYBIT_TESTNET}")
-    except Exception as e:
-        log(f"خطأ Bybit: {e}")
 
     if KUCOIN_KEY:
         try:
@@ -2043,7 +2055,7 @@ if __name__ == "__main__":
                 "entry_price": pos["entry"], "closed_price": None,
                 "opened": pos.get("opened", 0),
                 "opened_str": pos.get("opened_str", ""),
-                "exchange": pos.get("exchange", "bybit"),
+                "exchange": pos.get("exchange", "kucoin"),
             })
         data = _load_tracker()
         existing_keys = {(r["symbol"], r.get("signal_str", "")) for r in data}
@@ -2141,7 +2153,7 @@ if __name__ == "__main__":
         found = False
         for pair, pos in list(state.open_positions.items()):
             if pos.get("symbol", pair.split("/")[0]).upper() == symbol:
-                ex_name = pos.get("exchange", "bybit")
+                ex_name = pos.get("exchange", "kucoin")
                 import ccxt
                 if ex_name == "bybit":
                     ex = get_exchange(); ex.load_markets()
