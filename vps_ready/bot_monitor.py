@@ -1525,48 +1525,58 @@ def _scan_profitable_coins() -> str:
     if not all_holdings:
         return "📭 لا توجد مراكز مفتوحة"
 
-    profitable = []
-    losing = []
+    # compute PnL for each holding
     for h in all_holdings:
         entry = h.get("entry", 0)
         price = h.get("price", 0)
         if not entry or not price or entry <= 0:
+            h.update({"pnl_pct": 0, "pnl_usd": 0, "profit_sell_pct": 0, "skip": True})
             continue
         pnl_pct = ((price - entry) / entry) * 100
         pnl_usd = (price - entry) * h["amount"]
         profit_sell_pct = max(0, ((price - entry) / price) * 100)
-        h.update({"pnl_pct": pnl_pct, "pnl_usd": pnl_usd, "profit_sell_pct": profit_sell_pct})
-        if pnl_pct > 0:
-            profitable.append(h)
-        else:
-            losing.append(h)
+        h.update({"pnl_pct": pnl_pct, "pnl_usd": pnl_usd, "profit_sell_pct": profit_sell_pct, "skip": False})
 
+    # aggregate net PnL per symbol across exchanges
+    sym_net: dict[str, float] = {}
+    for h in all_holdings:
+        if h.get("skip"):
+            continue
+        sym_net[h["symbol"]] = sym_net.get(h["symbol"], 0) + h["pnl_usd"]
+
+    # net-losers = symbols that are overall losing across all exchanges → buy more
+    net_losers = {s for s, pnl in sym_net.items() if pnl < 0}
+
+    # split: pure winners (not net-losers) vs losers
+    profitable = [h for h in all_holdings if not h.get("skip") and h["pnl_pct"] > 0 and h["symbol"] not in net_losers]
+    buy_more = [h for h in all_holdings if not h.get("skip") and h["symbol"] in net_losers]
     profitable.sort(key=lambda x: x["pnl_pct"], reverse=True)
-    losing.sort(key=lambda x: x["pnl_pct"])
+    buy_more.sort(key=lambda x: sym_net.get(x["symbol"], 0))
 
     lines = ["<b>💰 فرص — مرتبة بالربح</b>\n"]
 
     # ── توصية رئيسية ──
-    if profitable and losing:
+    if profitable and buy_more:
         top = profitable[0]
-        worst = losing[0]
+        # pick the worst net-loser symbol
+        worst_sym = min(net_losers, key=lambda s: sym_net[s])
+        worst_entry = next((h for h in buy_more if h["symbol"] == worst_sym), buy_more[0])
         total_profit = sum(p["pnl_usd"] for p in profitable)
         lines.append("<b>💡 التوصية:</b>")
         lines.append(
             f"  بيع ربح <b>{top['symbol']}</b> [{top['exchange']}] ({top['pnl_pct']:+.1f}% = ${top['pnl_usd']:+,.2f})"
-            f"\n  ← تعزيز <b>{worst['symbol']}</b> [{worst['exchange']}] ({worst['pnl_pct']:+.1f}%)"
+            f"\n  ← شراء/تعزيز <b>{worst_sym}</b> (صافي: ${sym_net[worst_sym]:+,.2f})"
             f"\n  إجمالي أرباح قابلة للجني: <b>${total_profit:,.2f}</b>\n"
         )
 
     if profitable:
-        lines.append("<b>🟢 عملات مرتفعة:</b>")
+        lines.append("<b>🟢 عملات مرتفعة (بيع):</b>")
         for p in profitable:
             sell_pct = round(p["profit_sell_pct"])
             if sell_pct < 1:
                 sell_pct = 1
-            ex_label = f" [{p['exchange']}]"
             entry_line = (
-                f"\n  <b>{p['symbol']}</b>{ex_label} — <b>{p['pnl_pct']:+.1f}%</b>"
+                f"\n  <b>{p['symbol']}</b> [{p['exchange']}] — <b>{p['pnl_pct']:+.1f}%</b>"
                 f" (${p['pnl_usd']:+,.2f})"
             )
             if p["can_sell"]:
@@ -1576,16 +1586,20 @@ def _scan_profitable_coins() -> str:
                 )
             lines.append(entry_line)
     else:
-        lines.append("⚪ لا توجد عملات مرتفعة حالياً")
+        lines.append("⚪ لا توجد عملات صافي ربحها موجب")
 
-    if losing:
-        lines.append(f"\n<b>🔴 عملات منخفضة ({len(losing)}) — فرص تعزيز:</b>")
-        for p in losing[:5]:
-            dip_pct = abs(p["pnl_pct"])
-            lines.append(
-                f"  {p['symbol']} [{p['exchange']}]: {p['pnl_pct']:+.1f}% (${p['pnl_usd']:+,.2f})"
-                f" — تعزيز يخفض المتوسط ~{dip_pct/2:.0f}%"
-            )
+    if buy_more:
+        # deduplicate by symbol, show net PnL
+        shown = set()
+        lines.append(f"\n<b>🔵 عملات للتعزيز/الشراء ({len(net_losers)}):</b>")
+        for sym in sorted(net_losers, key=lambda s: sym_net[s]):
+            if sym in shown:
+                continue
+            shown.add(sym)
+            net = sym_net[sym]
+            entries = [h for h in buy_more if h["symbol"] == sym]
+            exchanges = ", ".join(f"{h['exchange']} {h['pnl_pct']:+.1f}%" for h in entries)
+            lines.append(f"  <b>{sym}</b>: صافي ${net:+,.2f} ({exchanges})")
 
     return "\n".join(lines)
 
