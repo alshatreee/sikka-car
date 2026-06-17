@@ -84,8 +84,9 @@ PAPER_MODE = "--live" not in sys.argv
 HISTORY_DAYS   = int(os.getenv("MONTHLY_HISTORY_DAYS", "30"))
 REINFORCE_PCT  = float(os.getenv("MONTHLY_REINFORCE_PCT", "2.0"))
 REINFORCE_CHECK_SEC = int(os.getenv("MONTHLY_REINFORCE_SEC", "600"))
-SMART_ENTRY_WAIT_MIN = int(os.getenv("MONTHLY_SMART_ENTRY_WAIT", "60"))
+SMART_ENTRY_WAIT_MIN = int(os.getenv("MONTHLY_SMART_ENTRY_WAIT", "240"))
 SMART_ENTRY_BOUNCE_PCT = float(os.getenv("MONTHLY_SMART_BOUNCE", "1.0"))
+MAX_PENDING_AGE_H = int(os.getenv("MONTHLY_MAX_PENDING_AGE_H", "72"))
 
 # ---------- قنوات المراقبة اليومية ----------
 WATCH_CHANNELS = [
@@ -1461,6 +1462,19 @@ async def check_pending_signals(state: State):
         buy_price = sig_data["buy_price"]
         if buy_price <= 0:
             continue
+
+        # حذف التوصيات القديمة (أكثر من MAX_PENDING_AGE_H ساعة)
+        try:
+            added_ts = time.mktime(time.strptime(sig_data["added"], "%Y-%m-%d %H:%M:%S"))
+            age_h = (time.time() - added_ts) / 3600
+            if age_h > MAX_PENDING_AGE_H:
+                state.pending_signals.remove(sig_data)
+                save_state(state)
+                log(f"حذف توصية قديمة: {symbol} (عمرها {age_h:.0f}h > {MAX_PENDING_AGE_H}h)")
+                continue
+        except Exception:
+            pass
+
         if symbol in state.entered_symbols:
             state.pending_signals.remove(sig_data)
             continue
@@ -1477,49 +1491,64 @@ async def check_pending_signals(state: State):
         except Exception:
             continue
 
-        diff_pct = (price - buy_price) / buy_price * 100
-        if price <= buy_price * (1 + REINFORCE_PCT / 100):
-            if "watch_start" not in sig_data:
-                sig_data["watch_start"] = time.time()
-                sig_data["lowest_seen"] = price
-                save_state(state)
-                log(f"مراقبة: {symbol} @ ${price:.4f} (هدف شراء: ${buy_price}) — ننتظر سعر أفضل")
-                continue
+        # لا نشتري أبداً بسعر أعلى من التوصية
+        if price > buy_price:
+            continue
 
-            if price < sig_data.get("lowest_seen", price):
-                sig_data["lowest_seen"] = price
-                save_state(state)
+        # السعر وصل للهدف أو أقل — بدء المراقبة الذكية
+        if "watch_start" not in sig_data:
+            sig_data["watch_start"] = time.time()
+            sig_data["lowest_seen"] = price
+            save_state(state)
+            saving_now = round((buy_price - price) / buy_price * 100, 1)
+            log(f"✅ {symbol} وصل لسعر التوصية @ ${price:.4f} (<= ${buy_price}) — ننتظر سعر أفضل")
+            notify(f"✅ {symbol} وصل لسعر التوصية!\n"
+                   f"السعر: ${price:.4f} (توفير {saving_now:+.1f}%)\n"
+                   f"مراقبة ذكية: ننتظر أقل سعر ثم نشتري عند الارتداد")
+            continue
 
-            lowest = sig_data["lowest_seen"]
-            elapsed_min = (time.time() - sig_data["watch_start"]) / 60
-            bounced = lowest > 0 and price > lowest * (1 + SMART_ENTRY_BOUNCE_PCT / 100)
-            timed_out = elapsed_min >= SMART_ENTRY_WAIT_MIN
+        if price < sig_data.get("lowest_seen", price):
+            sig_data["lowest_seen"] = price
+            save_state(state)
 
-            if not (bounced and elapsed_min >= 10) and not timed_out:
-                continue
+        lowest = sig_data["lowest_seen"]
+        elapsed_min = (time.time() - sig_data["watch_start"]) / 60
+        bounced = lowest > 0 and price > lowest * (1 + SMART_ENTRY_BOUNCE_PCT / 100)
+        timed_out = elapsed_min >= SMART_ENTRY_WAIT_MIN
 
-            entry_reason = "ارتداد" if bounced else "انتهاء الانتظار"
-            saving = round((buy_price - price) / buy_price * 100, 1)
+        if not (bounced and elapsed_min >= 10) and not timed_out:
+            continue
 
-            sig_targets = sig_data.get("targets", [])
-            sell_price = sig_data.get("sell_price", buy_price * 1.15)
-            tp_pct = sig_data.get("tp_pct", 15)
+        # تأكيد أخير: لا نشتري أبداً فوق سعر التوصية
+        if price > buy_price:
+            sig_data.pop("watch_start", None)
+            sig_data.pop("lowest_seen", None)
+            save_state(state)
+            log(f"إلغاء شراء {symbol}: السعر ارتفع فوق التوصية (${price:.4f} > ${buy_price})")
+            continue
 
-            sig = Signal(
-                trade_num=sig_data.get("trade_num", 0),
-                symbol=symbol,
-                buy_price=price,
-                sell_price=sell_price,
-                tp_pct=tp_pct,
-                targets=[{"price": t["price"], "pct": t["pct"], "completed": False} for t in sig_targets] if sig_targets else [],
-            )
-            log(f"شراء ذكي: {symbol} @ ${price:.4f} ({entry_reason} | أقل سعر: ${lowest:.4f} | توفير: {saving:+.1f}%)")
-            if open_trade(state, sig, reason=f"توصية معلّقة #{sig_data.get('trade_num',0)}"):
-                state.pending_signals.remove(sig_data)
-                state.executed_signals.append(sig_data["key"])
-                if len(state.executed_signals) > 500:
-                    state.executed_signals = state.executed_signals[-500:]
-                save_state(state)
+        entry_reason = "ارتداد" if bounced else "انتهاء الانتظار"
+        saving = round((buy_price - price) / buy_price * 100, 1)
+
+        sig_targets = sig_data.get("targets", [])
+        sell_price = sig_data.get("sell_price", buy_price * 1.15)
+        tp_pct = sig_data.get("tp_pct", 15)
+
+        sig = Signal(
+            trade_num=sig_data.get("trade_num", 0),
+            symbol=symbol,
+            buy_price=price,
+            sell_price=sell_price,
+            tp_pct=tp_pct,
+            targets=[{"price": t["price"], "pct": t["pct"], "completed": False} for t in sig_targets] if sig_targets else [],
+        )
+        log(f"شراء ذكي: {symbol} @ ${price:.4f} ({entry_reason} | أقل سعر: ${lowest:.4f} | توفير: {saving:+.1f}%)")
+        if open_trade(state, sig, reason=f"توصية معلّقة #{sig_data.get('trade_num',0)}"):
+            state.pending_signals.remove(sig_data)
+            state.executed_signals.append(sig_data["key"])
+            if len(state.executed_signals) > 500:
+                state.executed_signals = state.executed_signals[-500:]
+            save_state(state)
 
 async def check_reinforcements(state: State):
     if not state.reinforcements:
@@ -1559,39 +1588,73 @@ async def check_reinforcements(state: State):
             reinf_price = entry["price"]
             if reinf_price <= 0:
                 continue
-            diff_pct = abs(price - reinf_price) / reinf_price * 100
-            if diff_pct <= REINFORCE_PCT:
-                key = f"{symbol}_{reinf_price}"
-                if key in state.reinforced_keys:
-                    continue
+            # لا نشتري أبداً بسعر أعلى من سعر التعزيز
+            if price > reinf_price:
+                continue
+            key = f"{symbol}_{reinf_price}"
+            if key in state.reinforced_keys:
+                continue
 
-                entry_targets = entry.get("targets", [])
-                if entry_targets:
-                    sell_price = entry_targets[-1]["price"]
-                    tp_pct = round((sell_price - price) / price * 100, 2)
-                else:
-                    sell_price = entry.get("sell_price", 0)
-                    if sell_price <= 0:
-                        sell_price = reinf_price * 1.15
-                    tp_pct = entry.get("tp_pct", 0)
-                    if tp_pct <= 0:
-                        tp_pct = round((sell_price - reinf_price) / reinf_price * 100, 2)
+            # مراقبة ذكية: ننتظر أقل سعر ثم نشتري عند الارتداد
+            watch_key = f"_watch_{key}"
+            if watch_key not in entry:
+                entry[watch_key] = time.time()
+                entry[f"_low_{key}"] = price
+                save_state(state)
+                saving_now = round((reinf_price - price) / reinf_price * 100, 1)
+                log(f"مراقبة تعزيز: {symbol} @ ${price:.4f} (<= ${reinf_price}) — ننتظر ارتداد (توفير {saving_now:+.1f}%)")
+                continue
 
-                sig = Signal(
-                    trade_num=entry.get("trade_num", 0),
-                    symbol=symbol,
-                    buy_price=price,
-                    sell_price=sell_price,
-                    tp_pct=tp_pct,
-                    targets=entry_targets,
-                )
-                log(f"تعزيز! {symbol} @ ${price} قريب من ${reinf_price} (فرق {diff_pct:.1f}%)")
-                if open_trade(state, sig, reason=f"تعزيز @ {reinf_price}"):
-                    state.reinforced_keys.append(key)
-                    if len(state.reinforced_keys) > 500:
-                        state.reinforced_keys = state.reinforced_keys[-500:]
-                    save_state(state)
-                break
+            low_key = f"_low_{key}"
+            if price < entry.get(low_key, price):
+                entry[low_key] = price
+                save_state(state)
+
+            lowest = entry.get(low_key, price)
+            elapsed_min = (time.time() - entry[watch_key]) / 60
+            bounced = lowest > 0 and price > lowest * (1 + SMART_ENTRY_BOUNCE_PCT / 100)
+            timed_out = elapsed_min >= SMART_ENTRY_WAIT_MIN
+
+            if not (bounced and elapsed_min >= 10) and not timed_out:
+                continue
+
+            # تأكيد أخير: لا نشتري فوق سعر التعزيز
+            if price > reinf_price:
+                entry.pop(watch_key, None)
+                entry.pop(low_key, None)
+                save_state(state)
+                continue
+
+            entry_reason = "ارتداد" if bounced else "انتهاء الانتظار"
+            saving = round((reinf_price - price) / reinf_price * 100, 1)
+
+            entry_targets = entry.get("targets", [])
+            if entry_targets:
+                sell_price = entry_targets[-1]["price"]
+                tp_pct = round((sell_price - price) / price * 100, 2)
+            else:
+                sell_price = entry.get("sell_price", 0)
+                if sell_price <= 0:
+                    sell_price = reinf_price * 1.15
+                tp_pct = entry.get("tp_pct", 0)
+                if tp_pct <= 0:
+                    tp_pct = round((sell_price - reinf_price) / reinf_price * 100, 2)
+
+            sig = Signal(
+                trade_num=entry.get("trade_num", 0),
+                symbol=symbol,
+                buy_price=price,
+                sell_price=sell_price,
+                tp_pct=tp_pct,
+                targets=entry_targets,
+            )
+            log(f"تعزيز ذكي! {symbol} @ ${price:.4f} ({entry_reason} | أقل: ${lowest:.4f} | توفير: {saving:+.1f}%)")
+            if open_trade(state, sig, reason=f"تعزيز @ {reinf_price}"):
+                state.reinforced_keys.append(key)
+                if len(state.reinforced_keys) > 500:
+                    state.reinforced_keys = state.reinforced_keys[-500:]
+                save_state(state)
+            break
 
 # ---------- check mode ----------
 def run_check():
@@ -1895,25 +1958,45 @@ async def main():
 
         notify(f"توصية جديدة #{signal.trade_num}\nالعملة: {signal.symbol}\n"
                f"شراء: {signal.buy_price}\nبيع: {signal.sell_price} ({signal.tp_pct}%)")
-        if open_trade(state, signal, reason="توصية جديدة"):
+
+        # --- لا نشتري أبداً بسعر أعلى من التوصية ---
+        pair_chk, ex_chk = find_pair_exchange(signal.symbol)
+        market_price = None
+        if pair_chk and ex_chk in _exchanges:
+            try:
+                market_price = float(_exchanges[ex_chk].fetch_ticker(pair_chk).get("last", 0))
+            except Exception:
+                pass
+
+        pending_key = sig_key
+
+        def _queue_pending_signal(reason_msg: str):
+            if any(p.get("key") == pending_key for p in state.pending_signals):
+                return
+            state.pending_signals.append({
+                "key": pending_key, "symbol": signal.symbol,
+                "buy_price": signal.buy_price, "sell_price": signal.sell_price,
+                "tp_pct": signal.tp_pct, "trade_num": signal.trade_num,
+                "targets": [{"price": t["price"], "pct": t["pct"]} for t in signal.targets] if signal.targets else [],
+                "added": time.strftime("%Y-%m-%d %H:%M:%S"),
+            })
+            save_state(state)
+            log(f"توصية معلّقة: {sig_key} — {reason_msg}")
+
+        if market_price and market_price > signal.buy_price:
+            pct_above = round((market_price - signal.buy_price) / signal.buy_price * 100, 1)
+            _queue_pending_signal(f"السعر أعلى من التوصية (${market_price:.4f} > ${signal.buy_price:.4f} | +{pct_above}%)")
+            notify(f"⏳ مراقبة {signal.symbol}\n"
+                   f"السعر الحالي: ${market_price:.4f}\n"
+                   f"سعر التوصية: ${signal.buy_price:.4f} (+{pct_above}%)\n"
+                   f"سيتم الشراء تلقائياً عند وصول السعر للهدف")
+        elif open_trade(state, signal, reason="توصية جديدة"):
             state.executed_signals.append(sig_key)
             if len(state.executed_signals) > 500:
                 state.executed_signals = state.executed_signals[-500:]
             save_state(state)
         else:
-            # الشراء فشل (رصيد غير كافٍ أو حد يومي) — نحفظ التوصية كمعلّقة
-            # حتى يعيد check_pending_signals محاولتها لاحقاً
-            pending_key = sig_key
-            if not any(p.get("key") == pending_key for p in state.pending_signals):
-                state.pending_signals.append({
-                    "key": pending_key, "symbol": signal.symbol,
-                    "buy_price": signal.buy_price, "sell_price": signal.sell_price,
-                    "tp_pct": signal.tp_pct, "trade_num": signal.trade_num,
-                    "targets": [{"price": t["price"], "pct": t["pct"]} for t in signal.targets] if signal.targets else [],
-                    "added": time.strftime("%Y-%m-%d %H:%M:%S"),
-                })
-                save_state(state)
-                log(f"توصية معلّقة: {sig_key} — ستُعاد المحاولة تلقائياً")
+            _queue_pending_signal("رصيد غير كافٍ أو حد يومي — ستُعاد المحاولة تلقائياً")
 
     async def position_checker():
         while True:
