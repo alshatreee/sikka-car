@@ -132,6 +132,8 @@ def log(msg: str) -> None:
         pass
 
 def notify(msg: str) -> None:
+    if PAPER_MODE:
+        return
     if not NOTIFY_TOKEN or not NOTIFY_CHAT:
         return
     try:

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────
-#  Watchdog: keeps the live trading bots alive.
-#  - Checks each bot every run; restarts any that died (they run
-#    under nohup, so a server reboot or crash kills them silently).
+#  Watchdog: keeps the trading bots alive (paper mode).
+#  - Checks each bot every run; restarts any that died.
 #  - Logs to watchdog.log and sends a Telegram alert on restart.
 #  Intended to run from cron, e.g.:  */5 * * * * /root/bots/watchdog.sh
 # ──────────────────────────────────────────────────────────────
@@ -12,11 +11,7 @@ BOTS_DIR="/root/bots"
 ENV_FILE="$BOTS_DIR/.env_monthly"
 WLOG="$BOTS_DIR/watchdog.log"
 
-# bot script name  ->  log file
-# NOTE: daytrading_bot and channel_daytrader are RETIRED — intentionally not
-# listed so the watchdog never revives them.
-# smart_channel_bot is now live; the watchdog revives it (matches the exact
-# "python3 smart_channel_bot.py --live" command, so no duplicate of a paper run).
+# الوضع الورقي — بدون --live
 BOTS=(monthly_channel_bot smart_channel_bot)
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -47,7 +42,7 @@ cd "$BOTS_DIR" || { log "FATAL: cannot cd $BOTS_DIR"; exit 1; }
 status_line=""
 for bot in "${BOTS[@]}"; do
     # Count running instances of this exact bot (live).
-    count=$(pgrep -fc "python3 ${bot}.py --live" || true)
+    count=$(pgrep -fc "python3 ${bot}.py" || true)
     count=${count:-0}
 
     if [ "$count" -eq 0 ]; then
@@ -58,7 +53,7 @@ for bot in "${BOTS[@]}"; do
         status_line+="${bot}:restarted "
     elif [ "$count" -gt 1 ]; then
         # More than one copy → kill all and start a single clean instance.
-        pkill -f "python3 ${bot}.py --live"
+        pkill -f "python3 ${bot}.py"
         sleep 2
         nohup python3 "${bot}.py" --live >> "${bot}.log" 2>&1 &
         sleep 1
