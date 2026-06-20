@@ -352,7 +352,7 @@ def run_checks(state: MonitorState, send_ok: bool = False) -> list[str]:
 
 def _process_alive(name: str) -> bool:
     try:
-        r = subprocess.run(["pgrep", "-fc", f"python3 {name}.py --live"],
+        r = subprocess.run(["pgrep", "-fc", f"python3 {name}.py"],
                            capture_output=True, text=True, timeout=5)
         return r.returncode == 0 and int(r.stdout.strip() or "0") > 0
     except Exception:
